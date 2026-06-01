@@ -111,10 +111,76 @@ export default function Home() {
   const [editCashInput, setEditCashInput] = useState<string>('100000');
   const [virtualPositions, setVirtualPositions] = useState<VirtualPosition[]>([]);
 
-  // Simulation states (calling backend endpoints to trigger replay/forward sims)
+  // Simulation states
   const [simDays, setSimDays] = useState<number>(5);
   const [replayMonths, setReplayMonths] = useState<number>(6);
   const [runningSim, setRunningSim] = useState<boolean>(false);
+
+  // Sentiment Transparency & Premium uploader states
+  const [sentimentList, setSentimentList] = useState<any[]>([]);
+  const [selectedSentTicker, setSelectedSentTicker] = useState<string>('TSLA');
+  const [sentSources, setSentSources] = useState<any[]>([]);
+  const [loadingSources, setLoadingSources] = useState<boolean>(false);
+  const [premiumForm, setPremiumForm] = useState({
+    ticker: 'AAPL',
+    title: '',
+    text: '',
+    url: ''
+  });
+  const [premiumStatus, setPremiumStatus] = useState<string>('');
+
+  const fetchSources = async (ticker: string) => {
+    setLoadingSources(true);
+    try {
+      const res = await fetch(`http://localhost:8008/api/sentiment/sources?ticker=${ticker}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSentSources(data.sources || []);
+      } else {
+        loadMockSources(ticker);
+      }
+    } catch (err) {
+      loadMockSources(ticker);
+    } finally {
+      setLoadingSources(false);
+    }
+  };
+
+  const loadMockSources = (ticker: string) => {
+    setSentSources([
+      { id: 1, source: "reddit", title: `Options volume surges for ${ticker} on breakout rumors`, text: "Check out the option chains for next Friday calls...", url: "https://www.reddit.com/r/wallstreetbets", score: 0.61 },
+      { id: 2, source: "news", title: `Technical charts indicate strong support for ${ticker}`, text: "Brokers raise price target estimates following recent supply data.", url: "https://finance.yahoo.com", score: 0.38 },
+      { id: 3, source: "premium", title: `The Information: ${ticker} prepares new product trials`, text: "Subscription report: Trial runs are scheduled to begin next week in select markets.", url: "local-premium-upload", score: 0.54 }
+    ]);
+  };
+
+  const handlePremiumSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPremiumStatus('Analyzing content...');
+    try {
+      if (backendOnline) {
+        const res = await fetch('http://localhost:8008/api/sentiment/premium', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(premiumForm)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPremiumStatus(`Analyzed! Score: ${data.score >= 0 ? '+' : ''}${data.score.toFixed(2)}`);
+          setPremiumForm({ ticker: 'AAPL', title: '', text: '', url: '' });
+          fetchData();
+          fetchSources(selectedSentTicker);
+        } else {
+          setPremiumStatus('Failed to upload article.');
+        }
+      } else {
+        setPremiumStatus('Success! Score: +0.45 (Local mock mode)');
+        setPremiumForm({ ticker: 'AAPL', title: '', text: '', url: '' });
+      }
+    } catch (err) {
+      setPremiumStatus('Error occurred during submission.');
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -168,6 +234,13 @@ export default function Home() {
         setVirtualPositions(vposData);
       }
 
+      // 6. Fetch Sentiment list
+      const sentRes = await fetch('http://localhost:8008/api/sentiment');
+      if (sentRes.ok) {
+        const sentData = await sentRes.json();
+        setSentimentList(sentData.sentiment || []);
+      }
+
     } catch (err) {
       console.warn("FastAPI backend is offline. Loading simulated local values.");
       setBackendOnline(false);
@@ -176,6 +249,12 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (selectedSentTicker) {
+      fetchSources(selectedSentTicker);
+    }
+  }, [selectedSentTicker, backendOnline]);
 
   const loadMockData = () => {
     setDate(new Date().toISOString().split('T')[0]);
@@ -251,6 +330,16 @@ export default function Home() {
       });
     }
     setPerfCurve(mockCurve);
+    setSentimentList([
+      { ticker: 'TSLA', source: 'reddit', sentiment_score: 0.42, mention_count: 78, positive_ratio: 0.6, negative_ratio: 0.1 },
+      { ticker: 'TSLA', source: 'news', sentiment_score: 0.28, mention_count: 24, positive_ratio: 0.45, negative_ratio: 0.15 },
+      { ticker: 'NVDA', source: 'news', sentiment_score: 0.61, mention_count: 42, positive_ratio: 0.75, negative_ratio: 0.05 },
+      { ticker: 'NVDA', source: 'reddit', sentiment_score: 0.48, mention_count: 112, positive_ratio: 0.65, negative_ratio: 0.12 },
+      { ticker: 'AAPL', source: 'news', sentiment_score: 0.12, mention_count: 31, positive_ratio: 0.35, negative_ratio: 0.2 },
+      { ticker: 'AAPL', source: 'reddit', sentiment_score: 0.05, mention_count: 55, positive_ratio: 0.3, negative_ratio: 0.25 },
+      { ticker: 'XOM', source: 'reddit', sentiment_score: -0.24, mention_count: 12, positive_ratio: 0.15, negative_ratio: 0.4 },
+      { ticker: 'XOM', source: 'news', sentiment_score: -0.15, mention_count: 8, positive_ratio: 0.2, negative_ratio: 0.35 }
+    ]);
   };
 
   useEffect(() => {
@@ -662,32 +751,309 @@ export default function Home() {
                   Social Sentiment Index
                 </h2>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  Aggregated polarity ratings mined from social Reddit boards and active financial news sites:
+                  Select an active ticker below to verify individual article/Reddit sentiment scores:
                 </p>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                  <div>
-                    <div style={{ fontSize: '14px', fontWeight: 600 }}>TSLA (Reddit Mentions)</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>78 posts | High social volume</div>
-                  </div>
-                  <div className="text-green" style={{ fontWeight: 600 }}>+0.42 (Bullish)</div>
+
+                {(() => {
+                  // Compute ticker averages
+                  const summaryMap: any = {};
+                  sentimentList.forEach(item => {
+                    const t = item.ticker;
+                    if (!summaryMap[t]) {
+                      summaryMap[t] = { ticker: t, totalScore: 0, count: 0, sources: [], mentions: 0 };
+                    }
+                    summaryMap[t].totalScore += item.sentiment_score;
+                    summaryMap[t].count += 1;
+                    summaryMap[t].mentions += item.mention_count || 0;
+                    if (!summaryMap[t].sources.includes(item.source)) {
+                      summaryMap[t].sources.push(item.source);
+                    }
+                  });
+                  const list = Object.values(summaryMap).sort((a: any, b: any) => b.mentions - a.mentions);
+                  
+                  if (list.length === 0) {
+                    return (
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        No sentiment records loaded. Start the backend or run simulated fetching.
+                      </p>
+                    );
+                  }
+                  
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {list.map((item: any, idx: number) => {
+                        const avg = item.totalScore / item.count;
+                        const isSelected = selectedSentTicker === item.ticker;
+                        return (
+                          <div 
+                            key={idx} 
+                            onClick={() => {
+                              setSelectedSentTicker(item.ticker);
+                              fetchSources(item.ticker);
+                            }}
+                            style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center',
+                              padding: '12px', 
+                              borderRadius: '8px',
+                              background: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(255,255,255,0.02)',
+                              border: isSelected ? '1px solid var(--color-buy)' : '1px solid var(--border-glass)',
+                              cursor: 'pointer',
+                              transition: 'var(--transition-smooth)'
+                            }}
+                            className="sentiment-list-item"
+                          >
+                            <div>
+                              <div style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {item.ticker}
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400 }}>
+                                  ({item.mentions} mentions)
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                                {item.sources.map((src: string, sIdx: number) => (
+                                  <span 
+                                    key={sIdx} 
+                                    style={{ 
+                                      fontSize: '9px', 
+                                      padding: '2px 6px', 
+                                      borderRadius: '4px',
+                                      background: src === 'premium' ? 'rgba(245, 158, 11, 0.15)' : src === 'reddit' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                                      color: src === 'premium' ? '#F59E0B' : src === 'reddit' ? '#A78BFA' : '#3B82F6',
+                                      textTransform: 'uppercase',
+                                      fontWeight: 600
+                                    }}
+                                  >
+                                    {src}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            <div className={avg >= 0.05 ? 'text-green' : avg <= -0.05 ? 'text-red' : ''} style={{ fontWeight: 600, fontSize: '14px' }}>
+                              {avg > 0 ? '+' : ''}{avg.toFixed(2)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Sentiment Inspector Card */}
+              <div className="glass-card" style={{ marginTop: '24px' }}>
+                <h2>
+                  <ShieldAlert size={20} color="var(--color-accent)" />
+                  Sentiment Source Inspector
+                </h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Ticker: <span style={{ color: 'var(--color-buy)' }}>{selectedSentTicker}</span>
+                  </span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    Active Feed Log
+                  </span>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                  <div>
-                    <div style={{ fontSize: '14px', fontWeight: 600 }}>NVDA (News Coverage)</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>42 articles | Bullish outlook</div>
+                {loadingSources ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
+                    <RefreshCw size={20} className="animate-spin" color="var(--color-accent)" />
                   </div>
-                  <div className="text-green" style={{ fontWeight: 600 }}>+0.61 (Strong Bull)</div>
-                </div>
+                ) : sentSources.length === 0 ? (
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>
+                    No active sentiment sources logged for {selectedSentTicker} today.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '320px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {sentSources.map((src: any, idx: number) => (
+                      <div 
+                        key={idx} 
+                        style={{ 
+                          background: 'rgba(0,0,0,0.2)', 
+                          border: '1px solid var(--border-glass)', 
+                          borderRadius: '8px', 
+                          padding: '10px' 
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px', marginBottom: '6px' }}>
+                          <span style={{ 
+                            fontSize: '10px', 
+                            padding: '2px 6px', 
+                            borderRadius: '4px',
+                            background: src.source === 'premium' ? 'rgba(245, 158, 11, 0.15)' : src.source === 'reddit' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                            color: src.source === 'premium' ? '#F59E0B' : src.source === 'reddit' ? '#A78BFA' : '#3B82F6',
+                            fontWeight: 600,
+                            textTransform: 'uppercase'
+                          }}>
+                            {src.source}
+                          </span>
+                          <span className={src.score >= 0.05 ? 'text-green' : src.score <= -0.05 ? 'text-red' : ''} style={{ fontSize: '12px', fontWeight: 600 }}>
+                            {src.score > 0 ? '+' : ''}{src.score.toFixed(2)}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '4px', lineHeight: '1.3' }}>
+                          {src.title}
+                        </div>
+                        {src.text && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', whiteSpace: 'pre-wrap', maxHeight: '60px', overflowY: 'auto' }}>
+                            {src.text}
+                          </div>
+                        )}
+                        {src.url && (
+                          <a 
+                            href={src.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            style={{ 
+                              fontSize: '11px', 
+                              color: 'var(--color-buy)', 
+                              textDecoration: 'none', 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '4px' 
+                            }}
+                          >
+                            Verify Source Link &rarr;
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+              {/* Premium Article Ingestion Card */}
+              <div className="glass-card" style={{ marginTop: '24px' }}>
+                <h2>
+                  <Layers size={20} color="var(--color-gold)" />
+                  Premium Feed Ingestion
+                </h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+                  Ingest paywalled journals (e.g. The Information, Bloomberg). Sentiments recalculate instantly.
+                </p>
+
+                <form onSubmit={handlePremiumSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <div>
-                    <div style={{ fontSize: '14px', fontWeight: 600 }}>XOM (Reddit Sentiment)</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>12 posts | Downside bias</div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Target Ticker</label>
+                    <select
+                      value={premiumForm.ticker}
+                      onChange={(e) => setPremiumForm({...premiumForm, ticker: e.target.value})}
+                      style={{ 
+                        width: '100%', 
+                        background: 'rgba(16, 20, 38, 0.95)', 
+                        border: '1px solid var(--border-glass)', 
+                        borderRadius: '6px', 
+                        color: 'var(--text-primary)', 
+                        padding: '6px 10px', 
+                        fontSize: '13px', 
+                        cursor: 'pointer' 
+                      }}
+                    >
+                      {universeTickers.map((t, idx) => (
+                        <option key={idx} value={t}>{t}</option>
+                      ))}
+                    </select>
                   </div>
-                  <div className="text-red" style={{ fontWeight: 600 }}>-0.24 (Bearish)</div>
-                </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Headline / Title</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. The Information: Tech giant plans AI trial expansion"
+                      value={premiumForm.title}
+                      onChange={(e) => setPremiumForm({...premiumForm, title: e.target.value})}
+                      style={{ 
+                        width: '100%', 
+                        background: 'rgba(0,0,0,0.2)', 
+                        border: '1px solid var(--border-glass)', 
+                        borderRadius: '6px', 
+                        color: 'var(--text-primary)', 
+                        padding: '6px 10px', 
+                        fontSize: '13px' 
+                      }}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Article Content Preview</label>
+                    <textarea 
+                      placeholder="Paste subscription text or main analysis points here..."
+                      rows={3}
+                      value={premiumForm.text}
+                      onChange={(e) => setPremiumForm({...premiumForm, text: e.target.value})}
+                      style={{ 
+                        width: '100%', 
+                        background: 'rgba(0,0,0,0.2)', 
+                        border: '1px solid var(--border-glass)', 
+                        borderRadius: '6px', 
+                        color: 'var(--text-primary)', 
+                        padding: '6px 10px', 
+                        fontSize: '13px',
+                        fontFamily: 'var(--font-sans)',
+                        resize: 'vertical' 
+                      }}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Source Link (Optional)</label>
+                    <input 
+                      type="url" 
+                      placeholder="https://www.theinformation.com/articles/..."
+                      value={premiumForm.url}
+                      onChange={(e) => setPremiumForm({...premiumForm, url: e.target.value})}
+                      style={{ 
+                        width: '100%', 
+                        background: 'rgba(0,0,0,0.2)', 
+                        border: '1px solid var(--border-glass)', 
+                        borderRadius: '6px', 
+                        color: 'var(--text-primary)', 
+                        padding: '6px 10px', 
+                        fontSize: '13px' 
+                      }}
+                    />
+                  </div>
+
+                  <button 
+                    type="submit"
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      border: '1px solid var(--color-gold)',
+                      borderRadius: '6px',
+                      color: 'var(--color-gold)',
+                      padding: '8px 12px',
+                      fontWeight: 600,
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      marginTop: '4px',
+                      transition: 'var(--transition-smooth)'
+                    }}
+                  >
+                    <Plus size={14} /> Ingest & Analyze Feed
+                  </button>
+
+                  {premiumStatus && (
+                    <div style={{ 
+                      fontSize: '12px', 
+                      color: 'var(--color-gold)', 
+                      fontWeight: 500, 
+                      textAlign: 'center',
+                      padding: '6px',
+                      background: 'rgba(245, 158, 11, 0.05)',
+                      borderRadius: '4px',
+                      border: '1px solid rgba(245, 158, 11, 0.1)'
+                    }}>
+                      {premiumStatus}
+                    </div>
+                  )}
+                </form>
               </div>
             </aside>
           </>

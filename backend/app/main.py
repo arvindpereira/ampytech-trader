@@ -15,7 +15,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.config import TICKER_UNIVERSE
 from app.database import (
     get_db, init_db, RecentPrice, TickerSentiment, MacroIndicator,
-    UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog
+    UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
+    SentimentSourceLog
 )
 from ml_engine.features import build_features_for_df
 from ml_engine.models import PortfolioOptimizer
@@ -758,3 +759,106 @@ def trigger_backtest_virtual(months: int = 6, background_tasks: BackgroundTasks 
     else:
         run_historical_replay(months)
         return {"status": "completed"}
+
+
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+class PremiumSentimentRequest(BaseModel):
+    ticker: str
+    title: str
+    text: str
+    url: Optional[str] = "manual-premium-upload"
+
+@app.get("/api/sentiment/sources")
+def get_sentiment_sources(ticker: str, date: Optional[str] = None, db=Depends(get_db)):
+    ticker_val = ticker.upper().strip()
+    
+    if not date:
+        latest = db.query(SentimentSourceLog).filter(SentimentSourceLog.ticker == ticker_val).order_by(SentimentSourceLog.date.desc()).first()
+        if latest:
+            date = latest.date
+        else:
+            date = datetime.now().strftime("%Y-%m-%d")
+            
+    records = db.query(SentimentSourceLog).filter(
+        SentimentSourceLog.ticker == ticker_val,
+        SentimentSourceLog.date == date
+    ).all()
+    
+    return {
+        "ticker": ticker_val,
+        "date": date,
+        "sources": [
+            {
+                "id": r.id,
+                "source": r.source,
+                "title": r.title,
+                "text": r.text,
+                "url": r.url,
+                "score": r.score
+            } for r in records
+        ]
+    }
+
+@app.post("/api/sentiment/premium")
+def post_premium_sentiment(req: PremiumSentimentRequest, db=Depends(get_db)):
+    ticker_val = req.ticker.upper().strip()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    analyzer = SentimentIntensityAnalyzer()
+    full_content = (req.title + ". " + req.text) if req.text else req.title
+    vs = analyzer.polarity_scores(full_content)
+    compound = vs['compound']
+    
+    log_rec = SentimentSourceLog(
+        ticker=ticker_val,
+        date=date_str,
+        source="premium",
+        title=req.title[:250],
+        text=req.text[:1000] if req.text else None,
+        url=req.url,
+        score=compound
+    )
+    db.add(log_rec)
+    db.commit()
+    
+    # Recalculate aggregates
+    premium_logs = db.query(SentimentSourceLog).filter(
+        SentimentSourceLog.ticker == ticker_val,
+        SentimentSourceLog.date == date_str,
+        SentimentSourceLog.source == "premium"
+    ).all()
+    
+    scores = [r.score for r in premium_logs]
+    pos_count = sum(1 for s in scores if s > 0.05)
+    neg_count = sum(1 for s in scores if s < -0.05)
+    
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    pos_ratio = pos_count / len(scores) if scores else 0.0
+    neg_ratio = neg_count / len(scores) if scores else 0.0
+    
+    existing = db.query(TickerSentiment).filter(
+        TickerSentiment.ticker == ticker_val,
+        TickerSentiment.date == date_str,
+        TickerSentiment.source == "premium"
+    ).first()
+    
+    if existing:
+        existing.sentiment_score = avg_score
+        existing.positive_ratio = pos_ratio
+        existing.negative_ratio = neg_ratio
+        existing.mention_count = len(premium_logs)
+    else:
+        existing = TickerSentiment(
+            ticker=ticker_val,
+            date=date_str,
+            sentiment_score=avg_score,
+            positive_ratio=pos_ratio,
+            negative_ratio=neg_ratio,
+            mention_count=len(premium_logs),
+            source="premium"
+        )
+        db.add(existing)
+        
+    db.commit()
+    return {"status": "success", "score": compound, "ticker": ticker_val, "date": date_str}

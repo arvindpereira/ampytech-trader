@@ -126,3 +126,16 @@ class BrokerPerformanceLog(Base):
     )
 
 
+class SentimentSourceLog(Base):
+    __tablename__ = "sentiment_source_logs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)   # YYYY-MM-DD
+    source = Column(String, nullable=False)  # 'news', 'reddit', 'premium'
+    title = Column(String, nullable=False)
+    text = Column(String, nullable=True)
+    url = Column(String, nullable=True)
+    score = Column(Float, nullable=False)
+
+
