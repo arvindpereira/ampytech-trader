@@ -16,14 +16,16 @@ graph TD
     ML_Engine --> Backtester[3. Backtesting Framework]
     Backtester --> RiskExecution[4. Risk Management & Execution]
     RiskExecution --> UserDashboard[5. Premium UI Dashboard]
-    
-    subgraph Data Sources
+
+    subgraph Sources[Data Sources]
         Reddit[Reddit APIs / News API]
         FRED[Macro FRED API]
         Historical[Price/Volume Data]
     end
-    
-    Data Sources --> DataPipeline
+
+    Reddit --> DataPipeline
+    FRED --> DataPipeline
+    Historical --> DataPipeline
 ```
 
 ---
