@@ -20,7 +20,8 @@ def fetch_recent_prices():
     
     print(f"Starting recent price fetch for {len(TICKER_UNIVERSE)} tickers...")
     
-    for ticker in TICKER_UNIVERSE:
+    tickers_to_fetch = sorted(list(set(TICKER_UNIVERSE + ["BRK-B"])))
+    for ticker in tickers_to_fetch:
         # Check latest date in database
         latest_record = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).order_code = db.query(RecentPrice)\
             .filter(RecentPrice.ticker == ticker)\

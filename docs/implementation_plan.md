@@ -87,8 +87,10 @@ The top-level entry point for all pipeline stages. All developer operations are 
 | `python run.py fetch` | Run all data ingestion (prices, macro, crisis, sentiment) |
 | `python run.py train` | Retrain and save all model artifacts (XGBoost + HMM) |
 | `python run.py backtest` | Run the PyBroker backtest suite and print metrics |
-| `python run.py serve` | Start the FastAPI backend server |
+| `python run.py serve` | Start the FastAPI backend server on `http://localhost:8008` |
 | `python run.py schedule` | Start the APScheduler background trading loop |
+| `python run.py simulate --days N` | Run the virtual broker forward for N trading days using live cached prices (default: 5) |
+| `python run.py backtest-virtual --months N` | Replay N months of history through the virtual broker day-by-day with no look-ahead (default: 6) |
 
 ---
 
@@ -153,7 +155,7 @@ Here, we design features, build modeling scripts, and backtest performance under
 We expose predictions via standard REST endpoints and build an intuitive, visually stunning web UI.
 
 #### [NEW] [backend/app/main.py](backend/app/main.py) & Endpoints
-* **CORS Setup**: Configure FastAPI with `CORSMiddleware` to allow local origins (specifically `http://localhost:3000` where the Next.js dev server runs) to prevent frontend fetch blocking.
+* **CORS Setup**: Configure FastAPI with `CORSMiddleware` to allow local origins (specifically `http://localhost:3002` where the Next.js dev server runs) to prevent frontend fetch blocking. FastAPI runs on `http://localhost:8008`.
 * **API Endpoints**:
   * `/api/suggestions`: Returns recommendations for today, detailing: target ticker, strategy (Short/Long term), direction (BUY/SELL/HOLD), entry, stop-loss, take-profit, confidence, and reasoning.
   * `/api/sentiment`: Supplies aggregated sentiment charts per ticker.
@@ -191,14 +193,71 @@ This stage connects our model to live data feeds, manages risks, and executes tr
 
 ---
 
+## Stage 5: Virtual Alpaca Broker & Performance Comparison
+
+To bypass external Alpaca credential requirements and provide a fully local testbed, we will construct a **Virtual Alpaca Server** running as a namespace inside our FastAPI backend (`http://localhost:8008/api/virtual_alpaca/v2/`). The executor routes its HTTP requests to this local service, simulating market fills, checking stops, and comparing portfolio gains against S&P 500 and DJI index ETFs.
+
+The virtual broker supports two distinct operating modes, each triggered via `run.py`:
+
+| Mode | Command | Fill Price Source | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Forward simulation** | `python run.py simulate --days N` | Latest cached close price | Watch how the strategy performs over the coming N trading days |
+| **Historical replay** | `python run.py backtest-virtual --months N` | Historical OHLCV for `sim_date` only | Evaluate what would have happened over the past N months, with no look-ahead |
+
+In **historical replay mode**, the executor iterates day-by-day from `start_date` to today. On each `sim_date`, it builds features using only data through `sim_date - 1`, runs model inference, submits orders to the virtual broker with `sim_date` as a parameter, and the broker fills at the `sim_date` next-day open price from `recent_prices`. This enforces the same look-ahead bias rule as the PyBroker backtest.
+
+> **Simulation simplification**: In both modes, if a stock gaps below the stop price overnight, the fill is simulated at the stop price rather than the open. This optimistically avoids slippage on gap-down events. Results should be interpreted accordingly.
+
+### 1. Database Schema Extensions & Universe Configuration
+We will support dynamic configuration of our stock universe and starting portfolios by extending our SQLAlchemy models in `backend/app/database/models.py`:
+- `UniverseTicker`: Track the user-selected tickers to trade (defaults to our 20 tickers, but editable).
+- `VirtualAccount`: Holds current cash balance (starts at `$100,000.00`), buying power, and initial equity.
+- `VirtualPosition`: Holds active stock positions (ticker, average entry price, quantity, and policy: `rebalance` (default, MPT optimizes weights), `lock` (hold as-is, exclude from weights but count in portfolio equity), or `liquidate` (sell at start of sim)).
+- `VirtualOrder`: Tracks submitted, filled, or canceled mock orders (supporting brackets: `take_profit`, `stop_loss`).
+- `BrokerPerformanceLog`: Daily snapshot recording:
+  - `date`: Day of the record.
+  - `mode`: `live` (forward simulation) or `replay` (historical backtest).
+  - `portfolio_value`: Total equity (cash + position valuations at close).
+  - `spy_value`: S&P 500 ETF (SPY) value (indexed to starting `$100k`).
+  - `qqq_value`: Nasdaq 100 ETF (QQQ) value (indexed to starting `$100k`).
+  - `brk_value`: Berkshire Hathaway (BRK-B) value (indexed to starting `$100k`).
+
+### 2. FastAPI Virtual Alpaca & Universe Endpoints
+We will expose endpoints under the prefix `/api/virtual_alpaca/v2/`:
+- `GET /account` and `GET /positions`: Standard mock endpoints mapping database account and position entries.
+- `POST /holdings`: Seeds the broker with a starting portfolio of already-owned assets. Takes a list of `{ticker, shares, avg_cost, policy}`. If policy is `liquidate`, the position is immediately closed at current price and added to cash.
+- `GET /universe` & `POST /universe`: Fetches or updates the list of active tickers in the stock universe.
+- `POST /orders`: Places mock orders and bracket limits, executing fills at current close (live) or next-day open (replay).
+- `DELETE /positions/{symbol}`: Manual closing endpoint.
+
+### 3. Order, Stop-Loss, & Benchmark Evaluation Engine
+A daily post-market routine runs inside `backend/execution/executor.py`:
+1. **Valuation**: Retrieve close prices for open tickers in `VirtualPosition` to update portfolio equity. Exclude `lock` positions from active trading orders, but include their current valuations in total equity.
+2. **Stop Checking**: Trigger stop loss or take profit orders if the ticker's daily `low` or `high` crosses the bracket limits.
+3. **Index Comparison**: Fetch the daily close price changes for `SPY`, `QQQ`, and `BRK-B` (Berkshire Hathaway). Calculate their cumulative returns indexed to starting `$100,000.00` relative to the broker's starting date.
+4. **Log Snapshots**: Write a new log entry to `BrokerPerformanceLog`.
+
+### 4. Next.js Universe Editor & Comparison UI
+We will add a new tab/panel in `frontend/src/app/page.tsx` titled **"Virtual Broker Performance"**:
+- **Universe & Holdings Editor**: A form interface displaying the active stock universe (editable) and a portfolio holdings editor to let the user add already-owned stock positions, input quantity and cost basis, and choose policies (`Rebalance`, `Lock/Hold`, or `Liquidate`).
+- **Benchmark Comparison Chart**: A Recharts line chart plotting **Virtual Strategy Portfolio** vs. **S&P 500 (SPY)** vs. **Nasdaq 100 (QQQ)** vs. **Berkshire Hathaway (BRK-B)**, all starting at `$100,000.00`, with mode toggles (`live` vs. `replay`).
+- **Open Positions & Logs**: Active tables listing holdings, cost bases, unrealized profit/loss, and order history.
+
+---
+
 ## Verification Plan
 
 ### Automated / Semi-Automated Tests
 1. **Data Ingestion Verification**: Run Python integration test scripts to verify yfinance, FRED, and news fetchers populate the SQLite database.
 2. **Look-Ahead Bias Check**: Before trusting any backtest result, verify that no feature column for row T contains data from T+1 or later. Concretely: assert that the feature matrix constructed by `features.py` on a truncated dataset (data up to date X) is identical to the corresponding rows of the full feature matrix. Any discrepancy indicates a leakage bug.
 3. **Backtest Runner**: Verify the backtest completes and outputs performance metrics (Sharpe, drawdown) to console. Cross-check short-term model performance against a naive baseline (e.g., always predict the S&P 500 direction) — if the model dramatically outperforms on in-sample data, re-examine for leakage before declaring success.
-4. **API Integration Test**: Test FastAPI endpoint latency and JSON structures via curl/Postman.
-5. **UI Visual Polish**: Spin up Next.js dev server and check dashboard functionality, charts loading, and mobile responsiveness.
+4. **Virtual Broker Integration**: Route executor calls to `http://localhost:8008/api/virtual_alpaca/v2/` using the `alpaca-trade-api` SDK client. Verify that account fetching and order placement behave identically to the real Alpaca REST client.
+5. **Execution Simulation Test**: Place bracket orders, update prices to trigger stops, and assert that positions close at the correct stop prices and cash increases correctly.
+6. **Replay Mode Integrity Check**: Run `python run.py backtest-virtual --months 1` and assert that no fill in `VirtualOrder` uses a price timestamped after its `sim_date`. Any violation is a look-ahead bug in the virtual broker.
+7. **API Integration Test**: Test FastAPI endpoint latency and JSON structures via curl/Postman.
+8. **CORS and Port Verification**: Confirm the frontend on port `3002` can fetch data from FastAPI on port `8008` without CORS blocking.
+9. **UI Visual Polish**: Spin up Next.js dev server and check dashboard functionality, charts loading, and mobile responsiveness.
 
 ### Manual Verification
 - Deploy paper trading keys to the backend environment, run a dry-run execution script, and verify that mock orders are sent to the Alpaca developer dashboard.
+- Open the dashboard at `http://localhost:3002`, navigate to the new Virtual Broker tab, submit a manual suggested trade, and check that it immediately populates the active positions table.

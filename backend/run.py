@@ -46,11 +46,23 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "serve", "schedule"],
+        choices=["fetch", "train", "backtest", "serve", "schedule", "simulate", "backtest-virtual"],
         help="Pipeline stage to execute"
     )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=5,
+        help="Number of days to simulate in forward mode"
+    )
+    parser.add_argument(
+        "--months",
+        type=int,
+        default=6,
+        help="Number of months to replay in backtest mode"
+    )
     
-    args = parser.parse_code = parser.parse_args()
+    args = parser.parse_args()
     
     # Change working directory to backend/ directory for consistency
     backend_dir = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +78,12 @@ def main():
         serve()
     elif args.action == "schedule":
         schedule()
+    elif args.action == "simulate":
+        from execution.simulator import run_forward_simulation
+        run_forward_simulation(args.days)
+    elif args.action == "backtest-virtual":
+        from execution.simulator import run_historical_replay
+        run_historical_replay(args.months)
 
 if __name__ == "__main__":
     main()
