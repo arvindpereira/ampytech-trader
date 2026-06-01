@@ -11,7 +11,7 @@ DB_PATH = os.path.join(DATA_DIR, "trading_system.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(
-    DATABASE_URL, 
+    DATABASE_URL,
     connect_args={"check_same_thread": False}  # Safe for SQLite multithreaded usage in FastAPI
 )
 
@@ -30,7 +30,7 @@ def init_db():
     """Helper function to create all tables in the database and seed default values."""
     from app.database import models
     Base.metadata.create_all(bind=engine)
-    
+
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE
     db = SessionLocal()
@@ -41,7 +41,7 @@ def init_db():
                 db.add(models.UniverseTicker(ticker=ticker))
             db.commit()
             print("Seeded default ticker universe.")
-            
+
         # 2. Seed VirtualAccount if empty
         if db.query(models.VirtualAccount).filter(models.VirtualAccount.id == 1).first() is None:
             account = models.VirtualAccount(id=1, cash=100000.0, buying_power=100000.0, equity=100000.0)

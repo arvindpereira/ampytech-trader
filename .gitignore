@@ -26,3 +26,6 @@ Thumbs.db
 # Saved Models (if you want to keep them local, or track them if needed - we'll ignore them to prevent binary bloat)
 backend/ml_engine/saved_models/*.json
 backend/ml_engine/saved_models/*.pkl
+
+# Premium News Archive
+backend/data/premium_news/archive/

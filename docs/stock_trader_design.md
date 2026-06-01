@@ -1,6 +1,6 @@
 # Stock Trading System Architecture & Implementation Options
 
-To build a robust trading system that delivers both **short-term (high-volatility/momentum)** and **long-term (steady growth)** suggestions, we must integrate market data, macro indicators, social/news sentiment, historical backtesting, and machine learning models. 
+To build a robust trading system that delivers both **short-term (high-volatility/momentum)** and **long-term (steady growth)** suggestions, we must integrate market data, macro indicators, social/news sentiment, historical backtesting, and machine learning models.
 
 This document explores the architectural options, technologies, and data pipelines to train, build, and deploy this system.
 

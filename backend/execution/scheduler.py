@@ -51,11 +51,11 @@ def test_single_scheduler_tick():
     print("\n==================================================")
     print("=== STARTING SCHEDULER DEVELOPMENT VERIFICATION ===")
     print("==================================================")
-    
+
     daily_data_fetch_job()
     weekly_model_retrain_job() # Train models once so we have files ready
     daily_trade_execution_job()
-    
+
     print("==================================================")
     print("=== SCHEDULER DEVELOPMENT VERIFICATION DONE =====")
     print("==================================================\n")
@@ -68,16 +68,16 @@ def main():
         help="Run a single pipeline pass immediately for verification and exit"
     )
     args = parser.parse_args()
-    
+
     if args.test:
         test_single_scheduler_tick()
         return
-        
+
     scheduler = BlockingScheduler()
-    
+
     # Configure Timezone for Eastern Time (New York Stock Market timezone)
     market_tz = "America/New_York"
-    
+
     # 1. Daily Ingestion at 09:00 EST
     scheduler.add_job(
         daily_data_fetch_job,
@@ -85,7 +85,7 @@ def main():
         id="daily_data_fetch",
         name="Fetch daily price and sentiment data"
     )
-    
+
     # 2. Daily Inference at 09:15 EST
     scheduler.add_job(
         daily_trade_inference_job,
@@ -93,7 +93,7 @@ def main():
         id="daily_inference",
         name="Generate daily predictions"
     )
-    
+
     # 3. Daily Execution at 09:45 EST (15 mins after Market Open)
     scheduler.add_job(
         daily_trade_execution_job,
@@ -101,7 +101,7 @@ def main():
         id="daily_execution",
         name="Execute trades on Alpaca/Simulated"
     )
-    
+
     # 4. Weekly Retraining every Sunday at 18:00 EST (before market week starts)
     scheduler.add_job(
         weekly_model_retrain_job,
@@ -109,12 +109,12 @@ def main():
         id="weekly_retrain",
         name="Retrain models on rolling window"
     )
-    
+
     print("Starting APScheduler Background Worker Daemon (Blocking Mode)...")
     print("Scheduled jobs:")
     for job in scheduler.get_jobs():
         print(f" - {job.name} (ID: {job.id}): {job.trigger}")
-        
+
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

@@ -1,14 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  ShieldAlert, 
-  Activity, 
-  Compass, 
-  Percent, 
-  RefreshCw, 
+import {
+  TrendingUp,
+  TrendingDown,
+  ShieldAlert,
+  Activity,
+  Compass,
+  Percent,
+  RefreshCw,
   Award,
   Zap,
   Layers,
@@ -21,14 +21,14 @@ import {
   Play,
   RotateCcw
 } from 'lucide-react';
-import { 
-  ResponsiveContainer, 
-  AreaChart, 
+import {
+  ResponsiveContainer,
+  AreaChart,
   LineChart,
   Line,
-  XAxis, 
-  YAxis, 
-  Tooltip, 
+  XAxis,
+  YAxis,
+  Tooltip,
   Area,
   CartesianGrid,
   Legend
@@ -74,11 +74,11 @@ export default function Home() {
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
   const [regime, setRegime] = useState<string>('growth');
   const [date, setDate] = useState<string>('');
-  
+
   // Suggestion/Allocation States
   const [suggestions, setSuggestions] = useState<ShortTermSuggestion[]>([]);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
-  
+
   // Performance Curve & Metric States
   const [perfCurve, setPerfCurve] = useState<any[]>([]);
   const [perfMode, setPerfMode] = useState<'live' | 'replay'>('live');
@@ -97,7 +97,7 @@ export default function Home() {
   // Editor states
   const [universeTickers, setUniverseTickers] = useState<string[]>([]);
   const [newUniverseTicker, setNewUniverseTicker] = useState<string>('');
-  
+
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
@@ -259,7 +259,7 @@ export default function Home() {
   const loadMockData = () => {
     setDate(new Date().toISOString().split('T')[0]);
     setRegime('growth');
-    
+
     // Simulate short term recommendations
     const mockSuggestions: ShortTermSuggestion[] = [
       { ticker: "TSLA", close: 178.4, action: "BUY", confidence: 0.74, stop_loss: 169.5, take_profit: 200.7, reasoning: "Strong momentum breakout supported by social sentiment spikes on Reddit." },
@@ -306,21 +306,21 @@ export default function Home() {
     let bVal = 100000;
     const baseDate = new Date();
     baseDate.setDate(baseDate.getDate() - 100);
-    
+
     for (let i = 0; i < 100; i++) {
       const d = new Date(baseDate);
       d.setDate(d.getDate() + i);
-      
+
       const s_ret = Math.sin(i / 12) * 0.004 + (Math.random() - 0.5) * 0.018;
       const q_ret = s_ret * 1.25 + (Math.random() - 0.5) * 0.01;
       const b_ret = s_ret * 0.65 + (Math.random() - 0.5) * 0.008;
       const p_ret = s_ret * 0.7 + 0.0016 + (Math.random() - 0.44) * 0.01;
-      
+
       pVal *= (1.0 + p_ret);
       sVal *= (1.0 + s_ret);
       qVal *= (1.0 + q_ret);
       bVal *= (1.0 + b_ret);
-      
+
       mockCurve.push({
         date: d.toISOString().split('T')[0],
         portfolio: pVal,
@@ -351,7 +351,7 @@ export default function Home() {
     if (!newUniverseTicker) return;
     const tickerUpper = newUniverseTicker.toUpperCase().trim();
     if (universeTickers.includes(tickerUpper)) return;
-    
+
     const updated = [...universeTickers, tickerUpper];
     setUniverseTickers(updated);
     setNewUniverseTicker('');
@@ -390,7 +390,7 @@ export default function Home() {
   const handleSaveHolding = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHolding.ticker) return;
-    
+
     const tickerUpper = newHolding.ticker.toUpperCase().trim();
     const payload = {
       ticker: tickerUpper,
@@ -525,7 +525,7 @@ export default function Home() {
           <Activity size={28} color="#00F2FE" />
           <span>AMPYTECH TRADER</span>
         </div>
-        
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           {!backendOnline && (
             <span style={{ fontSize: '13px', color: '#FF4B6E', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -538,15 +538,15 @@ export default function Home() {
           <span className={`nav-regime regime-${regime}`}>
             REGIME: {regime}
           </span>
-          
-          <button 
-            onClick={fetchData} 
-            style={{ 
-              background: 'rgba(255,255,255,0.05)', 
-              border: '1px solid var(--border-glass)', 
-              borderRadius: '8px', 
-              color: 'var(--text-primary)', 
-              padding: '8px 12px', 
+
+          <button
+            onClick={fetchData}
+            style={{
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid var(--border-glass)',
+              borderRadius: '8px',
+              color: 'var(--text-primary)',
+              padding: '8px 12px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -564,19 +564,19 @@ export default function Home() {
       {/* Tabs Subheader */}
       <div style={{ display: 'flex', justifyContent: 'center', background: 'rgba(0,0,0,0.2)', padding: '12px', borderBottom: '1px solid var(--border-glass)' }}>
         <div className="toggle-group" style={{ margin: 0 }}>
-          <button 
+          <button
             className={`toggle-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setActiveTab('dashboard')}
           >
             Suggestions Dashboard
           </button>
-          <button 
+          <button
             className={`toggle-btn ${activeTab === 'virtual_perf' ? 'active' : ''}`}
             onClick={() => setActiveTab('virtual_perf')}
           >
             Virtual Broker Performance
           </button>
-          <button 
+          <button
             className={`toggle-btn ${activeTab === 'editor' ? 'active' : ''}`}
             onClick={() => setActiveTab('editor')}
           >
@@ -602,7 +602,7 @@ export default function Home() {
                     +{(metrics.total_return * 100).toFixed(1)}%
                   </div>
                 </div>
-                
+
                 <div className="glass-card" style={{ padding: '16px' }}>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <Award size={16} color="var(--color-accent)" /> Annualized Sharpe
@@ -639,13 +639,13 @@ export default function Home() {
                     Daily Strategy Recommendations
                   </h2>
                   <div className="toggle-group" style={{ margin: 0 }}>
-                    <button 
+                    <button
                       className={`toggle-btn ${activeStrategy === 'short_term' ? 'active' : ''}`}
                       onClick={() => setActiveStrategy('short_term')}
                     >
                       Short-Term Volatility
                     </button>
-                    <button 
+                    <button
                       className={`toggle-btn ${activeStrategy === 'long_term' ? 'active' : ''}`}
                       onClick={() => setActiveStrategy('long_term')}
                     >
@@ -721,7 +721,7 @@ export default function Home() {
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                   Unsupervised HMM regime switching and sector covariance shrinkage backtested during historic liquidity drawdowns:
                 </p>
-                
+
                 <div style={{ borderLeft: '3px solid var(--color-buy)', paddingLeft: '12px', marginBottom: '16px' }}>
                   <div style={{ fontSize: '14px', fontWeight: 600 }}>Dot-Com Bubble (1999–2002)</div>
                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
@@ -770,7 +770,7 @@ export default function Home() {
                     }
                   });
                   const list = Object.values(summaryMap).sort((a: any, b: any) => b.mentions - a.mentions);
-                  
+
                   if (list.length === 0) {
                     return (
                       <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -778,24 +778,24 @@ export default function Home() {
                       </p>
                     );
                   }
-                  
+
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {list.map((item: any, idx: number) => {
                         const avg = item.totalScore / item.count;
                         const isSelected = selectedSentTicker === item.ticker;
                         return (
-                          <div 
-                            key={idx} 
+                          <div
+                            key={idx}
                             onClick={() => {
                               setSelectedSentTicker(item.ticker);
                               fetchSources(item.ticker);
                             }}
-                            style={{ 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
                               alignItems: 'center',
-                              padding: '12px', 
+                              padding: '12px',
                               borderRadius: '8px',
                               background: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(255,255,255,0.02)',
                               border: isSelected ? '1px solid var(--color-buy)' : '1px solid var(--border-glass)',
@@ -813,11 +813,11 @@ export default function Home() {
                               </div>
                               <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
                                 {item.sources.map((src: string, sIdx: number) => (
-                                  <span 
-                                    key={sIdx} 
-                                    style={{ 
-                                      fontSize: '9px', 
-                                      padding: '2px 6px', 
+                                  <span
+                                    key={sIdx}
+                                    style={{
+                                      fontSize: '9px',
+                                      padding: '2px 6px',
                                       borderRadius: '4px',
                                       background: src === 'premium' ? 'rgba(245, 158, 11, 0.15)' : src === 'reddit' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(59, 130, 246, 0.15)',
                                       color: src === 'premium' ? '#F59E0B' : src === 'reddit' ? '#A78BFA' : '#3B82F6',
@@ -867,19 +867,19 @@ export default function Home() {
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '320px', overflowY: 'auto', paddingRight: '4px' }}>
                     {sentSources.map((src: any, idx: number) => (
-                      <div 
-                        key={idx} 
-                        style={{ 
-                          background: 'rgba(0,0,0,0.2)', 
-                          border: '1px solid var(--border-glass)', 
-                          borderRadius: '8px', 
-                          padding: '10px' 
+                      <div
+                        key={idx}
+                        style={{
+                          background: 'rgba(0,0,0,0.2)',
+                          border: '1px solid var(--border-glass)',
+                          borderRadius: '8px',
+                          padding: '10px'
                         }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px', marginBottom: '6px' }}>
-                          <span style={{ 
-                            fontSize: '10px', 
-                            padding: '2px 6px', 
+                          <span style={{
+                            fontSize: '10px',
+                            padding: '2px 6px',
                             borderRadius: '4px',
                             background: src.source === 'premium' ? 'rgba(245, 158, 11, 0.15)' : src.source === 'reddit' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(59, 130, 246, 0.15)',
                             color: src.source === 'premium' ? '#F59E0B' : src.source === 'reddit' ? '#A78BFA' : '#3B82F6',
@@ -901,17 +901,17 @@ export default function Home() {
                           </div>
                         )}
                         {src.url && (
-                          <a 
-                            href={src.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            style={{ 
-                              fontSize: '11px', 
-                              color: 'var(--color-buy)', 
-                              textDecoration: 'none', 
-                              display: 'inline-flex', 
-                              alignItems: 'center', 
-                              gap: '4px' 
+                          <a
+                            href={src.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              fontSize: '11px',
+                              color: 'var(--color-buy)',
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
                             }}
                           >
                             Verify Source Link &rarr;
@@ -939,15 +939,15 @@ export default function Home() {
                     <select
                       value={premiumForm.ticker}
                       onChange={(e) => setPremiumForm({...premiumForm, ticker: e.target.value})}
-                      style={{ 
-                        width: '100%', 
-                        background: 'rgba(16, 20, 38, 0.95)', 
-                        border: '1px solid var(--border-glass)', 
-                        borderRadius: '6px', 
-                        color: 'var(--text-primary)', 
-                        padding: '6px 10px', 
-                        fontSize: '13px', 
-                        cursor: 'pointer' 
+                      style={{
+                        width: '100%',
+                        background: 'rgba(16, 20, 38, 0.95)',
+                        border: '1px solid var(--border-glass)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        padding: '6px 10px',
+                        fontSize: '13px',
+                        cursor: 'pointer'
                       }}
                     >
                       {universeTickers.map((t, idx) => (
@@ -958,19 +958,19 @@ export default function Home() {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Headline / Title</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="e.g. The Information: Tech giant plans AI trial expansion"
                       value={premiumForm.title}
                       onChange={(e) => setPremiumForm({...premiumForm, title: e.target.value})}
-                      style={{ 
-                        width: '100%', 
-                        background: 'rgba(0,0,0,0.2)', 
-                        border: '1px solid var(--border-glass)', 
-                        borderRadius: '6px', 
-                        color: 'var(--text-primary)', 
-                        padding: '6px 10px', 
-                        fontSize: '13px' 
+                      style={{
+                        width: '100%',
+                        background: 'rgba(0,0,0,0.2)',
+                        border: '1px solid var(--border-glass)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        padding: '6px 10px',
+                        fontSize: '13px'
                       }}
                       required
                     />
@@ -978,21 +978,21 @@ export default function Home() {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Article Content Preview</label>
-                    <textarea 
+                    <textarea
                       placeholder="Paste subscription text or main analysis points here..."
                       rows={3}
                       value={premiumForm.text}
                       onChange={(e) => setPremiumForm({...premiumForm, text: e.target.value})}
-                      style={{ 
-                        width: '100%', 
-                        background: 'rgba(0,0,0,0.2)', 
-                        border: '1px solid var(--border-glass)', 
-                        borderRadius: '6px', 
-                        color: 'var(--text-primary)', 
-                        padding: '6px 10px', 
+                      style={{
+                        width: '100%',
+                        background: 'rgba(0,0,0,0.2)',
+                        border: '1px solid var(--border-glass)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        padding: '6px 10px',
                         fontSize: '13px',
                         fontFamily: 'var(--font-sans)',
-                        resize: 'vertical' 
+                        resize: 'vertical'
                       }}
                       required
                     />
@@ -1000,24 +1000,24 @@ export default function Home() {
 
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Source Link (Optional)</label>
-                    <input 
-                      type="url" 
+                    <input
+                      type="url"
                       placeholder="https://www.theinformation.com/articles/..."
                       value={premiumForm.url}
                       onChange={(e) => setPremiumForm({...premiumForm, url: e.target.value})}
-                      style={{ 
-                        width: '100%', 
-                        background: 'rgba(0,0,0,0.2)', 
-                        border: '1px solid var(--border-glass)', 
-                        borderRadius: '6px', 
-                        color: 'var(--text-primary)', 
-                        padding: '6px 10px', 
-                        fontSize: '13px' 
+                      style={{
+                        width: '100%',
+                        background: 'rgba(0,0,0,0.2)',
+                        border: '1px solid var(--border-glass)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        padding: '6px 10px',
+                        fontSize: '13px'
                       }}
                     />
                   </div>
 
-                  <button 
+                  <button
                     type="submit"
                     style={{
                       background: 'rgba(245, 158, 11, 0.1)',
@@ -1040,10 +1040,10 @@ export default function Home() {
                   </button>
 
                   {premiumStatus && (
-                    <div style={{ 
-                      fontSize: '12px', 
-                      color: 'var(--color-gold)', 
-                      fontWeight: 500, 
+                    <div style={{
+                      fontSize: '12px',
+                      color: 'var(--color-gold)',
+                      fontWeight: 500,
                       textAlign: 'center',
                       padding: '6px',
                       background: 'rgba(245, 158, 11, 0.05)',
@@ -1076,16 +1076,16 @@ export default function Home() {
                       Compare your virtual portfolio's return curve against multiple major market indices and Berkshire Hathaway.
                     </p>
                   </div>
-                  
+
                   {/* Replay/Live Toggle */}
                   <div className="toggle-group" style={{ margin: 0 }}>
-                    <button 
+                    <button
                       className={`toggle-btn ${perfMode === 'live' ? 'active' : ''}`}
                       onClick={() => setPerfMode('live')}
                     >
                       Forward Live Simulation
                     </button>
-                    <button 
+                    <button
                       className={`toggle-btn ${perfMode === 'replay' ? 'active' : ''}`}
                       onClick={() => setPerfMode('replay')}
                     >
@@ -1139,19 +1139,19 @@ export default function Home() {
                     <LineChart data={perfCurve} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
                       <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={11} tickLine={false} />
-                      <YAxis 
-                        stroke="var(--text-secondary)" 
-                        fontSize={11} 
+                      <YAxis
+                        stroke="var(--text-secondary)"
+                        fontSize={11}
                         domain={['dataMin - 5000', 'dataMax + 5000']}
-                        tickFormatter={(val) => `$${(val/1000).toFixed(0)}k`} 
+                        tickFormatter={(val) => `$${(val/1000).toFixed(0)}k`}
                         tickLine={false}
                       />
-                      <Tooltip 
-                        contentStyle={{ 
-                          background: 'rgba(16, 20, 38, 0.95)', 
-                          border: '1px solid var(--border-glass)', 
+                      <Tooltip
+                        contentStyle={{
+                          background: 'rgba(16, 20, 38, 0.95)',
+                          border: '1px solid var(--border-glass)',
                           borderRadius: '8px',
-                          color: 'var(--text-primary)' 
+                          color: 'var(--text-primary)'
                         }}
                         formatter={(val: any) => [`$${parseFloat(val).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`]}
                       />
@@ -1236,8 +1236,8 @@ export default function Home() {
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                   <div style={{ flex: 1, position: 'relative' }}>
                     <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontWeight: 500 }}>$</span>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       value={editCashInput}
                       onChange={(e) => setEditCashInput(e.target.value)}
                       style={{
@@ -1249,10 +1249,10 @@ export default function Home() {
                         padding: '10px 10px 10px 24px',
                         fontFamily: 'var(--font-sans)',
                         fontSize: '14px'
-                      }} 
+                      }}
                     />
                   </div>
-                  <button 
+                  <button
                     onClick={handleUpdateCash}
                     style={{
                       background: 'rgba(0, 242, 254, 0.1)',
@@ -1277,13 +1277,13 @@ export default function Home() {
                   <Sliders size={20} color="var(--color-accent)" />
                   Portfolio Asset Policies
                 </h2>
-                
+
                 {/* Form to add a position */}
                 <form onSubmit={handleSaveHolding} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', background: 'rgba(0,0,0,0.15)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
                   <div style={{ flex: 1, minWidth: '120px' }}>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Ticker</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="AAPL"
                       value={newHolding.ticker}
                       onChange={(e) => setNewHolding({...newHolding, ticker: e.target.value})}
@@ -1293,8 +1293,8 @@ export default function Home() {
                   </div>
                   <div style={{ flex: 1, minWidth: '100px' }}>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Shares Owned</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       placeholder="10"
                       value={newHolding.quantity || ''}
                       onChange={(e) => setNewHolding({...newHolding, quantity: parseFloat(e.target.value) || 0})}
@@ -1304,8 +1304,8 @@ export default function Home() {
                   </div>
                   <div style={{ flex: 1, minWidth: '100px' }}>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Cost Basis ($)</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       placeholder="190.50"
                       value={newHolding.entry_price || ''}
                       onChange={(e) => setNewHolding({...newHolding, entry_price: parseFloat(e.target.value) || 0})}
@@ -1326,7 +1326,7 @@ export default function Home() {
                     </select>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                    <button 
+                    <button
                       type="submit"
                       style={{
                         background: 'var(--color-accent)',
@@ -1394,7 +1394,7 @@ export default function Home() {
                               </select>
                             </td>
                             <td>
-                              <button 
+                              <button
                                 onClick={() => handleDeleteHolding(h.ticker)}
                                 style={{
                                   background: 'transparent',
@@ -1431,8 +1431,8 @@ export default function Home() {
 
                 {/* Input to add ticker */}
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     placeholder="AAPL, MSFT, etc."
                     value={newUniverseTicker}
                     onChange={(e) => setNewUniverseTicker(e.target.value)}
@@ -1447,7 +1447,7 @@ export default function Home() {
                       fontFamily: 'var(--font-sans)'
                     }}
                   />
-                  <button 
+                  <button
                     onClick={handleAddTicker}
                     style={{
                       background: 'rgba(0,242,254,0.1)',
@@ -1467,7 +1467,7 @@ export default function Home() {
                 {/* List of active tickers */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '200px', overflowY: 'auto', padding: '4px' }}>
                   {universeTickers.map((ticker, idx) => (
-                    <div 
+                    <div
                       key={idx}
                       style={{
                         display: 'flex',
@@ -1482,7 +1482,7 @@ export default function Home() {
                       }}
                     >
                       <span>{ticker}</span>
-                      <button 
+                      <button
                         onClick={() => handleRemoveTicker(ticker)}
                         style={{
                           background: 'transparent',
@@ -1521,13 +1521,13 @@ export default function Home() {
                       <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Forward Simulation</div>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Days:</span>
-                        <input 
-                          type="number" 
-                          value={simDays} 
-                          onChange={(e) => setSimDays(parseInt(e.target.value) || 5)} 
-                          style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }} 
+                        <input
+                          type="number"
+                          value={simDays}
+                          onChange={(e) => setSimDays(parseInt(e.target.value) || 5)}
+                          style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }}
                         />
-                        <button 
+                        <button
                           onClick={async () => {
                             setRunningSim(true);
                             try {
@@ -1553,13 +1553,13 @@ export default function Home() {
                       <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Historical Replay</div>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Months:</span>
-                        <input 
-                          type="number" 
-                          value={replayMonths} 
-                          onChange={(e) => setReplayMonths(parseInt(e.target.value) || 6)} 
-                          style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }} 
+                        <input
+                          type="number"
+                          value={replayMonths}
+                          onChange={(e) => setReplayMonths(parseInt(e.target.value) || 6)}
+                          style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }}
                         />
-                        <button 
+                        <button
                           onClick={async () => {
                             setRunningSim(true);
                             try {

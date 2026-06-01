@@ -21,7 +21,7 @@ os.makedirs(SAVED_MODELS_DIR, exist_ok=True)
 
 class PortfolioOptimizer:
     """Implements Mean-Variance Sharpe Maximization and Fractional Kelly calculations."""
-    
+
     @staticmethod
     def calculate_optimal_weights(returns_df, target_regime):
         """
@@ -31,54 +31,54 @@ class PortfolioOptimizer:
         tickers = [col for col in returns_df.columns if col not in ["SPY", "QQQ", "date", "month_year"]]
         if len(tickers) < 2:
             return {t: 1.0/len(tickers) for t in tickers}
-            
+
         returns = returns_df[tickers].dropna()
         if returns.empty:
             return {t: 1.0/len(tickers) for t in tickers}
-            
+
         # Expected Returns (1-year simple average returns)
         exp_returns = returns.mean() * 252  # Annualized
-        
+
         # Shrinkage Covariance Matrix via Ledoit-Wolf
         lw = LedoitWolf()
         cov_matrix = lw.fit(returns).covariance_ * 252  # Annualized
-        
+
         # Risk modification based on HMM Regime
         # If we are in high volatility contraction (crisis), shrink weights or maximize Cash/Index
         # In Growth: standard Sharpe max. In Crisis: penalize high-beta assets
         num_assets = len(tickers)
-        
+
         # Solve for Maximum Sharpe Ratio using random portfolios simulation (robust & simple retail approach)
         num_portfolios = 10000
         best_sharpe = -100
         best_weights = np.ones(num_assets) / num_assets
-        
+
         # Convert expected returns and cov to numpy arrays
         er = exp_returns.values
         cov = cov_matrix
-        
+
         # Constraints: Weights sum to 1.0, long-only (0.0 <= w <= 0.25 to prevent over-concentration)
         for _ in range(num_portfolios):
             weights = np.random.random(num_assets)
             weights /= np.sum(weights)
-            
+
             # Apply maximum concentration constraint (max 25% in one stock)
             weights = np.clip(weights, 0.0, 0.25)
             weights /= np.sum(weights)
-            
+
             # Portfolio metrics
             p_return = np.sum(er * weights)
             p_volatility = np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
-            
+
             # Risk free rate proxy (based on regime)
             rf = 0.04
-            
+
             p_sharpe = (p_return - rf) / (p_volatility + 1e-9)
-            
+
             if p_sharpe > best_sharpe:
                 best_sharpe = p_sharpe
                 best_weights = weights
-                
+
         # Return dict
         optimal_weights = {tickers[i]: float(best_weights[i]) for i in range(num_assets)}
         return optimal_weights
@@ -93,12 +93,12 @@ class PortfolioOptimizer:
         p = win_prob
         q = 1.0 - p
         b = payoff_ratio
-        
+
         if b <= 0:
             return 0.0
-            
+
         f_star = (b * p - q) / b
-        
+
         # Bound between 0.0 and 1.0, then scale by fraction
         f_star = max(0.0, min(1.0, f_star))
         return f_star * fraction
@@ -106,33 +106,33 @@ class PortfolioOptimizer:
 def load_data_from_db():
     """Loads prices, sentiment and macro from SQLite and builds a merged features dataset."""
     db = SessionLocal()
-    
+
     # 1. Fetch Prices
     prices = db.query(RecentPrice).all()
     if not prices:
         db.close()
         raise ValueError("No price records found in SQLite database. Run ingestion first!")
-        
+
     prices_df = pd.DataFrame([{
-        "ticker": p.ticker, "date": p.date, "open": p.open, 
+        "ticker": p.ticker, "date": p.date, "open": p.open,
         "high": p.high, "low": p.low, "close": p.close, "volume": p.volume
     } for p in prices])
-    
+
     # 2. Fetch Macro
     macro = db.query(MacroIndicator).all()
     macro_df = pd.DataFrame([{
         "date": m.date, "indicator_name": m.indicator_name, "value": m.value
     } for m in macro]) if macro else pd.DataFrame()
-    
+
     # 3. Fetch Sentiment
     sent = db.query(TickerSentiment).all()
     sent_df = pd.DataFrame([{
-        "ticker": s.ticker, "date": s.date, "source": s.source, 
+        "ticker": s.ticker, "date": s.date, "source": s.source,
         "sentiment_score": s.sentiment_score, "mention_count": s.mention_count
     } for s in sent]) if sent else pd.DataFrame()
-    
+
     db.close()
-    
+
     # Process features per ticker
     processed_dfs = []
     for ticker in TICKER_UNIVERSE:
@@ -140,13 +140,13 @@ def load_data_from_db():
         if len(ticker_prices) < 50: # Need enough rows for technical features
             continue
         ticker_sent = sent_df[sent_df['ticker'] == ticker] if not sent_df.empty else pd.DataFrame()
-        
+
         t_feat = build_features_for_df(ticker_prices, ticker_sent, macro_df)
         processed_dfs.append(t_feat)
-        
+
     if not processed_dfs:
         raise ValueError("Insufficient historical rows per ticker to build features.")
-        
+
     full_df = pd.concat(processed_dfs, ignore_index=True)
     return full_df
 
@@ -154,23 +154,23 @@ def train_models():
     """Trains the XGBoost classifier and the macro HMM model."""
     print("Loading data for model training...")
     df = load_data_from_db()
-    
+
     # --- 1. Train Short-Term XGBoost Model ---
     print("\n--- Training Short-Term XGBoost Classifier ---")
-    
+
     # Features starting with 'feat_'
     feature_cols = [col for col in df.columns if col.startswith("feat_")]
     target_col = "target_3d_gain"
-    
+
     # Remove rows with NaN target (last few rows of dataset because target is future-looking)
     train_data = df.dropna(subset=[target_col]).copy()
-    
+
     X = train_data[feature_cols]
     y = train_data[target_col]
-    
+
     print(f"Features list: {feature_cols}")
     print(f"Training dataset size: {X.shape[0]} rows, {X.shape[1]} features.")
-    
+
     # Fit XGBoost
     model = xgb.XGBClassifier(
         n_estimators=100,
@@ -182,17 +182,17 @@ def train_models():
         random_state=42
     )
     model.fit(X, y)
-    
+
     # Save model natively as JSON
     model_path = os.path.join(SAVED_MODELS_DIR, "short_term_model.json")
     model.save_model(model_path)
     print(f"Short-Term XGBoost Model saved successfully to: {model_path}")
-    
+
     # --- 2. Train Long-Term HMM Regime Model ---
     print("\n--- Training Long-Term HMM Regime Classifier ---")
     # Fetch SPY prices to extract volatility
     spy_data = df[df["ticker"] == "SPY"].sort_values("date").copy()
-    
+
     if spy_data.empty:
         print("Warning: SPY index data missing. Cannot fit HMM. Creating dummy HMM file...")
         # Save dummy regime file
@@ -200,34 +200,34 @@ def train_models():
         with open(os.path.join(SAVED_MODELS_DIR, "hmm_metadata.pkl"), "wb") as f:
             pickle.dump(dummy_regime, f)
         return
-        
+
     # We want daily vol, fed funds and yield spread
     hmm_features = spy_data[["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]].dropna()
-    
+
     # Standardize features
     X_hmm = hmm_features.values
-    
+
     # Fit Gaussian HMM with 3 components (Growth, Transition, Crisis)
     hmm_model = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
     hmm_model.fit(X_hmm)
-    
+
     # Map components to regimes based on Volatility mean
     # Lower vol = Growth/Bull, Higher vol = Crisis/Bear, Mid vol = Transition
     means = hmm_model.means_
     vol_means = means[:, 0]  # Volatility is index 0
     sorted_states = np.argsort(vol_means)
-    
+
     state_mapping = {
         sorted_states[0]: "growth",
         sorted_states[1]: "transition",
         sorted_states[2]: "crisis"
     }
-    
+
     # Save model and metadata
     hmm_path = os.path.join(SAVED_MODELS_DIR, "hmm_model.pkl")
     with open(hmm_path, "wb") as f:
         pickle.dump(hmm_model, f)
-        
+
     metadata = {
         "state_mapping": state_mapping,
         "features": ["volatility_10", "fed_funds", "yield_spread"],
@@ -236,7 +236,7 @@ def train_models():
     metadata_path = os.path.join(SAVED_MODELS_DIR, "hmm_metadata.pkl")
     with open(metadata_path, "wb") as f:
         pickle.dump(metadata, f)
-        
+
     print(f"Long-Term HMM Model saved successfully to: {hmm_path}")
     print(f"Regime State Mapping: {state_mapping}")
     print("Model training execution complete.\n")

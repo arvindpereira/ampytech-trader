@@ -61,13 +61,13 @@ def main():
         default=6,
         help="Number of months to replay in backtest mode"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Change working directory to backend/ directory for consistency
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(backend_dir)
-    
+
     if args.action == "fetch":
         fetch()
     elif args.action == "train":

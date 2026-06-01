@@ -43,35 +43,35 @@ def score_and_log_sources(db, ticker, date_str, source, items):
     """
     if not items:
         return 0.0, 0.0, 0.0
-        
+
     analyzer = SentimentIntensityAnalyzer()
     scores = []
     pos_count = 0
     neg_count = 0
-    
+
     # Clear existing source logs for this ticker, date, and source to prevent duplicates on rerun
     db.query(SentimentSourceLog).filter(
         SentimentSourceLog.ticker == ticker,
         SentimentSourceLog.date == date_str,
         SentimentSourceLog.source == source
     ).delete()
-    
+
     for item in items:
         title = item.get("title", "")
         text = item.get("text", "")
         url = item.get("url", "")
-        
+
         # Calculate VADER polarity
         full_content = (title + ". " + text) if text else title
         vs = analyzer.polarity_scores(full_content)
         compound = vs['compound']
         scores.append(compound)
-        
+
         if compound > 0.05:
             pos_count += 1
         elif compound < -0.05:
             neg_count += 1
-            
+
         # Write individual source log
         log_rec = SentimentSourceLog(
             ticker=ticker,
@@ -83,13 +83,13 @@ def score_and_log_sources(db, ticker, date_str, source, items):
             score=compound
         )
         db.add(log_rec)
-        
+
     db.commit()
-    
+
     avg_score = sum(scores) / len(scores)
     pos_ratio = pos_count / len(items)
     neg_ratio = neg_count / len(items)
-    
+
     return avg_score, pos_ratio, neg_ratio
 
 def fetch_reddit_sentiment(db, date_str):
@@ -97,7 +97,7 @@ def fetch_reddit_sentiment(db, date_str):
     if not reddit:
         print("Reddit credentials missing or invalid. Skipping live Reddit fetch.")
         return False
-        
+
     print("Fetching live Reddit sentiment from r/wallstreetbets and r/stocks...")
     try:
         # Collect recent submissions
@@ -106,14 +106,14 @@ def fetch_reddit_sentiment(db, date_str):
             subreddit = reddit.subreddit(sub_name)
             for submission in subreddit.hot(limit=100):
                 submissions_objs.append(submission)
-                
+
         # Group submissions by ticker mention
         ticker_items = {ticker: [] for ticker in TICKER_UNIVERSE}
         for sub in submissions_objs:
             title = sub.title
             text = sub.selftext or ""
             url = f"https://www.reddit.com{sub.permalink}"
-            
+
             upper_content = (title + " " + text).upper()
             for ticker in TICKER_UNIVERSE:
                 # Add word boundary check
@@ -123,20 +123,20 @@ def fetch_reddit_sentiment(db, date_str):
                         "text": text[:500],
                         "url": url
                     })
-                    
+
         # Score each ticker and save aggregates
         for ticker, items in ticker_items.items():
             if not items:
                 continue
-                
+
             score, pos, neg = score_and_log_sources(db, ticker, date_str, "reddit", items)
-            
+
             existing = db.query(TickerSentiment).filter(
                 TickerSentiment.ticker == ticker,
                 TickerSentiment.date == date_str,
                 TickerSentiment.source == "reddit"
             ).first()
-            
+
             if existing:
                 existing.sentiment_score = score
                 existing.positive_ratio = pos
@@ -165,11 +165,11 @@ def fetch_news_sentiment(db, date_str):
     if not NEWS_API_KEY and not FINNHUB_API_KEY:
         print("NewsAPI & Finnhub keys missing. Skipping live news fetch.")
         return False
-        
+
     print("Fetching news sentiment from live API...")
     try:
         ticker_items = {ticker: [] for ticker in TICKER_UNIVERSE}
-        
+
         if NEWS_API_KEY:
             for ticker in TICKER_UNIVERSE:
                 url = f"https://newsapi.org/v2/everything?q={ticker}&pageSize=20&apiKey={NEWS_API_KEY}"
@@ -185,13 +185,13 @@ def fetch_news_sentiment(db, date_str):
                             "text": desc[:500] if desc else "",
                             "url": link
                         })
-                        
+
         elif FINNHUB_API_KEY:
             end_t = datetime.now()
             start_t = end_t - timedelta(days=1)
             start_str = start_t.strftime("%Y-%m-%d")
             end_str = end_t.strftime("%Y-%m-%d")
-            
+
             for ticker in TICKER_UNIVERSE:
                 if ticker in ["SPY", "QQQ"]:
                     continue
@@ -205,20 +205,20 @@ def fetch_news_sentiment(db, date_str):
                             "text": item.get("summary", "")[:500],
                             "url": item.get("url", "")
                         })
-                        
+
         # Score and store
         for ticker, items in ticker_items.items():
             if not items:
                 continue
-                
+
             score, pos, neg = score_and_log_sources(db, ticker, date_str, "news", items)
-            
+
             existing = db.query(TickerSentiment).filter(
                 TickerSentiment.ticker == ticker,
                 TickerSentiment.date == date_str,
                 TickerSentiment.source == "news"
             ).first()
-            
+
             if existing:
                 existing.sentiment_score = score
                 existing.positive_ratio = pos
@@ -254,69 +254,69 @@ def fetch_premium_news_sentiment(db, date_str):
     archive_dir = os.path.join(premium_dir, "archive")
     os.makedirs(premium_dir, exist_ok=True)
     os.makedirs(archive_dir, exist_ok=True)
-    
+
     files = [f for f in os.listdir(premium_dir) if f.endswith(('.txt', '.md'))]
     if not files:
         return
-        
+
     print(f"Found {len(files)} premium articles to process in premium_news/.")
     ticker_items = {ticker: [] for ticker in TICKER_UNIVERSE}
-    
+
     for filename in files:
         filepath = os.path.join(premium_dir, filename)
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
-                
+
             detected_ticker = None
             filename_upper = filename.upper()
-            
+
             # Match ticker in filename
             for ticker in TICKER_UNIVERSE:
                 if ticker in filename_upper:
                     detected_ticker = ticker
                     break
-                    
+
             # Fallback to scanning content
             if not detected_ticker:
                 for ticker in TICKER_UNIVERSE:
                     if f" {ticker} " in f" {content.upper()} ":
                         detected_ticker = ticker
                         break
-                        
+
             if not detected_ticker:
                 print(f"Skipping premium file {filename}: no ticker detected.")
                 continue
-                
+
             title = filename.replace(".txt", "").replace(".md", "").replace("_", " ")
-            
+
             ticker_items[detected_ticker].append({
                 "title": title,
                 "text": content[:1000],
                 "url": "local-premium-upload"
             })
-            
+
             # Move to archive folder
             dest_filename = f"{date_str}_{filename}"
             os.rename(filepath, os.path.join(archive_dir, dest_filename))
             print(f"Processed and archived premium file: {filename} for ticker {detected_ticker}")
-            
+
         except Exception as e:
             print(f"Error processing premium file {filename}: {e}")
-            
+
     # Write to db
     for ticker, items in ticker_items.items():
         if not items:
             continue
-            
+
         score, pos, neg = score_and_log_sources(db, ticker, date_str, "premium", items)
-        
+
         existing = db.query(TickerSentiment).filter(
             TickerSentiment.ticker == ticker,
             TickerSentiment.date == date_str,
             TickerSentiment.source == "premium"
         ).first()
-        
+
         if existing:
             existing.sentiment_score = score
             existing.positive_ratio = pos
@@ -338,7 +338,7 @@ def fetch_premium_news_sentiment(db, date_str):
 def generate_mock_sentiment(db, date_str):
     """Generates realistic mock sentiment scores for active tickers if APIs are unavailable."""
     print("Generating simulated sentiment data (no keys present)...")
-    
+
     new_records = 0
     for ticker in TICKER_UNIVERSE:
         for source in ["news", "reddit"]:
@@ -347,10 +347,10 @@ def generate_mock_sentiment(db, date_str):
                 TickerSentiment.ticker == ticker,
                 TickerSentiment.source == source
             ).first()
-            
+
             if existing:
                 continue
-                
+
             if ticker in ["TSLA", "NVDA", "AMD"]:
                 score = random.uniform(-0.6, 0.8)
                 mentions = random.randint(3, 8)
@@ -360,10 +360,10 @@ def generate_mock_sentiment(db, date_str):
             else:
                 score = random.uniform(-0.3, 0.5)
                 mentions = random.randint(2, 5)
-                
+
             pos = max(0.0, score + random.uniform(0.0, 0.3)) if score > 0 else random.uniform(0.0, 0.2)
             neg = max(0.0, -score + random.uniform(0.0, 0.3)) if score < 0 else random.uniform(0.0, 0.2)
-            
+
             # Seed mock individual source items so the UI still displays sample details
             mock_items = []
             for m_idx in range(mentions):
@@ -385,9 +385,9 @@ def generate_mock_sentiment(db, date_str):
                     "text": f"Simulated detail logs for {ticker} tracking indicators and market social buzz.",
                     "url": f"https://finance.yahoo.com/quote/{ticker}"
                 })
-                
+
             score, pos, neg = score_and_log_sources(db, ticker, date_str, source, mock_items)
-            
+
             s_rec = TickerSentiment(
                 ticker=ticker,
                 date=date_str,
@@ -399,40 +399,40 @@ def generate_mock_sentiment(db, date_str):
             )
             db.add(s_rec)
             new_records += 1
-            
+
     db.commit()
     print(f"Successfully simulated sentiment scores and logged sources. Added {new_records} records.")
 
 def fetch_sentiment():
     init_db()
     db = SessionLocal()
-    
+
     today = datetime.now()
     yesterday = today - timedelta(days=1)
-    
+
     for dt in [yesterday, today]:
         date_str = dt.strftime("%Y-%m-%d")
         print(f"\n--- Processing Sentiment for {date_str} ---")
-        
+
         # 1. Premium news folder scanner runs first so it can process uploads on any day
         fetch_premium_news_sentiment(db, date_str)
-        
+
         # Check database count to avoid API limit hits
         existing_count = db.query(TickerSentiment).filter(
             TickerSentiment.date == date_str,
             TickerSentiment.source != "premium"  # Ignore premium for standard api locks
         ).count()
-        
+
         if existing_count >= 40:
             print(f"Sentiment records for {date_str} are already complete in SQLite database. Skipping API checks.")
             continue
-            
+
         news_fetched = fetch_news_sentiment(db, date_str)
         reddit_fetched = fetch_reddit_sentiment(db, date_str)
-        
+
         if not news_fetched or not reddit_fetched:
             generate_mock_sentiment(db, date_str)
-            
+
     db.close()
     print("\nSentiment processing completed.\n")
 

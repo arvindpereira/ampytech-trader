@@ -17,7 +17,7 @@ Based on user review and technical auditing, we have aligned on the following:
 
 2. **Historical Training & Stress-Testing Horizon**:
    * **Default Window**: 2 years of rolling daily historical price and active sentiment (Reddit/News) data for near-term trend and sentiment feature engineering.
-   * **Macro Crisis Eras (for Long-Term Strategy)**: The data ingestion pipeline will retrieve three additional historical periods to extract **regime-level meta-learnings** — how markets behave under stress, which sectors rotate in/out, and how asset correlations shift. 
+   * **Macro Crisis Eras (for Long-Term Strategy)**: The data ingestion pipeline will retrieve three additional historical periods to extract **regime-level meta-learnings** — how markets behave under stress, which sectors rotate in/out, and how asset correlations shift.
      - Because historical Reddit/news data is not freely retrievable via standard APIs for any prior period (including 2020), **historical crisis modeling will rely strictly on price action, volume, sector relative strength, and macro indicators (interest rates, yield curve) via the FRED API**.
      - The crisis universe for each period will include: broad market and sector ETFs available at the time (e.g., `XLK`, `XLF`, `XLE`, `XLV`, `XLP` for all eras; `GLD` and `TLT` are restricted to the 2008 GFC and 2020 COVID eras as they did not exist during the Dot-Com era), plus representative index components. Note: `QQQ` must use a start date of `1999-03-10` (its inception date) for the Dot-Com era; `crisis_universes.yaml` should support per-ticker date overrides within each era config.
      - **Crisis Eras**:
@@ -28,7 +28,7 @@ Based on user review and technical auditing, we have aligned on the following:
 3. **Database Selection**: **SQLite** local file database (`backend/data/trading_system.db`) for rapid setup and local execution.
 
 4. **Sentiment Data Source**:
-   * **Live / Near-Term**: **NewsAPI / Finnhub** for news headlines, and **Reddit (r/wallstreetbets, r/stocks)** via the official **PRAW** library. 
+   * **Live / Near-Term**: **NewsAPI / Finnhub** for news headlines, and **Reddit (r/wallstreetbets, r/stocks)** via the official **PRAW** library.
      - **Credential Requirements**: Only read-only client keys (Client ID, Client Secret, User Agent) are required. Usernames and passwords are not collected.
      - **Rate-Limiting Protection**: To avoid rate limit exhaustion (NewsAPI free tier limits to 100 queries/day) during development restarts, all ingestion scripts must verify if data for the current day already exists in SQLite before hitting external APIs.
    * **Historical Backtesting**: Because standard APIs do not provide free access to historical news or Reddit data for prior years, backtests of past periods will use price-only and macro features. Incorporating historical news text is a future enhancement dependent on sourcing a specific labeled dataset.

@@ -6,7 +6,7 @@ def compute_rsi(prices, window=14):
     delta = prices.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    
+
     rs = gain / (loss + 1e-9)
     rsi = 100 - (100 / (1 + rs))
     return rsi
@@ -16,11 +16,11 @@ def compute_atr(df, window=14):
     high = df['high']
     low = df['low']
     close_shift = df['close'].shift(1)
-    
+
     tr1 = high - low
     tr2 = (high - close_shift).abs()
     tr3 = (low - close_shift).abs()
-    
+
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     atr = tr.rolling(window=window).mean()
     return atr
@@ -40,46 +40,46 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None):
     Assumes df is sorted chronologically by date.
     """
     df = df.copy()
-    
+
     # --- Technical Indicators ---
     df['returns'] = df['close'].pct_change()
     df['volatility_10'] = df['returns'].rolling(window=10).std()
-    
+
     # Moving Averages
     df['sma_10'] = df['close'].rolling(window=10).mean()
     df['sma_50'] = df['close'].rolling(window=50).mean()
     df['ma_ratio'] = df['sma_10'] / (df['sma_50'] + 1e-9)
-    
+
     # RSI & MACD
     df['rsi_14'] = compute_rsi(df['close'], window=14)
     macd, macd_sig = compute_macd(df['close'])
     df['macd'] = macd
     df['macd_signal'] = macd_sig
-    
+
     # Bollinger Bands
     df['bb_mid'] = df['close'].rolling(window=20).mean()
     df['bb_std'] = df['close'].rolling(window=20).std()
     df['bb_width'] = (2 * df['bb_std']) / (df['bb_mid'] + 1e-9)
-    
+
     # ATR for volatility sizing
     df['atr_14'] = compute_atr(df, window=14)
-    
+
     # --- Merge Sentiment ---
     if sentiment_df is not None and not sentiment_df.empty:
         # Pivot sentiment to get separate columns for 'news' and 'reddit' scores
         sent_pivot = sentiment_df.pivot_table(
-            index='date', 
-            columns='source', 
+            index='date',
+            columns='source',
             values=['sentiment_score', 'mention_count'],
             fill_value=0.0
         )
         # Flatten multi-index columns
         sent_pivot.columns = [f"{col[1]}_{col[0]}" for col in sent_pivot.columns]
         sent_pivot = sent_pivot.reset_index()
-        
+
         # Merge with price df
         df = pd.merge(df, sent_pivot, on='date', how='left')
-        
+
         # Fill missing sentiment values with neutral (0) or 0 count
         for col in ['news_sentiment_score', 'reddit_sentiment_score']:
             if col in df.columns:
@@ -93,19 +93,19 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None):
         df['reddit_sentiment_score'] = 0.0
         df['news_mention_count'] = 0
         df['reddit_mention_count'] = 0
-        
+
     # Sentiment engineered features
     df['combined_sentiment'] = 0.6 * df['news_sentiment_score'] + 0.4 * df['reddit_sentiment_score']
     df['sent_sma_3'] = df['combined_sentiment'].rolling(window=3).mean()
     df['sent_sma_7'] = df['combined_sentiment'].rolling(window=7).mean()
     df['sent_momentum'] = df['combined_sentiment'] - df['combined_sentiment'].rolling(window=10).mean().fillna(0.0)
-    
+
     # --- Merge Macro Indicators ---
     if macro_df is not None and not macro_df.empty:
         # Pivot macro indicators to get separate columns
         macro_pivot = macro_df.pivot(index='date', columns='indicator_name', values='value').reset_index()
         df = pd.merge(df, macro_pivot, on='date', how='left')
-        
+
         # Forward fill macro indicators since they represent steady states
         for col in ['fed_funds', 'yield_spread']:
             if col in df.columns:
@@ -121,25 +121,25 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None):
     future_high_3d = df['high'].shift(-1).rolling(window=3, min_periods=1).max()
     df['target_3d_gain'] = ((future_high_3d / df['close']) - 1.0) >= 0.02
     df['target_3d_gain'] = df['target_3d_gain'].astype(int)
-    
+
     # --- Strict Look-Ahead Bias Mitigation ---
     # Shift ALL feature columns by 1 to represent data available at the market CLOSE of day T-1
     # Features shifted are technical indicators, sentiment scores, and macro factors.
     feature_cols = [
-        'open', 'high', 'low', 'close', 'volume', 'returns', 'volatility_10', 
-        'sma_10', 'sma_50', 'ma_ratio', 'rsi_14', 'macd', 'macd_signal', 
+        'open', 'high', 'low', 'close', 'volume', 'returns', 'volatility_10',
+        'sma_10', 'sma_50', 'ma_ratio', 'rsi_14', 'macd', 'macd_signal',
         'bb_mid', 'bb_std', 'bb_width', 'atr_14',
         'news_sentiment_score', 'reddit_sentiment_score', 'news_mention_count', 'reddit_mention_count',
         'combined_sentiment', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
         'fed_funds', 'yield_spread'
     ]
-    
+
     # Keep original unshifted close & date for reference/labeling, but prefix feature names
     for col in feature_cols:
         if col in df.columns:
             df[f"feat_{col}"] = df[col].shift(1)
-            
+
     # Drop rows that don't have enough history to compute indicators
     df = df.dropna(subset=[f"feat_sma_50"])
-    
+
     return df
