@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import requests
 
@@ -14,8 +14,9 @@ from app.core.config import (
     TICKER_UNIVERSE
 )
 from app.database import (
-    SessionLocal, init_db, ExecutedTrade,
-    RecentPrice, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog
+    SessionLocal, init_db, ExecutedTrade, RecentPrice,
+    VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
+    UniverseTicker
 )
 from ml_engine.models import PortfolioOptimizer
 import numpy as np
@@ -267,6 +268,193 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data):
                     db.rollback()
 
     print("Alpaca order executions complete.\n")
+
+    # Run long-term grid/tranche rebalancing
+    from app.main import get_sim_date
+    sim_date = get_sim_date()
+    if not sim_date:
+        sim_date = datetime.now().strftime("%Y-%m-%d")
+    execute_long_term_grid_trades(db, api, suggestions_data, sim_date)
+
+def get_long_term_available_shares(db, ticker, current_date_str):
+    """
+    Finds shares that have been held for more than 1 year (365 days)
+    using FIFO matching on VirtualOrder execution logs. Manual initial holdings
+    default to long-term.
+    """
+    current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
+
+    pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker).first()
+    if not pos or pos.quantity <= 0:
+        return 0.0
+    total_owned = pos.quantity
+
+    buys = db.query(VirtualOrder).filter(
+        VirtualOrder.ticker == ticker,
+        VirtualOrder.side == "buy",
+        VirtualOrder.status == "filled"
+    ).all()
+
+    def get_order_date(o):
+        if o.sim_date:
+            return datetime.strptime(o.sim_date, "%Y-%m-%d").date()
+        if "T" in o.created_at:
+            return datetime.strptime(o.created_at.split("T")[0], "%Y-%m-%d").date()
+        return datetime.strptime(o.created_at, "%Y-%m-%d").date()
+
+    sorted_buys = sorted(buys, key=get_order_date)
+    total_buy_orders_qty = sum(b.qty for b in sorted_buys)
+
+    lots = []
+    # Manual holdings (difference between owned and virtually purchased) are assumed long-term
+    if total_owned > total_buy_orders_qty:
+        manual_qty = total_owned - total_buy_orders_qty
+        lots.append({
+            "qty": manual_qty,
+            "date": current_date - timedelta(days=500)
+        })
+
+    for b in sorted_buys:
+        lots.append({
+            "qty": b.qty,
+            "date": get_order_date(b)
+        })
+
+    sells = db.query(VirtualOrder).filter(
+        VirtualOrder.ticker == ticker,
+        VirtualOrder.side == "sell",
+        VirtualOrder.status == "filled"
+    ).all()
+
+    sorted_sells = sorted(sells, key=get_order_date)
+    total_sell_qty = sum(s.qty for s in sorted_sells)
+
+    remaining_sell = total_sell_qty
+    for lot in lots:
+        if remaining_sell <= 0:
+            break
+        if lot["qty"] <= remaining_sell:
+            remaining_sell -= lot["qty"]
+            lot["qty"] = 0.0
+        else:
+            lot["qty"] -= remaining_sell
+            remaining_sell = 0.0
+
+    long_term_qty = 0.0
+    for lot in lots:
+        if lot["qty"] > 0:
+            days_held = (current_date - lot["date"]).days
+            if days_held >= 365:
+                long_term_qty += lot["qty"]
+
+    return min(long_term_qty, total_owned)
+
+def execute_long_term_grid_trades(db, api, suggestions_data, sim_date):
+    """
+    Executes long-term grid/tranche-based buying and tax-optimized FIFO selling
+    for assets with policy == 'rebalance'.
+    """
+    print("--- Running Long-Term Grid/Tranche Rebalancing ---")
+
+    allocations = suggestions_data.get("long_term_allocation", [])
+    target_weights = {a["ticker"]: a["weight"] for a in allocations}
+
+    try:
+        account = api.get_account()
+        portfolio_equity = float(account.equity)
+        buying_power = float(account.buying_power)
+    except Exception as e:
+        print(f"Failed to get account for long-term rebalance: {e}")
+        return
+
+    positions_db = {p.ticker: p for p in db.query(VirtualPosition).all()}
+
+    # Load stock universe dynamically from DB (honoring user edits)
+    db_tickers = db.query(UniverseTicker).all()
+    active_universe = [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
+
+    for ticker in active_universe:
+        if ticker == "CASH":
+            continue
+
+        target_weight = target_weights.get(ticker, 0.0)
+        pos = positions_db.get(ticker)
+        current_shares = pos.quantity if pos else 0.0
+        entry_price = pos.entry_price if pos else 0.0
+        policy = pos.policy if pos else "rebalance"
+
+        if policy != "rebalance":
+            continue
+
+        price_rec = db.query(RecentPrice).filter(RecentPrice.ticker == ticker, RecentPrice.date == sim_date).first()
+        if not price_rec:
+            price_rec = db.query(RecentPrice).filter(RecentPrice.ticker == ticker, RecentPrice.date <= sim_date).order_by(RecentPrice.date.desc()).first()
+
+        if not price_rec:
+            continue
+
+        current_price = price_rec.close
+        target_shares = (portfolio_equity * target_weight) / current_price
+        diff_shares = target_shares - current_shares
+
+        price_dev = 0.0
+        if entry_price > 0.0:
+            price_dev = (current_price - entry_price) / entry_price
+
+        tranche_cap_equity = portfolio_equity * 0.02
+        tranche_cap_shares = tranche_cap_equity / current_price
+
+        # Grid Buy: underweight AND (new position OR price fell at least 3% below entry price)
+        if diff_shares > 0.01:
+            should_buy = (current_shares == 0.0) or (price_dev <= -0.03)
+
+            if should_buy:
+                n_shares = min(diff_shares, tranche_cap_shares)
+                if n_shares < 0.01:
+                    continue
+
+                cost = n_shares * current_price
+                if cost > buying_power:
+                    n_shares = buying_power / current_price
+
+                if n_shares >= 0.01:
+                    print(f"Long-Term Grid BUY: Symbol: {ticker}. Current: ${current_price:.2f}, Cost Basis: ${entry_price:.2f} ({price_dev*100:+.1f}%). Placing cautious tranche of {n_shares:.2f} shares.")
+                    try:
+                        api.submit_order(
+                            symbol=ticker,
+                            qty=n_shares,
+                            side='buy',
+                            type='market',
+                            time_in_force='gtc'
+                        )
+                        buying_power -= (n_shares * current_price)
+                    except Exception as e:
+                        print(f"Failed to submit long-term buy order for {ticker}: {e}")
+
+        # Grid Sell: overweight AND price increased at least 5% above cost basis
+        elif diff_shares < -0.01 and current_shares > 0.0:
+            if price_dev >= 0.05:
+                m_shares = min(abs(diff_shares), tranche_cap_shares)
+
+                # Verify age using FIFO holding period checker (must be held > 365 days)
+                tax_eligible_shares = get_long_term_available_shares(db, ticker, sim_date)
+                m_shares = min(m_shares, tax_eligible_shares)
+
+                if m_shares >= 0.01:
+                    print(f"Long-Term Grid SELL (Tax-Optimized FIFO): Symbol: {ticker}. Current: ${current_price:.2f}, Cost Basis: ${entry_price:.2f} ({price_dev*100:+.1f}%). Selling {m_shares:.2f} shares.")
+                    try:
+                        api.submit_order(
+                            symbol=ticker,
+                            qty=m_shares,
+                            side='sell',
+                            type='market',
+                            time_in_force='gtc'
+                        )
+                    except Exception as e:
+                        print(f"Failed to submit long-term sell order for {ticker}: {e}")
+                else:
+                    if abs(diff_shares) >= 0.01:
+                        print(f"Long-Term Grid SELL skipped for {ticker}: Price is up {price_dev*100:+.1f}%, but no shares qualify as long-term (> 365 days held). Tax-eligible: {tax_eligible_shares:.2f} shares.")
 
 def run_execution():
     init_db()
