@@ -1,0 +1,85 @@
+# Crisis Universes Definition File
+# Maps tickers to ingest for each historical era
+
+dotcom:
+  start_date: "1999-01-01"
+  end_date: "2002-12-31"
+  tickers:
+    # Sector ETFs (Launched Dec 1998)
+    - "XLK"  # Tech
+    - "XLF"  # Finance
+    - "XLE"  # Energy
+    - "XLV"  # Health
+    - "XLP"  # Consumer Staples
+    # Representative Names
+    - "MSFT"
+    - "AAPL"
+    - "CSCO"
+    - "INTC"
+    - "GE"
+    - "AMZN"
+  overrides:
+    # QQQ Inception: March 10, 1999
+    "QQQ":
+      start_date: "1999-03-10"
+
+gfc:
+  start_date: "2007-01-01"
+  end_date: "2009-12-31"
+  tickers:
+    # Indices
+    - "SPY"
+    - "QQQ"
+    # Sector & Safe Haven ETFs
+    - "XLK"
+    - "XLF"
+    - "XLE"
+    - "XLV"
+    - "XLP"
+    - "GLD"  # Gold ETF (Launched 2004)
+    - "TLT"  # Bond ETF (Launched 2002)
+    # Representative names
+    - "MSFT"
+    - "AAPL"
+    - "GE"
+    - "BAC"
+    - "C"
+    - "JPM"
+    - "XOM"
+    - "AMZN"
+    - "GOOGL"
+
+covid:
+  start_date: "2020-01-01"
+  end_date: "2020-12-31"
+  tickers:
+    # Indices
+    - "SPY"
+    - "QQQ"
+    # Sector & Safe Haven ETFs
+    - "XLK"
+    - "XLF"
+    - "XLE"
+    - "XLV"
+    - "XLP"
+    - "GLD"
+    - "TLT"
+    # Our active 20-ticker universe (highly relevant for testing our models on 2020)
+    - "AAPL"
+    - "MSFT"
+    - "NVDA"
+    - "AMD"
+    - "GOOGL"
+    - "AMZN"
+    - "META"
+    - "NFLX"
+    - "TSM"
+    - "JPM"
+    - "V"
+    - "XOM"
+    - "WMT"
+    - "PG"
+    - "JNJ"
+    - "LLY"
+    - "UNH"
+    - "TSLA"

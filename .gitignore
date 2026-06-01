@@ -1,0 +1,28 @@
+# Dependencies
+backend/venv/
+frontend/node_modules/
+
+# Local database & data
+backend/data/trading_system.db
+backend/data/*.db
+
+# Caches
+backend/pybroker_cache/
+.next/
+frontend/.next/
+frontend/out/
+__pycache__/
+backend/__pycache__/
+backend/*/__pycache__/
+backend/*/*/__pycache__/
+.pytest_cache/
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+ehthumbs.db
+Thumbs.db
+
+# Saved Models (if you want to keep them local, or track them if needed - we'll ignore them to prevent binary bloat)
+backend/ml_engine/saved_models/*.json
+backend/ml_engine/saved_models/*.pkl

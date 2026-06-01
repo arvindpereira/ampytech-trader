@@ -1,0 +1,72 @@
+from sqlalchemy import Column, String, Float, Integer, Date, PrimaryKeyConstraint
+from app.database.connection import Base
+
+class RecentPrice(Base):
+    __tablename__ = "recent_prices"
+    
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)  # ISO date string YYYY-MM-DD
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False)
+    
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "date", name="pk_recent_prices"),
+    )
+
+class CrisisPrice(Base):
+    __tablename__ = "crisis_prices"
+    
+    ticker = Column(String, nullable=False)
+    era = Column(String, nullable=False)    # 'dotcom', 'gfc', 'covid'
+    date = Column(String, nullable=False)   # ISO date string YYYY-MM-DD
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False)
+    
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "era", "date", name="pk_crisis_prices"),
+    )
+
+class MacroIndicator(Base):
+    __tablename__ = "macro_indicators"
+    
+    date = Column(String, nullable=False)   # ISO date string YYYY-MM-DD
+    indicator_name = Column(String, nullable=False)  # 'fed_funds', 'yield_spread', etc.
+    value = Column(Float, nullable=False)
+    
+    __table_args__ = (
+        PrimaryKeyConstraint("date", "indicator_name", name="pk_macro_indicators"),
+    )
+
+class TickerSentiment(Base):
+    __tablename__ = "ticker_sentiment"
+    
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)   # ISO date string YYYY-MM-DD
+    sentiment_score = Column(Float, nullable=False)  # Average polarity (-1.0 to 1.0)
+    positive_ratio = Column(Float, default=0.0)
+    negative_ratio = Column(Float, default=0.0)
+    mention_count = Column(Integer, default=0)
+    source = Column(String, nullable=False)  # 'news' or 'reddit'
+    
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "date", "source", name="pk_ticker_sentiment"),
+    )
+
+class ExecutedTrade(Base):
+    __tablename__ = "executed_trades"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)
+    action = Column(String, nullable=False)    # 'BUY', 'SELL'
+    price = Column(Float, nullable=False)
+    shares = Column(Float, nullable=False)
+    value = Column(Float, nullable=False)
+    status = Column(String, default="filled")  # 'filled' or 'simulated'
+

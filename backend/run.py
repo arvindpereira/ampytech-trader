@@ -1,0 +1,71 @@
+#!/usr/bin/env python
+import argparse
+import sys
+import subprocess
+import os
+
+def run_command(command, description):
+    print(f"=== Running: {description} ===")
+    try:
+        # Ensure we run from the backend directory context
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.path.dirname(os.path.abspath(__file__))
+        result = subprocess.run(command, check=True, env=env)
+        print(f"=== Completed: {description} successfully ===\n")
+        return result.returncode == 0
+    except subprocess.CalledProcessError as e:
+        print(f"Error during execution: {e}", file=sys.stderr)
+        sys.exit(e.returncode)
+
+def fetch():
+    # Run the various fetchers sequentially
+    scripts = [
+        [sys.executable, "data_ingestion/price_fetcher.py"],
+        [sys.executable, "data_ingestion/macro_fetcher.py"],
+        [sys.executable, "data_ingestion/crisis_fetcher.py"],
+        [sys.executable, "data_ingestion/sentiment_fetcher.py"]
+    ]
+    for script in scripts:
+        script_name = os.path.basename(script[1])
+        run_command(script, f"Data Ingestion ({script_name})")
+
+def train():
+    run_command([sys.executable, "ml_engine/models.py", "--train"], "ML Model Training")
+
+def backtest():
+    run_command([sys.executable, "backtesting/backtest.py"], "PyBroker Backtesting & Stress Tests")
+
+def serve():
+    # Run Uvicorn to serve the FastAPI application
+    run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008", "--reload"], "FastAPI Server")
+
+def schedule():
+    run_command([sys.executable, "execution/scheduler.py"], "APScheduler Background Worker Daemon")
+
+def main():
+    parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
+    parser.add_argument(
+        "action",
+        choices=["fetch", "train", "backtest", "serve", "schedule"],
+        help="Pipeline stage to execute"
+    )
+    
+    args = parser.parse_code = parser.parse_args()
+    
+    # Change working directory to backend/ directory for consistency
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(backend_dir)
+    
+    if args.action == "fetch":
+        fetch()
+    elif args.action == "train":
+        train()
+    elif args.action == "backtest":
+        backtest()
+    elif args.action == "serve":
+        serve()
+    elif args.action == "schedule":
+        schedule()
+
+if __name__ == "__main__":
+    main()
