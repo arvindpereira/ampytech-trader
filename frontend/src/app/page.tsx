@@ -19,7 +19,8 @@ import {
   Lock,
   Unlock,
   Play,
-  RotateCcw
+  RotateCcw,
+  Cpu
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -70,6 +71,7 @@ interface VirtualPosition {
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor'>('dashboard');
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'long_term'>('short_term');
+  const [appMode, setAppMode] = useState<'real' | 'simulated'>('real');
   const [loading, setLoading] = useState<boolean>(true);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
   const [regime, setRegime] = useState<string>('growth');
@@ -132,15 +134,23 @@ export default function Home() {
   const fetchSources = async (ticker: string) => {
     setLoadingSources(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/sentiment/sources?ticker=${ticker}`);
+      const res = await fetch(`http://localhost:8008/api/sentiment/sources?ticker=${ticker}&mode=${appMode}`);
       if (res.ok) {
         const data = await res.json();
         setSentSources(data.sources || []);
       } else {
-        loadMockSources(ticker);
+        if (appMode !== 'real') {
+          loadMockSources(ticker);
+        } else {
+          setSentSources([]);
+        }
       }
     } catch (err) {
-      loadMockSources(ticker);
+      if (appMode !== 'real') {
+        loadMockSources(ticker);
+      } else {
+        setSentSources([]);
+      }
     } finally {
       setLoadingSources(false);
     }
@@ -186,11 +196,11 @@ export default function Home() {
     setLoading(true);
     try {
       // 1. Fetch Suggestions
-      const sugRes = await fetch('http://localhost:8008/api/suggestions');
+      const sugRes = await fetch(`http://localhost:8008/api/suggestions?mode=${appMode}`);
       if (sugRes.ok) {
         const sugData = await sugRes.json();
-        setSuggestions(sugData.short_term_suggestions);
-        setAllocations(sugData.long_term_allocation);
+        setSuggestions(sugData.short_term_suggestions || []);
+        setAllocations(sugData.long_term_allocation || []);
         setRegime(sugData.date ? sugData.regime : 'growth');
         setDate(sugData.date || '');
         setBackendOnline(true);
@@ -199,52 +209,61 @@ export default function Home() {
       }
 
       // 2. Fetch Performance Curve based on mode
-      const perfRes = await fetch(`http://localhost:8008/api/performance?mode=${perfMode}`);
+      const perfRes = await fetch(`http://localhost:8008/api/performance?mode=${appMode === 'real' ? 'live' : perfMode}`);
       if (perfRes.ok) {
         const perfData = await perfRes.json();
-        setPerfCurve(perfData.equity_curve);
-        setMetrics(perfData.metrics);
+        setPerfCurve(perfData.equity_curve || []);
+        setMetrics(perfData.metrics || { total_return: 0, sharpe_ratio: 0, max_drawdown: 0, win_rate: 0 });
       }
 
       // 3. Fetch Universe Tickers
       const uniRes = await fetch('http://localhost:8008/api/universe');
       if (uniRes.ok) {
         const uniData = await uniRes.json();
-        setUniverseTickers(uniData.tickers);
+        setUniverseTickers(uniData.tickers || []);
       }
 
       // 4. Fetch User Holdings & Virtual Account
-      const holdRes = await fetch('http://localhost:8008/api/holdings');
+      const holdRes = await fetch(`http://localhost:8008/api/holdings?mode=${appMode}`);
       if (holdRes.ok) {
         const holdData = await holdRes.json();
-        setHoldings(holdData);
+        setHoldings(holdData || []);
       }
 
-      const accRes = await fetch('http://localhost:8008/api/virtual_alpaca/v2/account');
+      const accRes = await fetch(`http://localhost:8008/api/virtual_alpaca/v2/account?mode=${appMode}`);
       if (accRes.ok) {
         const accData = await accRes.json();
-        setAccountCash(parseFloat(accData.cash));
-        setAccountEquity(parseFloat(accData.portfolio_value));
+        setAccountCash(parseFloat(accData.cash) || 0);
+        setAccountEquity(parseFloat(accData.portfolio_value) || 0);
       }
 
       // 5. Fetch Virtual Positions
-      const vposRes = await fetch('http://localhost:8008/api/virtual_alpaca/v2/positions');
+      const vposRes = await fetch(`http://localhost:8008/api/virtual_alpaca/v2/positions?mode=${appMode}`);
       if (vposRes.ok) {
         const vposData = await vposRes.json();
-        setVirtualPositions(vposData);
+        setVirtualPositions(vposData || []);
       }
 
       // 6. Fetch Sentiment list
-      const sentRes = await fetch('http://localhost:8008/api/sentiment');
+      const sentRes = await fetch(`http://localhost:8008/api/sentiment?mode=${appMode}`);
       if (sentRes.ok) {
         const sentData = await sentRes.json();
         setSentimentList(sentData.sentiment || []);
       }
 
     } catch (err) {
-      console.warn("FastAPI backend is offline. Loading simulated local values.");
+      console.warn("FastAPI backend is offline.");
       setBackendOnline(false);
-      loadMockData();
+      if (appMode !== 'real') {
+        loadMockData();
+      } else {
+        setSuggestions([]);
+        setAllocations([]);
+        setHoldings([]);
+        setVirtualPositions([]);
+        setPerfCurve([]);
+        setSentimentList([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -254,7 +273,7 @@ export default function Home() {
     if (selectedSentTicker) {
       fetchSources(selectedSentTicker);
     }
-  }, [selectedSentTicker, backendOnline]);
+  }, [selectedSentTicker, backendOnline, appMode]);
 
   const loadMockData = () => {
     setDate(new Date().toISOString().split('T')[0]);
@@ -344,7 +363,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchData();
-  }, [perfMode]);
+  }, [perfMode, appMode]);
 
   // Universe Editor Handlers
   const handleAddTicker = async () => {
@@ -401,7 +420,7 @@ export default function Home() {
 
     if (backendOnline) {
       try {
-        const res = await fetch('http://localhost:8008/api/holdings', {
+        const res = await fetch(`http://localhost:8008/api/holdings?mode=${appMode}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -430,7 +449,7 @@ export default function Home() {
   const handleDeleteHolding = async (ticker: string) => {
     if (backendOnline) {
       try {
-        const res = await fetch(`http://localhost:8008/api/holdings/${ticker}`, {
+        const res = await fetch(`http://localhost:8008/api/holdings/${ticker}?mode=${appMode}`, {
           method: 'DELETE'
         });
         if (res.ok) {
@@ -448,7 +467,7 @@ export default function Home() {
     const payload = { ticker, quantity, entry_price, policy };
     if (backendOnline) {
       try {
-        const res = await fetch('http://localhost:8008/api/holdings', {
+        const res = await fetch(`http://localhost:8008/api/holdings?mode=${appMode}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -476,7 +495,7 @@ export default function Home() {
 
     if (backendOnline) {
       try {
-        const res = await fetch('http://localhost:8008/api/account', {
+        const res = await fetch(`http://localhost:8008/api/account?mode=${appMode}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cash: cashVal })
@@ -517,16 +536,76 @@ export default function Home() {
     }
   };
 
+  const realThemeStyles = (appMode === 'real' ? {
+    '--color-buy': '#10B981',
+    '--color-buy-bg': 'rgba(16, 185, 129, 0.1)',
+    '--color-accent': '#0D9488',
+    '--border-glow': 'rgba(13, 148, 136, 0.2)',
+    '--color-sell': '#EF4444',
+  } : {}) as React.CSSProperties;
+
   return (
-    <div style={{ background: 'var(--bg-dark)', minHeight: '100vh', color: 'var(--text-primary)' }}>
+    <div style={{ background: 'var(--bg-dark)', minHeight: '100vh', color: 'var(--text-primary)', ...realThemeStyles }}>
       {/* Top Navbar */}
       <header className="navbar">
         <div className="nav-logo">
-          <Activity size={28} color="#00F2FE" />
+          <Activity size={28} color="var(--color-buy)" />
           <span>AMPYTECH TRADER</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          {/* Mode Switcher Toggle */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid var(--border-glass)',
+            borderRadius: '999px',
+            padding: '2px',
+            gap: '2px'
+          }}>
+            <button
+              onClick={() => setAppMode('real')}
+              style={{
+                background: appMode === 'real' ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+                border: appMode === 'real' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid transparent',
+                borderRadius: '999px',
+                color: appMode === 'real' ? '#10B981' : 'var(--text-secondary)',
+                padding: '6px 12px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'var(--transition-smooth)'
+              }}
+            >
+              <Cpu size={14} />
+              REAL MODE
+            </button>
+            <button
+              onClick={() => setAppMode('simulated')}
+              style={{
+                background: appMode === 'simulated' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                border: appMode === 'simulated' ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
+                borderRadius: '999px',
+                color: appMode === 'simulated' ? '#00F2FE' : 'var(--text-secondary)',
+                padding: '6px 12px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'var(--transition-smooth)'
+              }}
+            >
+              <Sliders size={14} />
+              SIMULATED
+            </button>
+          </div>
+
           {!backendOnline && (
             <span style={{ fontSize: '13px', color: '#FF4B6E', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <ShieldAlert size={16} /> Backend Server Offline (Local Mode)
@@ -654,6 +733,27 @@ export default function Home() {
                   </div>
                 </div>
 
+                {appMode === 'real' && suggestions.length === 0 && (
+                  <div style={{
+                    background: 'rgba(239, 68, 68, 0.08)',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    marginBottom: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-sell)', fontWeight: 600 }}>
+                      <ShieldAlert size={18} />
+                      No Real Market Suggestions Available
+                    </div>
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                      To generate real suggestions, please ensure your Alpaca and Massive.com credentials are configured in your <code style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>.env</code> file, then run <code style={{ fontFamily: 'monospace', color: 'var(--color-buy)', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>make fetch</code> to ingest current market data and run model inference.
+                    </p>
+                  </div>
+                )}
+
                 {activeStrategy === 'short_term' ? (
                   <div style={{ overflowX: 'auto' }}>
                     <table className="trade-table">
@@ -774,7 +874,10 @@ export default function Home() {
                   if (list.length === 0) {
                     return (
                       <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        No sentiment records loaded. Start the backend or run simulated fetching.
+                        {appMode === 'real'
+                          ? "No real sentiment records loaded. Please run 'make fetch' to ingest news/Reddit sentiment insights."
+                          : "No sentiment records loaded. Start the backend or run simulated fetching."
+                        }
                       </p>
                     );
                   }
@@ -862,7 +965,10 @@ export default function Home() {
                   </div>
                 ) : sentSources.length === 0 ? (
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>
-                    No active sentiment sources logged for {selectedSentTicker} today.
+                    {appMode === 'real'
+                      ? `No real sentiment articles or Reddit logs found for ${selectedSentTicker} in the database.`
+                      : `No active sentiment sources logged for ${selectedSentTicker} today.`
+                    }
                   </p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '320px', overflowY: 'auto', paddingRight: '4px' }}>
@@ -1189,7 +1295,10 @@ export default function Home() {
                       {virtualPositions.length === 0 ? (
                         <tr>
                           <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                            No active positions. Add holdings or run simulations.
+                            {appMode === 'real'
+                              ? "No active positions found in your real virtual broker account. Configure holdings or run execution scheduler."
+                              : "No active positions. Add holdings or run simulations."
+                            }
                           </td>
                         </tr>
                       ) : (
@@ -1364,7 +1473,10 @@ export default function Home() {
                       {holdings.length === 0 ? (
                         <tr>
                           <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                            No holdings loaded. Add your assets using the form above.
+                            {appMode === 'real'
+                              ? "No real portfolio holdings configured. Please add your active investments using the form above."
+                              : "No holdings loaded. Add your assets using the form above."
+                            }
                           </td>
                         </tr>
                       ) : (
@@ -1503,7 +1615,6 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-
               {/* Simulation triggers panel */}
               {backendOnline && (
                 <div className="glass-card">
@@ -1511,85 +1622,110 @@ export default function Home() {
                     <Play size={20} color="var(--color-buy)" />
                     Replay & Simulation Engine
                   </h2>
-                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-                    Manually trigger historical replays or forward simulations. Results will update the performance graphs automatically.
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    {/* Forward live simulation button */}
-                    <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
-                      <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Forward Simulation</div>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Days:</span>
-                        <input
-                          type="number"
-                          value={simDays}
-                          onChange={(e) => setSimDays(parseInt(e.target.value) || 5)}
-                          style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }}
-                        />
-                        <button
-                          onClick={async () => {
-                            setRunningSim(true);
-                            try {
-                              const res = await fetch(`http://localhost:8008/api/simulate?days=${simDays}`, { method: 'POST' });
-                              if (res.ok) {
-                                setTimeout(fetchData, 1500);
-                              }
-                            } catch(e) {
-                              console.error(e);
-                            }
-                            setRunningSim(false);
-                          }}
-                          disabled={runningSim}
-                          style={{ flex: 1, background: runningSim ? 'rgba(255,255,255,0.05)' : 'rgba(0, 242, 254, 0.1)', border: runningSim ? '1px solid var(--border-glass)' : '1px solid var(--color-buy)', borderRadius: '6px', color: runningSim ? 'var(--text-secondary)' : 'var(--color-buy)', padding: '6px', cursor: runningSim ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}
-                        >
-                          {runningSim ? 'Running...' : 'Run Simulation'}
-                        </button>
+                  {appMode === 'real' ? (
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '24px 12px',
+                      background: 'rgba(0, 0, 0, 0.25)',
+                      borderRadius: '8px',
+                      border: '1px solid rgba(239, 68, 68, 0.1)',
+                      marginTop: '12px',
+                      textAlign: 'center'
+                    }}>
+                      <Lock size={32} color="var(--color-sell)" style={{ marginBottom: '12px', opacity: 0.8 }} />
+                      <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                        Simulation Locked in Real Mode
                       </div>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                        To prevent database pollution and protect real positions, forward simulations and historical replays are disabled in Real Mode.
+                      </p>
                     </div>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+                        Manually trigger historical replays or forward simulations. Results will update the performance graphs automatically.
+                      </p>
 
-                    {/* Historical replay button */}
-                    <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
-                      <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Historical Replay</div>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Months:</span>
-                        <input
-                          type="number"
-                          value={replayMonths}
-                          onChange={(e) => setReplayMonths(parseInt(e.target.value) || 6)}
-                          style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }}
-                        />
-                        <button
-                          onClick={async () => {
-                            setRunningSim(true);
-                            try {
-                              const res = await fetch(`http://localhost:8008/api/backtest-virtual?months=${replayMonths}`, { method: 'POST' });
-                              if (res.ok) {
-                                setTimeout(fetchData, 1500);
-                              }
-                            } catch(e) {
-                              console.error(e);
-                            }
-                            setRunningSim(false);
-                          }}
-                          disabled={runningSim}
-                          style={{ flex: 1, background: runningSim ? 'rgba(255,255,255,0.05)' : 'rgba(59, 130, 246, 0.1)', border: runningSim ? '1px solid var(--border-glass)' : '1px solid var(--color-accent)', borderRadius: '6px', color: runningSim ? 'var(--text-secondary)' : 'var(--color-accent)', padding: '6px', cursor: runningSim ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}
-                        >
-                          {runningSim ? 'Running...' : 'Run Replay'}
-                        </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {/* Forward live simulation button */}
+                        <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
+                          <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Forward Simulation</div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Days:</span>
+                            <input
+                              type="number"
+                              value={simDays}
+                              onChange={(e) => setSimDays(parseInt(e.target.value) || 5)}
+                              style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }}
+                            />
+                            <button
+                              onClick={async () => {
+                                setRunningSim(true);
+                                try {
+                                  const res = await fetch(`http://localhost:8008/api/simulate?days=${simDays}`, { method: 'POST' });
+                                  if (res.ok) {
+                                    setTimeout(fetchData, 1500);
+                                  }
+                                } catch(e) {
+                                  console.error(e);
+                                }
+                                setRunningSim(false);
+                              }}
+                              disabled={runningSim}
+                              style={{ flex: 1, background: runningSim ? 'rgba(255,255,255,0.05)' : 'rgba(0, 242, 254, 0.1)', border: runningSim ? '1px solid var(--border-glass)' : '1px solid var(--color-buy)', borderRadius: '6px', color: runningSim ? 'var(--text-secondary)' : 'var(--color-buy)', padding: '6px', cursor: runningSim ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}
+                            >
+                              {runningSim ? 'Running...' : 'Run Simulation'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Historical replay button */}
+                        <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
+                          <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>Historical Replay</div>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Months:</span>
+                            <input
+                              type="number"
+                              value={replayMonths}
+                              onChange={(e) => setReplayMonths(parseInt(e.target.value) || 6)}
+                              style={{ width: '60px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-primary)', padding: '4px', textAlign: 'center', fontSize: '13px' }}
+                            />
+                            <button
+                              onClick={async () => {
+                                setRunningSim(true);
+                                try {
+                                  const res = await fetch(`http://localhost:8008/api/backtest-virtual?months=${replayMonths}`, { method: 'POST' });
+                                  if (res.ok) {
+                                    setTimeout(fetchData, 1500);
+                                  }
+                                } catch(e) {
+                                  console.error(e);
+                                }
+                                setRunningSim(false);
+                              }}
+                              disabled={runningSim}
+                              style={{ flex: 1, background: runningSim ? 'rgba(255,255,255,0.05)' : 'rgba(59, 130, 246, 0.1)', border: runningSim ? '1px solid var(--border-glass)' : '1px solid var(--color-accent)', borderRadius: '6px', color: runningSim ? 'var(--text-secondary)' : 'var(--color-accent)', padding: '6px', cursor: runningSim ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}
+                            >
+                              {runningSim ? 'Running...' : 'Run Replay'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '0 4px' }}>
+                          Tip: You can also execute these simulations directly in your terminal using:
+                          <code style={{ display: 'block', background: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', marginTop: '6px', color: '#3B82F6', fontFamily: 'monospace' }}>
+                            python run.py simulate --days {simDays}
+                          </code>
+                          <code style={{ display: 'block', background: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', marginTop: '4px', color: '#3B82F6', fontFamily: 'monospace' }}>
+                            python run.py backtest-virtual --months {replayMonths}
+                          </code>
+                        </div>
                       </div>
-                    </div>
-
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '0 4px' }}>
-                      Tip: You can also execute these simulations directly in your terminal using:
-                      <code style={{ display: 'block', background: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', marginTop: '6px', color: '#3B82F6', fontFamily: 'monospace' }}>
-                        python run.py simulate --days {simDays}
-                      </code>
-                      <code style={{ display: 'block', background: 'rgba(0,0,0,0.3)', padding: '6px', borderRadius: '4px', marginTop: '4px', color: '#3B82F6', fontFamily: 'monospace' }}>
-                        python run.py backtest-virtual --months {replayMonths}
-                      </code>
-                    </div>
-                  </div>
+                    </>
+                  )}
                 </div>
               )}
             </aside>

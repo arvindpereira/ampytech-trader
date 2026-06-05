@@ -1,16 +1,23 @@
-from sqlalchemy import Column, String, Float, Integer, Date, PrimaryKeyConstraint
+from sqlalchemy import Column, String, Float, Integer, Date, PrimaryKeyConstraint, Boolean
 from app.database.connection import Base
 
 class RecentPrice(Base):
     __tablename__ = "recent_prices"
 
     ticker = Column(String, nullable=False)
-    date = Column(String, nullable=False)  # ISO date string YYYY-MM-DD
+    date = Column(String, nullable=False)  # ISO date string YYYY-MM-DD or datetime
     open = Column(Float, nullable=False)
     high = Column(Float, nullable=False)
     low = Column(Float, nullable=False)
     close = Column(Float, nullable=False)
     volume = Column(Float, nullable=False)
+
+    # Pre-calculated Technical Indicators from Massive.com
+    sma_10 = Column(Float, nullable=True)
+    sma_50 = Column(Float, nullable=True)
+    rsi_14 = Column(Float, nullable=True)
+    macd = Column(Float, nullable=True)
+    macd_signal = Column(Float, nullable=True)
 
     __table_args__ = (
         PrimaryKeyConstraint("ticker", "date", name="pk_recent_prices"),
@@ -44,15 +51,16 @@ class MacroIndicator(Base):
     )
 
 class TickerSentiment(Base):
-    __tablename__ = "ticker_sentiment"
+    __tablename__ = "ticker_sentiments"
 
     ticker = Column(String, nullable=False)
-    date = Column(String, nullable=False)   # ISO date string YYYY-MM-DD
-    sentiment_score = Column(Float, nullable=False)  # Average polarity (-1.0 to 1.0)
+    date = Column(String, nullable=False)   # YYYY-MM-DD
+    sentiment_score = Column(Float, default=0.0)
     positive_ratio = Column(Float, default=0.0)
     negative_ratio = Column(Float, default=0.0)
     mention_count = Column(Integer, default=0)
     source = Column(String, nullable=False)  # 'news' or 'reddit'
+    is_mock = Column(Boolean, nullable=True, default=False)
 
     __table_args__ = (
         PrimaryKeyConstraint("ticker", "date", "source", name="pk_ticker_sentiment"),
@@ -89,16 +97,23 @@ class VirtualAccount(Base):
 class VirtualPosition(Base):
     __tablename__ = "virtual_positions"
 
-    ticker = Column(String, primary_key=True)
+    ticker = Column(String, nullable=False)
+    mode = Column(String, nullable=False, default="real")
     quantity = Column(Float, nullable=False, default=0.0)
     entry_price = Column(Float, nullable=False, default=0.0)
     policy = Column(String, nullable=False, default="rebalance")  # 'rebalance', 'lock', 'liquidate'
+    purchase_date = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "mode", name="pk_virtual_positions"),
+    )
 
 
 class VirtualOrder(Base):
     __tablename__ = "virtual_orders"
 
     id = Column(String, primary_key=True)
+    mode = Column(String, nullable=False, default="real")
     ticker = Column(String, nullable=False)
     qty = Column(Float, nullable=False)
     side = Column(String, nullable=False)  # 'buy' or 'sell'
@@ -137,3 +152,4 @@ class SentimentSourceLog(Base):
     text = Column(String, nullable=True)
     url = Column(String, nullable=True)
     score = Column(Float, nullable=False)
+    is_mock = Column(Boolean, nullable=True, default=False)

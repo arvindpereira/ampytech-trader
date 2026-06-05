@@ -38,7 +38,7 @@ train:
 	@echo "========================================================================"
 	@echo "🧠 Training XGBoost breakout models & HMM portfolio optimizer..."
 	@echo "========================================================================"
-	cd backend && venv/bin/python3 run.py train
+	cd backend && venv/bin/python3 run.py train --epochs 100
 	@echo "✅ Training complete. Artifacts saved in backend/ml_engine/saved_models/"
 
 backtest:

@@ -29,6 +29,13 @@ class MockAlpacaAPI:
             "type": type
         })
         print(f"[MockAlpacaAPI] Order submitted: {side} {qty} shares of {symbol}")
+        import random
+        import time
+        order_id = f"mock-order-{random.randint(1000, 9999)}-{int(time.time() * 1000)}"
+        class MockOrder:
+            def __init__(self, oid):
+                self.id = oid
+        return MockOrder(order_id)
 
 def run_test():
     init_db()
@@ -202,6 +209,30 @@ def run_test():
 
         assert len(api_sell_skip.submitted_orders) == 0, f"Expected 0 orders submitted (skipped due to tax lock), got {len(api_sell_skip.submitted_orders)}"
         print("Passed Test 8!")
+
+        print("\n--- Test 9: Manual holding with specific purchase_date ---")
+        # Clean MSFT orders and position first
+        db.query(VirtualPosition).filter(VirtualPosition.ticker == "MSFT").delete()
+        db.query(VirtualOrder).filter(VirtualOrder.ticker == "MSFT").delete()
+        db.commit()
+
+        # Add manual position with a long-term purchase_date (500 days ago relative to 2026-06-01)
+        long_term_date = (datetime.strptime("2026-06-01", "%Y-%m-%d") - timedelta(days=500)).strftime("%Y-%m-%d")
+        pos_lt = VirtualPosition(ticker="MSFT", quantity=50.0, entry_price=300.0, policy="rebalance", purchase_date=long_term_date)
+        db.add(pos_lt)
+        db.commit()
+
+        shares = get_long_term_available_shares(db, "MSFT", "2026-06-01")
+        assert shares == 50.0, f"Expected 50.0 long-term shares, got {shares}"
+
+        # Update manual position with a short-term purchase_date (10 days ago relative to 2026-06-01)
+        short_term_date = (datetime.strptime("2026-06-01", "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
+        pos_lt.purchase_date = short_term_date
+        db.commit()
+
+        shares = get_long_term_available_shares(db, "MSFT", "2026-06-01")
+        assert shares == 0.0, f"Expected 0.0 long-term shares for short-term purchase_date, got {shares}"
+        print("Passed Test 9!")
 
         print("\nALL UNIT TESTS PASSED SUCCESSFULLY! ✅")
 

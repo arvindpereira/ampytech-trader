@@ -1,98 +1,109 @@
 import sys
 import os
 from datetime import datetime, timedelta
-import pandas as pd
 import requests
 
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import FRED_API_KEY
+from app.core.config import MASSIVE_API_KEY, MASSIVE_BASE_URL, DATA_LOOKBACK_DAYS
 from app.database import init_db, SessionLocal, MacroIndicator
-
-# Macro series IDs from FRED
-MACRO_SERIES = {
-    "DFF": "fed_funds",         # Daily Effective Federal Funds Rate
-    "T10Y2Y": "yield_spread"    # 10-Year Treasury Constant Maturity Minus 2-Year Treasury Constant Maturity
-}
 
 def fetch_macro_indicators():
     init_db()
     db = SessionLocal()
 
-    print("Starting macro indicator fetch from FRED...")
+    print("Starting macro indicator fetch from Massive.com...")
+    if DATA_LOOKBACK_DAYS >= 10000:
+        start_date_str = "1996-01-01"
+    else:
+        start_date_str = (datetime.now() - timedelta(days=DATA_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
 
-    # We will fetch macro data for the default 2 years + a buffer to support backtesting overlaps
-    two_years_ago = (datetime.now() - timedelta(days=730)).strftime("%Y-%m-%d")
+    url = f"{MASSIVE_BASE_URL}/fed/v1/treasury-yields?date.gte={start_date_str}&limit=1000"
+    headers = {}
+    if MASSIVE_API_KEY:
+        headers["Authorization"] = f"Bearer {MASSIVE_API_KEY}"
 
-    for series_id, clean_name in MACRO_SERIES.items():
-        # Retrieve FRED data
-        # We prefer public CSV URLs to bypass API key requirements, but support API keys if set
-        try:
-            if FRED_API_KEY:
-                print(f"Fetching {clean_name} ({series_id}) using FRED API Key...")
-                url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json"
-                response = requests.get(url)
-                response.raise_for_status()
-                data = response.json()
+    results = []
+    try:
+        while url:
+            print(f"Fetching macro data page: {url}...")
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            page_results = data.get("results", [])
+            results.extend(page_results)
+            url = data.get("next_url")
 
-                observations = data.get("observations", [])
-                df = pd.DataFrame(observations)
-                if not df.empty:
-                    df = df.rename(columns={"date": "date", "value": "value"})
-                    df = df[["date", "value"]]
-            else:
-                print(f"Fetching {clean_name} ({series_id}) using public FRED CSV fallback...")
-                csv_url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
-                df = pd.read_csv(csv_url)
-                df = df.rename(columns={"observation_date": "date", series_id: "value"})
+        if not results:
+            print("No treasury yield data returned from Massive.com.")
+            db.close()
+            return
 
-            if df.empty:
-                print(f"No macro data returned for {clean_name}.")
+        # Pre-load all existing macro indicators to avoid N+1 queries
+        print("Pre-loading existing macro indicators from database...")
+        existing_records = db.query(MacroIndicator).all()
+        existing_map = {(r.date, r.indicator_name): r for r in existing_records}
+
+        # Sort results by date asc
+        results = sorted(results, key=lambda x: x["date"])
+
+        new_spread_records = 0
+        new_funds_records = 0
+        updated_records = 0
+
+        for row in results:
+            date_str = row["date"]
+            if date_str < start_date_str:
                 continue
 
-            # Filter and clean the data
-            df = df[df["date"] >= two_years_ago]
+            y10 = row.get("yield_10_year")
+            y2 = row.get("yield_2_year")
+            y3m = row.get("yield_3_month")
 
-            # Clean missing values marked as "." in FRED CSV or parsed as NaN or empty
-            df = df.dropna(subset=["value"])
-            df = df[df["value"].astype(str).str.strip() != "."]
-            df = df[df["value"].astype(str).str.strip() != ""]
+            if y10 is not None and y2 is not None:
+                spread_val = float(y10) - float(y2)
 
-            new_records = 0
-            for _, row in df.iterrows():
-                date_str = str(row["date"])
-                val = float(row["value"])
-
-                # Check database to prevent duplicates
-                existing = db.query(MacroIndicator).filter(
-                    MacroIndicator.date == date_str,
-                    MacroIndicator.indicator_name == clean_name
-                ).first()
+                key = (date_str, "yield_spread")
+                existing = existing_map.get(key)
 
                 if existing:
-                    # Update value if it changed (rare, but useful for revisions)
-                    if existing.value != val:
-                        existing.value = val
-                    continue
+                    if existing.value != spread_val:
+                        existing.value = spread_val
+                        db.add(existing)
+                        updated_records += 1
+                else:
+                    db.add(MacroIndicator(date=date_str, indicator_name="yield_spread", value=spread_val))
+                    new_spread_records += 1
 
-                macro_record = MacroIndicator(
-                    date=date_str,
-                    indicator_name=clean_name,
-                    value=val
-                )
-                db.add(macro_record)
-                new_records += 1
+            if y3m is not None:
+                # 3-Month Treasury Yield is used as a proxy for the Daily Effective Fed Funds Rate
+                funds_val = float(y3m)
 
-            db.commit()
-            print(f"Successfully processed {clean_name}. Added {new_records} new daily records.")
+                key = (date_str, "fed_funds")
+                existing = existing_map.get(key)
 
-        except Exception as e:
-            print(f"Failed to fetch macro series {series_id}: {e}")
-            db.rollback()
+                if existing:
+                    if existing.value != funds_val:
+                        existing.value = funds_val
+                        db.add(existing)
+                        updated_records += 1
+                else:
+                    db.add(MacroIndicator(date=date_str, indicator_name="fed_funds", value=funds_val))
+                    new_funds_records += 1
+
+        db.commit()
+        print(f"Yield spread records added: {new_spread_records}")
+        print(f"Fed funds rate records added: {new_funds_records}")
+        print(f"Macro records updated: {updated_records}")
+
+    except Exception as e:
+        print(f"Failed to fetch treasury yields: {e}")
+        db.rollback()
 
     db.close()
     print("Macro indicator fetch completed.\n")
+
 
 if __name__ == "__main__":
     fetch_macro_indicators()

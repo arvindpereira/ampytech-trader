@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 from datetime import datetime, timedelta
 import pandas as pd
 import requests
@@ -136,7 +137,205 @@ def execute_local_paper_trade(db, suggestions_data):
     db.commit()
     print(f"Simulated executions completed. Current cash: ${sim_cash:.2f}, Portfolio equity: ${portfolio_equity:.2f}\n")
 
-def execute_alpaca_live_paper_trade(api, db, suggestions_data):
+def check_alpaca_authentication(api):
+    """
+    Checks if Alpaca API connection is valid by making a test get_account call.
+    Raises Exception if connection fails or credentials are invalid.
+    """
+    try:
+        api.get_account()
+        return True
+    except Exception as e:
+        print(f"CRITICAL ERROR: Alpaca API Authentication failed: {e}")
+        raise e
+
+def sync_broker_orders(db, api):
+    """
+    Queries SQLite database for pending/submitted orders, checks status on Alpaca,
+    and resolves the statuses accordingly.
+    """
+    if not api:
+        return
+
+    # Fetch orders that are not in a final state
+    pending_orders = db.query(VirtualOrder).filter(
+        VirtualOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"]),
+        VirtualOrder.mode == "real"
+    ).all()
+
+    if not pending_orders:
+        return
+
+    print(f"Syncing status for {len(pending_orders)} pending/submitted orders from broker...")
+
+    for order in pending_orders:
+        try:
+            # Query actual broker state
+            broker_order = api.get_order(order.id)
+            status = broker_order.status.lower()
+
+            # Map statuses
+            if status == "filled":
+                order.status = "filled"
+                order.filled_price = float(broker_order.filled_avg_price) if broker_order.filled_avg_price else order.filled_price
+
+                # Update database VirtualPosition directly for the fill
+                pos = db.query(VirtualPosition).filter(
+                    VirtualPosition.ticker == order.ticker,
+                    VirtualPosition.mode == "real"
+                ).first()
+                qty = float(order.qty)
+                price = float(order.filled_price) if order.filled_price else 100.0
+
+                if order.side == "buy":
+                    if pos:
+                        new_qty = pos.quantity + qty
+                        pos.entry_price = ((pos.quantity * pos.entry_price) + (qty * price)) / new_qty
+                        pos.quantity = new_qty
+                    else:
+                        pos = VirtualPosition(ticker=order.ticker, mode="real", quantity=qty, entry_price=price, policy="rebalance")
+                        db.add(pos)
+                elif order.side == "sell":
+                    if pos:
+                        pos.quantity = max(0.0, pos.quantity - qty)
+                        if pos.quantity <= 0.0001:
+                            db.delete(pos)
+
+                db.commit()
+                print(f"Order {order.id} resolved as FILLED. Updated position for {order.ticker}.")
+
+            elif status in ["canceled", "rejected", "expired"]:
+                order.status = status
+                db.commit()
+                print(f"Order {order.id} resolved as {status.upper()}.")
+
+            elif status == "partially_filled":
+                order.status = "partially_filled"
+                filled_qty = float(broker_order.filled_qty) if broker_order.filled_qty else 0.0
+                print(f"Order {order.id} is PARTIALLY FILLED: {filled_qty}/{order.qty} shares.")
+                db.commit()
+
+        except Exception as e:
+            print(f"Error syncing order {order.id}: {e}")
+
+def sync_broker_positions(db, api):
+    """
+    Compares local database VirtualPosition values with live positions on Alpaca.
+    Corrects discrepancies and logs synthetic transactions to maintain FIFO consistency.
+    """
+    if not api:
+        return
+
+    print("Running broker positions reconciliation...")
+    try:
+        # 1. Fetch live positions from broker
+        broker_positions = api.list_positions()
+        broker_pos_dict = {p.symbol: p for p in broker_positions}
+
+        # 2. Fetch local positions from SQLite
+        local_positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "real").all()
+        local_pos_dict = {p.ticker: p for p in local_positions}
+
+        # 3. Align positions
+        for ticker, b_pos in broker_pos_dict.items():
+            b_qty = float(b_pos.qty)
+            b_price = float(b_pos.avg_entry_price)
+
+            l_pos = local_pos_dict.get(ticker)
+
+            if not l_pos:
+                print(f"Reconcile: {ticker} held on broker ({b_qty} shares) but missing locally. Creating local position.")
+                l_pos = VirtualPosition(ticker=ticker, mode="real", quantity=b_qty, entry_price=b_price, policy="rebalance")
+                db.add(l_pos)
+
+                # Create synthetic buy order for FIFO lot
+                sync_order_id = f"sync-buy-{ticker}-{int(time.time())}"
+                sync_order = VirtualOrder(
+                    id=sync_order_id,
+                    mode="real",
+                    ticker=ticker,
+                    qty=b_qty,
+                    side="buy",
+                    type="market",
+                    status="filled",
+                    filled_price=b_price,
+                    created_at=datetime.now().isoformat()
+                )
+                db.add(sync_order)
+                db.commit()
+
+            elif abs(l_pos.quantity - b_qty) > 0.0001:
+                diff = b_qty - l_pos.quantity
+                print(f"Reconcile: {ticker} quantity mismatch. Local: {l_pos.quantity:.4f}, Broker: {b_qty:.4f}. Diff: {diff:+.4f}.")
+
+                l_pos.quantity = b_qty
+                l_pos.entry_price = b_price
+
+                action = "buy" if diff > 0 else "sell"
+                sync_order_id = f"sync-{action}-{ticker}-{int(time.time())}"
+                sync_order = VirtualOrder(
+                    id=sync_order_id,
+                    mode="real",
+                    ticker=ticker,
+                    qty=abs(diff),
+                    side=action,
+                    type="market",
+                    status="filled",
+                    filled_price=b_price,
+                    created_at=datetime.now().isoformat()
+                )
+                db.add(sync_order)
+                db.commit()
+
+            elif abs(l_pos.entry_price - b_price) > 0.01:
+                print(f"Reconcile: {ticker} entry price mismatch. Local: ${l_pos.entry_price:.2f}, Broker: ${b_price:.2f}. Updating cost basis.")
+                l_pos.entry_price = b_price
+                db.commit()
+
+        # 4. Remove local positions closed on broker
+        for ticker, l_pos in local_pos_dict.items():
+            if ticker not in broker_pos_dict and l_pos.quantity > 0:
+                print(f"Reconcile: {ticker} held locally ({l_pos.quantity} shares) but closed on broker. Deleting local position.")
+
+                sync_order_id = f"sync-sell-{ticker}-{int(time.time())}"
+                sync_order = VirtualOrder(
+                    id=sync_order_id,
+                    mode="real",
+                    ticker=ticker,
+                    qty=l_pos.quantity,
+                    side="sell",
+                    type="market",
+                    status="filled",
+                    filled_price=l_pos.entry_price,
+                    created_at=datetime.now().isoformat()
+                )
+                db.add(sync_order)
+                db.delete(l_pos)
+                db.commit()
+
+        # 5. Sync cash balance
+        account = db.query(VirtualAccount).filter(VirtualAccount.id == 2).first()
+        try:
+            broker_account = api.get_account()
+            b_cash = float(broker_account.cash)
+            if account:
+                if abs(account.cash - b_cash) > 0.01:
+                    print(f"Reconcile: Cash balance mismatch. Local: ${account.cash:.2f}, Broker: ${b_cash:.2f}. Syncing cash.")
+                    account.cash = b_cash
+                    account.buying_power = b_cash
+                    db.commit()
+            else:
+                account = VirtualAccount(id=2, cash=b_cash, buying_power=b_cash, equity=b_cash)
+                db.add(account)
+                db.commit()
+        except Exception as e:
+            print(f"Failed to sync cash balance: {e}")
+
+        print("Broker positions reconciliation complete.")
+    except Exception as e:
+        print(f"Error during positions reconciliation: {e}")
+
+def execute_alpaca_live_paper_trade(api, db, suggestions_data, mode="real"):
     """Executes trades via the live/paper Alpaca REST API."""
     print("--- Executing Live Paper Trades via Alpaca API ---")
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -153,7 +352,7 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data):
     active_tickers = [p.symbol for p in open_positions]
 
     # Load user holdings policies from db
-    positions_db = {p.ticker: p for p in db.query(VirtualPosition).all()}
+    positions_db = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
 
     # Process liquidations first
     for ticker, pos_info in positions_db.items():
@@ -218,7 +417,7 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data):
                     stop_loss=dict(stop_price=round(stop_loss, 2))
                 )
 
-                # Log in SQLite
+                # Log in SQLite ExecutedTrade
                 trade = ExecutedTrade(
                     ticker=ticker,
                     date=date_str,
@@ -229,8 +428,25 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data):
                     status="filled"
                 )
                 db.add(trade)
+
+                # Log in SQLite VirtualOrder if not already exists (e.g., virtual broker already logged it)
+                existing = db.query(VirtualOrder).filter(VirtualOrder.id == order.id).first()
+                if not existing:
+                    v_order = VirtualOrder(
+                        id=order.id,
+                        mode=mode,
+                        ticker=ticker,
+                        qty=float(shares),
+                        side="buy",
+                        type="market",
+                        status="submitted",
+                        stop_loss=float(stop_loss) if stop_loss else None,
+                        take_profit=float(take_profit) if take_profit else None,
+                        created_at=datetime.now().isoformat()
+                    )
+                    db.add(v_order)
                 db.commit()
-                print(f"Order filled successfully. Logged order ID: {order.id}")
+                print(f"Order submitted successfully. Logged order ID: {order.id}")
             except Exception as e:
                 print(f"Failed to submit bracket order for {ticker}: {e}")
                 db.rollback()
@@ -249,7 +465,7 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data):
                     pos = [p for p in open_positions if p.symbol == ticker][0]
                     shares_to_sell = pos.qty
 
-                    api.close_position(ticker)
+                    liq_order = api.close_position(ticker)
 
                     trade = ExecutedTrade(
                         ticker=ticker,
@@ -261,8 +477,23 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data):
                         status="filled"
                     )
                     db.add(trade)
+
+                    # Log liquidation in SQLite VirtualOrder if not already exists
+                    existing = db.query(VirtualOrder).filter(VirtualOrder.id == liq_order.id).first()
+                    if not existing:
+                        v_order = VirtualOrder(
+                            id=liq_order.id,
+                            mode=mode,
+                            ticker=ticker,
+                            qty=float(shares_to_sell),
+                            side="sell",
+                            type="market",
+                            status="submitted",
+                            created_at=datetime.now().isoformat()
+                        )
+                        db.add(v_order)
                     db.commit()
-                    print(f"Position closed successfully.")
+                    print(f"Position closed successfully. Logged order ID: {liq_order.id}")
                 except Exception as e:
                     print(f"Failed to close position in {ticker}: {e}")
                     db.rollback()
@@ -282,7 +513,7 @@ def get_long_term_available_shares(db, ticker, current_date_str):
     using FIFO matching on VirtualOrder execution logs. Manual initial holdings
     default to long-term.
     """
-    current_date = datetime.strptime(current_date_str, "%Y-%m-%d").date()
+    current_date = datetime.strptime(current_date_str.split(" ")[0].split("T")[0], "%Y-%m-%d").date()
 
     pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker).first()
     if not pos or pos.quantity <= 0:
@@ -297,21 +528,30 @@ def get_long_term_available_shares(db, ticker, current_date_str):
 
     def get_order_date(o):
         if o.sim_date:
-            return datetime.strptime(o.sim_date, "%Y-%m-%d").date()
+            return datetime.strptime(o.sim_date.split(" ")[0].split("T")[0], "%Y-%m-%d").date()
         if "T" in o.created_at:
             return datetime.strptime(o.created_at.split("T")[0], "%Y-%m-%d").date()
-        return datetime.strptime(o.created_at, "%Y-%m-%d").date()
+        return datetime.strptime(o.created_at.split(" ")[0], "%Y-%m-%d").date()
 
     sorted_buys = sorted(buys, key=get_order_date)
     total_buy_orders_qty = sum(b.qty for b in sorted_buys)
 
     lots = []
-    # Manual holdings (difference between owned and virtually purchased) are assumed long-term
+    # Manual holdings (difference between owned and virtually purchased)
     if total_owned > total_buy_orders_qty:
         manual_qty = total_owned - total_buy_orders_qty
+        purchase_date = None
+        if hasattr(pos, 'purchase_date') and pos.purchase_date:
+            try:
+                purchase_date = datetime.strptime(pos.purchase_date.split(" ")[0].split("T")[0], "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        if not purchase_date:
+            purchase_date = current_date - timedelta(days=500)
+
         lots.append({
             "qty": manual_qty,
-            "date": current_date - timedelta(days=500)
+            "date": purchase_date
         })
 
     for b in sorted_buys:
@@ -420,13 +660,26 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date):
                 if n_shares >= 0.01:
                     print(f"Long-Term Grid BUY: Symbol: {ticker}. Current: ${current_price:.2f}, Cost Basis: ${entry_price:.2f} ({price_dev*100:+.1f}%). Placing cautious tranche of {n_shares:.2f} shares.")
                     try:
-                        api.submit_order(
+                        lt_order = api.submit_order(
                             symbol=ticker,
                             qty=n_shares,
                             side='buy',
                             type='market',
                             time_in_force='gtc'
                         )
+                        existing = db.query(VirtualOrder).filter(VirtualOrder.id == lt_order.id).first()
+                        if not existing:
+                            v_order = VirtualOrder(
+                                id=lt_order.id,
+                                ticker=ticker,
+                                qty=float(n_shares),
+                                side="buy",
+                                type="market",
+                                status="submitted",
+                                created_at=datetime.now().isoformat()
+                            )
+                            db.add(v_order)
+                        db.commit()
                         buying_power -= (n_shares * current_price)
                     except Exception as e:
                         print(f"Failed to submit long-term buy order for {ticker}: {e}")
@@ -443,13 +696,26 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date):
                 if m_shares >= 0.01:
                     print(f"Long-Term Grid SELL (Tax-Optimized FIFO): Symbol: {ticker}. Current: ${current_price:.2f}, Cost Basis: ${entry_price:.2f} ({price_dev*100:+.1f}%). Selling {m_shares:.2f} shares.")
                     try:
-                        api.submit_order(
+                        lt_order = api.submit_order(
                             symbol=ticker,
                             qty=m_shares,
                             side='sell',
                             type='market',
                             time_in_force='gtc'
                         )
+                        existing = db.query(VirtualOrder).filter(VirtualOrder.id == lt_order.id).first()
+                        if not existing:
+                            v_order = VirtualOrder(
+                                id=lt_order.id,
+                                ticker=ticker,
+                                qty=float(m_shares),
+                                side="sell",
+                                type="market",
+                                status="submitted",
+                                created_at=datetime.now().isoformat()
+                            )
+                            db.add(v_order)
+                        db.commit()
                     except Exception as e:
                         print(f"Failed to submit long-term sell order for {ticker}: {e}")
                 else:
@@ -463,15 +729,34 @@ def run_execution():
     from app.main import get_daily_suggestions
 
     try:
-        print("Retrieving daily trade recommendations...")
-        suggestions_data = get_daily_suggestions(None, db)
-
         # Connect to Alpaca
         api = get_alpaca_api()
 
         if api:
+            # 1. Perform authentication check
+            print("Verifying Alpaca credentials...")
+            check_alpaca_authentication(api)
+
+            # 2. Sync broker order states & reconcile positions at startup
+            print("Synchronizing with broker...")
+            sync_broker_orders(db, api)
+            sync_broker_positions(db, api)
+
+            # 3. Retrieve daily recommendations
+            print("Retrieving daily trade recommendations...")
+            suggestions_data = get_daily_suggestions(date=None, db=db)
+
+            # 4. Run execution
             execute_alpaca_live_paper_trade(api, db, suggestions_data)
+
+            # 5. Final sync to capture immediate fills
+            print("Running final synchronization post-trade...")
+            sync_broker_orders(db, api)
+            sync_broker_positions(db, api)
         else:
+            print("No Alpaca API connection. Falling back to local simulated execution...")
+            print("Retrieving daily trade recommendations...")
+            suggestions_data = get_daily_suggestions(date=None, db=db)
             execute_local_paper_trade(db, suggestions_data)
 
     except Exception as e:
@@ -490,14 +775,17 @@ def evaluate_virtual_broker_daily(db, sim_date=None, mode="live"):
     print(f"--- Evaluating Virtual Broker for date: {sim_date} (mode: {mode}) ---")
 
     # 1. Load Virtual Account
-    account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
+    acc_id = 2 if mode == "real" else 1
+    pos_mode = "real" if mode == "real" else "replay"
+
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     if not account:
-        account = VirtualAccount(id=1, cash=100000.0, buying_power=100000.0, equity=100000.0)
+        account = VirtualAccount(id=acc_id, cash=100000.0, buying_power=100000.0, equity=100000.0)
         db.add(account)
         db.commit()
 
     # 2. Stop/Take Profit evaluation for active positions
-    positions = db.query(VirtualPosition).filter(VirtualPosition.quantity > 0).all()
+    positions = db.query(VirtualPosition).filter(VirtualPosition.quantity > 0, VirtualPosition.mode == pos_mode).all()
 
     for pos in positions:
         ticker = pos.ticker
@@ -509,6 +797,7 @@ def evaluate_virtual_broker_daily(db, sim_date=None, mode="live"):
             VirtualOrder.ticker == ticker,
             VirtualOrder.status == "filled",
             VirtualOrder.side == "buy",
+            VirtualOrder.mode == pos_mode,
             (VirtualOrder.stop_loss.isnot(None) | VirtualOrder.take_profit.isnot(None))
         ).order_by(VirtualOrder.created_at.desc()).first()
 
@@ -535,6 +824,7 @@ def evaluate_virtual_broker_daily(db, sim_date=None, mode="live"):
                 close_order_id = f"trigger-{datetime.now().timestamp()}-{np.random.randint(1000, 9999)}"
                 close_order = VirtualOrder(
                     id=close_order_id,
+                    mode=pos_mode,
                     ticker=ticker,
                     qty=qty,
                     side="sell",
@@ -551,7 +841,7 @@ def evaluate_virtual_broker_daily(db, sim_date=None, mode="live"):
                 db.commit()
 
     # 3. Calculate portfolio value at close of sim_date
-    positions = db.query(VirtualPosition).filter(VirtualPosition.quantity > 0).all()
+    positions = db.query(VirtualPosition).filter(VirtualPosition.quantity > 0, VirtualPosition.mode == pos_mode).all()
     portfolio_value = account.cash
 
     for pos in positions:

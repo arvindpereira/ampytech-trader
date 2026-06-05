@@ -44,7 +44,9 @@ def load_backtest_data(era=None):
             raise ValueError("No recent price data found. Run ingestion first.")
         prices_df = pd.DataFrame([{
             "ticker": p.ticker, "date": p.date, "open": p.open,
-            "high": p.high, "low": p.low, "close": p.close, "volume": p.volume
+            "high": p.high, "low": p.low, "close": p.close, "volume": p.volume,
+            "sma_10": p.sma_10, "sma_50": p.sma_50, "rsi_14": p.rsi_14,
+            "macd": p.macd, "macd_signal": p.macd_signal
         } for p in prices])
 
     macro = db.query(MacroIndicator).all()
@@ -59,38 +61,80 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
     """Simulates the short-term strategy on historical prices using PyBroker."""
     print("Pre-calculating features and model predictions for short-term backtest...")
 
-    # Load XGBoost model
-    if not os.path.exists(model_path):
-        print(f"XGBoost model file missing at {model_path}. Train the model first.")
-        return
+    # Check for PyTorch sequence model
+    deep_model_path = os.path.join(SAVED_MODELS_DIR, "temporal_attention_model.pth")
+    deep_metadata_path = os.path.join(SAVED_MODELS_DIR, "temporal_attention_metadata.pkl")
 
-    model = xgb.XGBClassifier()
-    model.load_model(model_path)
+    use_pytorch = False
+    deep_model = None
+    scaler_metadata = None
+
+    if os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
+        import torch
+        from ml_engine.deep_models import LightTemporalAttentionNet, prepare_sequences
+        try:
+            print("Loading PyTorch Temporal Attention Model...")
+            with open(deep_metadata_path, "rb") as f:
+                scaler_metadata = pickle.load(f)
+            input_dim = len(scaler_metadata["feature_cols"])
+            deep_model = LightTemporalAttentionNet(input_dim=input_dim, hidden_dim=32)
+            deep_model.load_state_dict(torch.load(deep_model_path))
+            deep_model.eval()
+            use_pytorch = True
+        except Exception as e:
+            print(f"Failed to load PyTorch model, falling back to XGBoost. Error: {e}")
+
+    # Fallback to XGBoost model
+    xgb_model = None
+    if not use_pytorch:
+        if not os.path.exists(model_path):
+            print(f"XGBoost model file missing at {model_path} and no PyTorch model found. Train models first.")
+            return
+        print("Loading XGBoost Classifier...")
+        xgb_model = xgb.XGBClassifier()
+        xgb_model.load_model(model_path)
 
     # Process features and run inference
-    all_tickers_data = []
-    feature_cols = None
+    from ml_engine.features import build_all_features
+    tickers_to_process = list(prices_df['ticker'].unique())
+    backtest_df = build_all_features(prices_df, None, macro_df, tickers_to_process)
 
-    for ticker in prices_df['ticker'].unique():
-        ticker_prices = prices_df[prices_df['ticker'] == ticker].sort_values('date').copy()
-        if len(ticker_prices) < 50:
-            continue
-
-        t_feat = build_features_for_df(ticker_prices, sentiment_df=None, macro_df=macro_df)
-
-        # Features list
-        if feature_cols is None:
-            feature_cols = [col for col in t_feat.columns if col.startswith("feat_")]
-
-        # Predict probability
-        t_feat['pred_prob'] = model.predict_proba(t_feat[feature_cols])[:, 1]
-        all_tickers_data.append(t_feat)
-
-    if not all_tickers_data:
+    if backtest_df.empty:
         print("Error: Insufficient history to generate backtesting features.")
         return
 
-    backtest_df = pd.concat(all_tickers_data, ignore_index=True)
+    feature_cols = sorted([col for col in backtest_df.columns if col.startswith("feat_")])
+    backtest_df['pred_prob'] = 0.0
+
+    # Perform prediction per ticker to avoid cross-ticker sequence bleed
+    for ticker in backtest_df['ticker'].unique():
+        t_mask = backtest_df['ticker'] == ticker
+        t_feat = backtest_df[t_mask].copy()
+
+        if use_pytorch and deep_model is not None and scaler_metadata is not None:
+            f_cols = scaler_metadata["feature_cols"]
+            t_feat_valid = t_feat.dropna(subset=f_cols).copy()
+            if len(t_feat_valid) >= 10:
+                from ml_engine.deep_models import prepare_sequences
+                import torch
+                X_seq, _, _, _ = prepare_sequences(
+                    t_feat_valid, f_cols, seq_len=10, fit_scaler=False, scaler_metadata=scaler_metadata
+                )
+                if len(X_seq) > 0:
+                    with torch.no_grad():
+                        inputs = torch.tensor(X_seq, dtype=torch.float32)
+                        outputs = deep_model(inputs).squeeze(1).numpy()
+                    preds = np.zeros(len(t_feat_valid))
+                    preds[10 - 1:] = outputs
+                    t_feat_valid['pred_prob'] = preds
+
+                    pred_map = dict(zip(t_feat_valid['date'], t_feat_valid['pred_prob']))
+                    backtest_df.loc[t_mask, 'pred_prob'] = backtest_df.loc[t_mask, 'date'].map(pred_map).fillna(0.0)
+            else:
+                backtest_df.loc[t_mask, 'pred_prob'] = 0.0
+        else:
+            preds = xgb_model.predict_proba(t_feat[feature_cols])[:, 1]
+            backtest_df.loc[t_mask, 'pred_prob'] = preds
 
     # Setup PyBroker Strategy
     # PyBroker requires columns: [date, symbol, open, high, low, close, volume]
@@ -98,7 +142,7 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
         'date', 'ticker', 'open', 'high', 'low', 'close', 'volume', 'pred_prob', 'feat_atr_14'
     ]].copy()
     pyb_df = pyb_df.rename(columns={'ticker': 'symbol'})
-    pyb_df['date'] = pd.to_datetime(pyb_df['date'])
+    pyb_df['date'] = pd.to_datetime(pyb_df['date'], format='mixed')
 
     # Register data in PyBroker
     pybroker_data = pyb_df
@@ -181,10 +225,24 @@ def run_long_term_backtest(prices_df, macro_df, hmm_path, metadata_path):
     hmm_feature_cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
 
     # Run regime classification
-    X_hmm = spy_features[hmm_feature_cols].values
-    states = hmm_model.predict(X_hmm)
-    regimes = [state_mapping[s] for s in states]
-    spy_features['regime'] = regimes
+    # Drop NaNs for HMM prediction to avoid scikit-learn check_array failures on cold-start periods
+    spy_features_valid = spy_features.dropna(subset=hmm_feature_cols).copy()
+    if not spy_features_valid.empty:
+        X_hmm = spy_features_valid[hmm_feature_cols].values
+        states = hmm_model.predict(X_hmm)
+        regimes = [state_mapping[s] for s in states]
+        spy_features_valid['regime'] = regimes
+
+        # Merge back to spy_features
+        spy_features = pd.merge(
+            spy_features,
+            spy_features_valid[['date', 'regime']],
+            on='date',
+            how='left'
+        )
+        spy_features['regime'] = spy_features['regime'].fillna('growth')
+    else:
+        spy_features['regime'] = 'growth'
 
     # Extract date mapping for regimes
     date_regimes = dict(zip(spy_features['date'], spy_features['regime']))
@@ -210,7 +268,7 @@ def run_long_term_backtest(prices_df, macro_df, hmm_path, metadata_path):
 
     # Group dates by month
     returns_df = returns_df.reset_index()
-    returns_df['month_year'] = pd.to_datetime(returns_df['date']).dt.to_period('M')
+    returns_df['month_year'] = pd.to_datetime(returns_df['date'], format='mixed').dt.to_period('M')
     rebalance_dates = returns_df.groupby('month_year')['date'].first().values
 
     # Record tracking data

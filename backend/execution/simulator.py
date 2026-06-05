@@ -21,9 +21,8 @@ def run_historical_replay(months_count):
     """
     db = SessionLocal()
     try:
-        # Reset the Virtual Broker tables for replay mode
-        db.query(VirtualPosition).delete()
-        db.query(VirtualOrder).delete()
+        db.query(VirtualPosition).filter(VirtualPosition.mode == "replay").delete()
+        db.query(VirtualOrder).filter(VirtualOrder.mode == "replay").delete()
         db.query(BrokerPerformanceLog).filter(BrokerPerformanceLog.mode == "replay").delete()
 
         account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
@@ -60,11 +59,11 @@ def run_historical_replay(months_count):
             set_sim_date(sim_date)
 
             # 2. Get recommendations based on data up to sim_date - 1 (look-ahead free)
-            ref_date = datetime.strptime(sim_date, "%Y-%m-%d")
+            ref_date = datetime.strptime(sim_date.split(" ")[0].split("T")[0], "%Y-%m-%d")
             prev_date_str = (ref_date - timedelta(days=1)).strftime("%Y-%m-%d")
 
             try:
-                suggestions = get_daily_suggestions(prev_date_str, db)
+                suggestions = get_daily_suggestions(date=prev_date_str, db=db)
             except Exception as e:
                 print(f"Skipping day {sim_date} suggestions fetch failed: {e}")
                 continue
@@ -106,11 +105,11 @@ def run_forward_simulation(days_count):
             print(f"\n=== Simulating day {i+1}/{len(trading_days)}: {sim_date} ===")
             set_sim_date(sim_date)
 
-            ref_date = datetime.strptime(sim_date, "%Y-%m-%d")
+            ref_date = datetime.strptime(sim_date.split(" ")[0].split("T")[0], "%Y-%m-%d")
             prev_date_str = (ref_date - timedelta(days=1)).strftime("%Y-%m-%d")
 
             try:
-                suggestions = get_daily_suggestions(prev_date_str, db)
+                suggestions = get_daily_suggestions(date=prev_date_str, db=db)
             except Exception as e:
                 print(f"Skipping day {sim_date} suggestions fetch failed: {e}")
                 continue

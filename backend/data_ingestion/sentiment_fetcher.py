@@ -14,9 +14,15 @@ from app.core.config import (
     FINNHUB_API_KEY,
     REDDIT_CLIENT_ID,
     REDDIT_CLIENT_SECRET,
-    REDDIT_USER_AGENT
+    REDDIT_USER_AGENT,
+    MASSIVE_API_KEY,
+    MASSIVE_BASE_URL
 )
-from app.database import init_db, SessionLocal, TickerSentiment, SentimentSourceLog
+from app.database import init_db, SessionLocal, TickerSentiment, SentimentSourceLog, UniverseTicker
+
+def get_active_universe(db):
+    db_tickers = db.query(UniverseTicker).all()
+    return [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
 
 def get_praw_reddit():
     """Tries to initialize praw. Returns None if credentials missing or fails."""
@@ -36,7 +42,7 @@ def get_praw_reddit():
         print(f"Warning: Reddit PRAW failed to initialize: {e}")
         return None
 
-def score_and_log_sources(db, ticker, date_str, source, items):
+def score_and_log_sources(db, ticker, date_str, source, items, is_mock=False):
     """
     Computes sentiment for each individual item, logs it in SentimentSourceLog,
     and returns the aggregated average score, positive ratio, and negative ratio.
@@ -61,10 +67,14 @@ def score_and_log_sources(db, ticker, date_str, source, items):
         text = item.get("text", "")
         url = item.get("url", "")
 
-        # Calculate VADER polarity
-        full_content = (title + ". " + text) if text else title
-        vs = analyzer.polarity_scores(full_content)
-        compound = vs['compound']
+        # Calculate VADER polarity or use pre-analyzed score if available
+        pre_score = item.get("pre_score")
+        if pre_score is not None:
+            compound = pre_score
+        else:
+            full_content = (title + ". " + text) if text else title
+            vs = analyzer.polarity_scores(full_content)
+            compound = vs['compound']
         scores.append(compound)
 
         if compound > 0.05:
@@ -80,7 +90,8 @@ def score_and_log_sources(db, ticker, date_str, source, items):
             title=title[:250],
             text=text[:1000] if text else None,
             url=url,
-            score=compound
+            score=compound,
+            is_mock=is_mock
         )
         db.add(log_rec)
 
@@ -100,6 +111,7 @@ def fetch_reddit_sentiment(db, date_str):
 
     print("Fetching live Reddit sentiment from r/wallstreetbets and r/stocks...")
     try:
+        active_universe = get_active_universe(db)
         # Collect recent submissions
         submissions_objs = []
         for sub_name in ["wallstreetbets", "stocks"]:
@@ -108,14 +120,14 @@ def fetch_reddit_sentiment(db, date_str):
                 submissions_objs.append(submission)
 
         # Group submissions by ticker mention
-        ticker_items = {ticker: [] for ticker in TICKER_UNIVERSE}
+        ticker_items = {ticker: [] for ticker in active_universe}
         for sub in submissions_objs:
             title = sub.title
             text = sub.selftext or ""
             url = f"https://www.reddit.com{sub.permalink}"
 
             upper_content = (title + " " + text).upper()
-            for ticker in TICKER_UNIVERSE:
+            for ticker in active_universe:
                 # Add word boundary check
                 if f" {ticker} " in f" {upper_content} ":
                     ticker_items[ticker].append({
@@ -161,52 +173,141 @@ def fetch_reddit_sentiment(db, date_str):
         db.rollback()
         return False
 
+def fetch_single_ticker_news(ticker, date_str):
+    """Fetches news for a single ticker from the active configured API."""
+    import time
+    if MASSIVE_API_KEY:
+        import urllib.parse
+        start_date_utc = f"{date_str}T00:00:00Z"
+        ticker_encoded = urllib.parse.quote(ticker)
+        url = f"{MASSIVE_BASE_URL}/v2/reference/news?ticker={ticker_encoded}&published_utc_gte={start_date_utc}&limit=20"
+        headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
+
+        max_retries = 5
+        backoff_sec = 2.0
+        res = None
+
+        for attempt in range(max_retries):
+            try:
+                # Sleep a little to prevent hitting rate limits too aggressively in parallel
+                time.sleep(0.1)
+                res = requests.get(url, headers=headers, timeout=15)
+                if res.status_code == 429:
+                    print(f"Rate limited (429) on news for {ticker}. Retrying in {backoff_sec} seconds...")
+                    time.sleep(backoff_sec)
+                    backoff_sec *= 2.0
+                    continue
+                res.raise_for_status()
+                articles = res.json().get("results", [])
+
+                items = []
+                for art in articles:
+                    title = art.get("title", "")
+                    desc = art.get("description", "") or art.get("summary", "") or ""
+                    link = art.get("url", "")
+
+                    pre_score = None
+                    insights = art.get("insights", [])
+                    for insight in insights:
+                        if insight.get("ticker", "").upper() == ticker.upper():
+                            sent = insight.get("sentiment", "").lower()
+                            if sent == "positive":
+                                pre_score = 0.8
+                            elif sent == "negative":
+                                pre_score = -0.8
+                            elif sent == "neutral":
+                                pre_score = 0.0
+                            break
+
+                    items.append({
+                        "title": title,
+                        "text": desc[:500],
+                        "url": link,
+                        "pre_score": pre_score
+                    })
+                return ticker, items
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"Failed to fetch Massive news for {ticker}: {e}")
+                    return ticker, []
+                time.sleep(backoff_sec)
+                backoff_sec *= 2.0
+
+    elif NEWS_API_KEY:
+        url = f"https://newsapi.org/v2/everything?q={ticker}&pageSize=20&apiKey={NEWS_API_KEY}"
+        try:
+            res = requests.get(url, timeout=15)
+            if res.status_code == 200:
+                articles = res.json().get("articles", [])
+                items = []
+                for art in articles:
+                    title = art.get("title", "")
+                    desc = art.get("description", "")
+                    link = art.get("url", "")
+                    items.append({
+                        "title": title,
+                        "text": desc[:500] if desc else "",
+                        "url": link
+                    })
+                return ticker, items
+        except Exception as e:
+            print(f"Failed to fetch NewsAPI news for {ticker}: {e}")
+            return ticker, []
+
+    elif FINNHUB_API_KEY:
+        end_t = datetime.now()
+        start_t = end_t - timedelta(days=1)
+        start_str = start_t.strftime("%Y-%m-%d")
+        end_str = end_t.strftime("%Y-%m-%d")
+        url = f"https://finnhub.io/api/v1/company-news?symbol={ticker}&from={start_str}&to={end_str}&token={FINNHUB_API_KEY}"
+        try:
+            res = requests.get(url, timeout=15)
+            if res.status_code == 200:
+                news = res.json()
+                items = []
+                for item in news[:20]:
+                    items.append({
+                        "title": item.get("headline", ""),
+                        "text": item.get("summary", "")[:500],
+                        "url": item.get("url", "")
+                    })
+                return ticker, items
+        except Exception as e:
+            print(f"Failed to fetch Finnhub news for {ticker}: {e}")
+            return ticker, []
+
+    return ticker, []
+
 def fetch_news_sentiment(db, date_str):
-    if not NEWS_API_KEY and not FINNHUB_API_KEY:
-        print("NewsAPI & Finnhub keys missing. Skipping live news fetch.")
+    if not MASSIVE_API_KEY and not NEWS_API_KEY and not FINNHUB_API_KEY:
+        print("No API keys found for live news fetch (MASSIVE_API_KEY, NEWS_API_KEY, or FINNHUB_API_KEY). Skipping live news fetch.")
         return False
 
-    print("Fetching news sentiment from live API...")
+    print("Fetching news sentiment from live API in parallel...")
     try:
-        ticker_items = {ticker: [] for ticker in TICKER_UNIVERSE}
+        active_universe = get_active_universe(db)
+        ticker_items = {ticker: [] for ticker in active_universe}
 
-        if NEWS_API_KEY:
-            for ticker in TICKER_UNIVERSE:
-                url = f"https://newsapi.org/v2/everything?q={ticker}&pageSize=20&apiKey={NEWS_API_KEY}"
-                res = requests.get(url)
-                if res.status_code == 200:
-                    articles = res.json().get("articles", [])
-                    for art in articles:
-                        title = art.get("title", "")
-                        desc = art.get("description", "")
-                        link = art.get("url", "")
-                        ticker_items[ticker].append({
-                            "title": title,
-                            "text": desc[:500] if desc else "",
-                            "url": link
-                        })
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        elif FINNHUB_API_KEY:
-            end_t = datetime.now()
-            start_t = end_t - timedelta(days=1)
-            start_str = start_t.strftime("%Y-%m-%d")
-            end_str = end_t.strftime("%Y-%m-%d")
+        print(f"Launching parallel news fetching for {len(active_universe)} tickers...")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(fetch_single_ticker_news, ticker, date_str): ticker
+                for ticker in active_universe
+            }
 
-            for ticker in TICKER_UNIVERSE:
-                if ticker in ["SPY", "QQQ"]:
-                    continue
-                url = f"https://finnhub.io/api/v1/company-news?symbol={ticker}&from={start_str}&to={end_str}&token={FINNHUB_API_KEY}"
-                res = requests.get(url)
-                if res.status_code == 200:
-                    news = res.json()
-                    for item in news[:20]:
-                        ticker_items[ticker].append({
-                            "title": item.get("headline", ""),
-                            "text": item.get("summary", "")[:500],
-                            "url": item.get("url", "")
-                        })
+            for future in as_completed(futures):
+                ticker = futures[future]
+                try:
+                    ticker_res, items = future.result()
+                    if items:
+                        ticker_items[ticker_res] = items
+                except Exception as e:
+                    print(f"Error in parallel news fetch for {ticker}: {e}")
 
-        # Score and store
+        # Score and store sequentially on main thread
+        print("Writing sentiment records to database sequentially...")
         for ticker, items in ticker_items.items():
             if not items:
                 continue
@@ -243,6 +344,7 @@ def fetch_news_sentiment(db, date_str):
         db.rollback()
         return False
 
+
 def fetch_premium_news_sentiment(db, date_str):
     """
     Scans backend/data/premium_news/ for text files, analyzes sentiment,
@@ -260,7 +362,8 @@ def fetch_premium_news_sentiment(db, date_str):
         return
 
     print(f"Found {len(files)} premium articles to process in premium_news/.")
-    ticker_items = {ticker: [] for ticker in TICKER_UNIVERSE}
+    active_universe = get_active_universe(db)
+    ticker_items = {ticker: [] for ticker in active_universe}
 
     for filename in files:
         filepath = os.path.join(premium_dir, filename)
@@ -272,14 +375,14 @@ def fetch_premium_news_sentiment(db, date_str):
             filename_upper = filename.upper()
 
             # Match ticker in filename
-            for ticker in TICKER_UNIVERSE:
+            for ticker in active_universe:
                 if ticker in filename_upper:
                     detected_ticker = ticker
                     break
 
             # Fallback to scanning content
             if not detected_ticker:
-                for ticker in TICKER_UNIVERSE:
+                for ticker in active_universe:
                     if f" {ticker} " in f" {content.upper()} ":
                         detected_ticker = ticker
                         break
@@ -340,7 +443,8 @@ def generate_mock_sentiment(db, date_str):
     print("Generating simulated sentiment data (no keys present)...")
 
     new_records = 0
-    for ticker in TICKER_UNIVERSE:
+    active_universe = get_active_universe(db)
+    for ticker in active_universe:
         for source in ["news", "reddit"]:
             existing = db.query(TickerSentiment).filter(
                 TickerSentiment.date == date_str,
@@ -380,13 +484,22 @@ def generate_mock_sentiment(db, date_str):
                     f"Reports of regulatory headwinds limit momentum for {ticker}",
                     f"Technical charts show {ticker} break below moving average levels"
                 ]
+                if source == "news":
+                    domains = ["bloomberg.com", "reuters.com", "cnbc.com", "finance.yahoo.com"]
+                    domain = random.choice(domains)
+                    item_url = f"https://{domain}/news/{ticker.lower()}-market-activity-{date_str}"
+                else:  # reddit
+                    subreddits = ["wallstreetbets", "stocks", "options", "investing"]
+                    sub = random.choice(subreddits)
+                    item_url = f"https://www.reddit.com/r/{sub}/comments/{ticker.lower()}_discussion_thread/"
+
                 mock_items.append({
                     "title": random.choice(headline_templates),
                     "text": f"Simulated detail logs for {ticker} tracking indicators and market social buzz.",
-                    "url": f"https://finance.yahoo.com/quote/{ticker}"
+                    "url": item_url
                 })
 
-            score, pos, neg = score_and_log_sources(db, ticker, date_str, source, mock_items)
+            score, pos, neg = score_and_log_sources(db, ticker, date_str, source, mock_items, is_mock=True)
 
             s_rec = TickerSentiment(
                 ticker=ticker,
@@ -395,7 +508,8 @@ def generate_mock_sentiment(db, date_str):
                 positive_ratio=pos,
                 negative_ratio=neg,
                 mention_count=mentions,
-                source=source
+                source=source,
+                is_mock=True
             )
             db.add(s_rec)
             new_records += 1

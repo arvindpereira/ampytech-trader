@@ -11,7 +11,7 @@ from hmmlearn.hmm import GaussianHMM
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import TICKER_UNIVERSE
-from app.database import SessionLocal, RecentPrice, MacroIndicator, TickerSentiment
+from app.database import SessionLocal, RecentPrice, MacroIndicator, TickerSentiment, UniverseTicker
 from ml_engine.features import build_features_for_df
 
 # Saved models directory
@@ -49,6 +49,7 @@ class PortfolioOptimizer:
         num_assets = len(tickers)
 
         # Solve for Maximum Sharpe Ratio using random portfolios simulation (robust & simple retail approach)
+        rng = np.random.default_rng(42)
         num_portfolios = 10000
         best_sharpe = -100
         best_weights = np.ones(num_assets) / num_assets
@@ -59,7 +60,7 @@ class PortfolioOptimizer:
 
         # Constraints: Weights sum to 1.0, long-only (0.0 <= w <= 0.25 to prevent over-concentration)
         for _ in range(num_portfolios):
-            weights = np.random.random(num_assets)
+            weights = rng.random(num_assets)
             weights /= np.sum(weights)
 
             # Apply maximum concentration constraint (max 25% in one stock)
@@ -115,7 +116,9 @@ def load_data_from_db():
 
     prices_df = pd.DataFrame([{
         "ticker": p.ticker, "date": p.date, "open": p.open,
-        "high": p.high, "low": p.low, "close": p.close, "volume": p.volume
+        "high": p.high, "low": p.low, "close": p.close, "volume": p.volume,
+        "sma_10": p.sma_10, "sma_50": p.sma_50, "rsi_14": p.rsi_14,
+        "macd": p.macd, "macd_signal": p.macd_signal
     } for p in prices])
 
     # 2. Fetch Macro
@@ -131,23 +134,16 @@ def load_data_from_db():
         "sentiment_score": s.sentiment_score, "mention_count": s.mention_count
     } for s in sent]) if sent else pd.DataFrame()
 
+    # Load stock universe dynamically from DB (honoring user edits)
+    db_tickers = db.query(UniverseTicker).all()
+    active_universe = [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
     db.close()
 
-    # Process features per ticker
-    processed_dfs = []
-    for ticker in TICKER_UNIVERSE:
-        ticker_prices = prices_df[prices_df['ticker'] == ticker].sort_values('date')
-        if len(ticker_prices) < 50: # Need enough rows for technical features
-            continue
-        ticker_sent = sent_df[sent_df['ticker'] == ticker] if not sent_df.empty else pd.DataFrame()
-
-        t_feat = build_features_for_df(ticker_prices, ticker_sent, macro_df)
-        processed_dfs.append(t_feat)
-
-    if not processed_dfs:
-        raise ValueError("Insufficient historical rows per ticker to build features.")
-
-    full_df = pd.concat(processed_dfs, ignore_index=True)
+    # Process features for all tickers with cross-ticker relationships
+    from ml_engine.features import build_all_features
+    full_df = build_all_features(prices_df, sent_df, macro_df, active_universe)
+    if full_df.empty:
+        raise ValueError("Insufficient historical rows to build features.")
     return full_df
 
 def train_models():
@@ -168,6 +164,14 @@ def train_models():
     X = train_data[feature_cols]
     y = train_data[target_col]
 
+    # Calculate temporal decay weights (5-year half-life)
+    print("Calculating temporal decay weights (5-year half-life)...")
+    max_date = pd.to_datetime(train_data['date'], format='mixed').max()
+    train_dates = pd.to_datetime(train_data['date'], format='mixed')
+    days_diff = (max_date - train_dates).dt.days
+    half_life_days = 5.0 * 365.25
+    sample_weights = np.exp(-days_diff / half_life_days)
+
     print(f"Features list: {feature_cols}")
     print(f"Training dataset size: {X.shape[0]} rows, {X.shape[1]} features.")
 
@@ -181,7 +185,7 @@ def train_models():
         eval_metric="logloss",
         random_state=42
     )
-    model.fit(X, y)
+    model.fit(X, y, sample_weight=sample_weights)
 
     # Save model natively as JSON
     model_path = os.path.join(SAVED_MODELS_DIR, "short_term_model.json")

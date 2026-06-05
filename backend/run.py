@@ -29,8 +29,12 @@ def fetch():
         script_name = os.path.basename(script[1])
         run_command(script, f"Data Ingestion ({script_name})")
 
-def train():
+def train(epochs=None):
     run_command([sys.executable, "ml_engine/models.py", "--train"], "ML Model Training")
+    cmd = [sys.executable, "ml_engine/deep_models.py", "--train"]
+    if epochs is not None:
+        cmd.extend(["--epochs", str(epochs)])
+    run_command(cmd, "PyTorch Temporal Attention Training")
 
 def backtest():
     run_command([sys.executable, "backtesting/backtest.py"], "PyBroker Backtesting & Stress Tests")
@@ -61,6 +65,12 @@ def main():
         default=6,
         help="Number of months to replay in backtest mode"
     )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Number of epochs to train the deep temporal attention model"
+    )
 
     args = parser.parse_args()
 
@@ -71,7 +81,7 @@ def main():
     if args.action == "fetch":
         fetch()
     elif args.action == "train":
-        train()
+        train(epochs=args.epochs)
     elif args.action == "backtest":
         backtest()
     elif args.action == "serve":
