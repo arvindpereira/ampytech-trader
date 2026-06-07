@@ -547,9 +547,11 @@ def get_current_price(db, ticker, date=None):
 # Route to get account details
 @app.get("/api/virtual_alpaca/v2/account")
 def get_virtual_account(mode: str = "real", db=Depends(get_db)):
-    acc_id = 2 if mode == "real" else 1
-    pos_mode = "real" if mode == "real" else "replay"
-    sim_date = None if mode == "real" else get_sim_date()
+    sim_date_val = get_sim_date()
+    effective_mode = "replay" if sim_date_val else mode
+    acc_id = 2 if effective_mode == "real" else 1
+    pos_mode = "real" if effective_mode == "real" else "replay"
+    sim_date = None if effective_mode == "real" else sim_date_val
 
     account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     if not account:
@@ -589,8 +591,10 @@ def get_virtual_account(mode: str = "real", db=Depends(get_db)):
 # Route to get positions
 @app.get("/api/virtual_alpaca/v2/positions")
 def get_virtual_positions(mode: str = "real", db=Depends(get_db)):
-    pos_mode = "real" if mode == "real" else "replay"
-    sim_date = None if mode == "real" else get_sim_date()
+    sim_date_val = get_sim_date()
+    effective_mode = "replay" if sim_date_val else mode
+    pos_mode = "real" if effective_mode == "real" else "replay"
+    sim_date = None if effective_mode == "real" else sim_date_val
 
     positions = db.query(VirtualPosition).filter(VirtualPosition.quantity > 0, VirtualPosition.mode == pos_mode).all()
     res = []
@@ -632,9 +636,11 @@ class OrderRequest(BaseModel):
 # Route to place orders
 @app.post("/api/virtual_alpaca/v2/orders")
 def post_virtual_order(order_req: OrderRequest, mode: str = "real", db=Depends(get_db)):
-    pos_mode = "real" if mode == "real" else "replay"
-    acc_id = 2 if mode == "real" else 1
-    sim_date = None if mode == "real" else get_sim_date()
+    sim_date_val = get_sim_date()
+    effective_mode = "replay" if sim_date_val else mode
+    pos_mode = "real" if effective_mode == "real" else "replay"
+    acc_id = 2 if effective_mode == "real" else 1
+    sim_date = None if effective_mode == "real" else sim_date_val
 
     ticker = order_req.symbol
     fill_price = None
@@ -775,9 +781,11 @@ def post_virtual_order(order_req: OrderRequest, mode: str = "real", db=Depends(g
 # Route to delete (close) position
 @app.delete("/api/virtual_alpaca/v2/positions/{symbol}")
 def delete_virtual_position(symbol: str, mode: str = "real", db=Depends(get_db)):
-    pos_mode = "real" if mode == "real" else "replay"
-    acc_id = 2 if mode == "real" else 1
-    sim_date = None if mode == "real" else get_sim_date()
+    sim_date_val = get_sim_date()
+    effective_mode = "replay" if sim_date_val else mode
+    pos_mode = "real" if effective_mode == "real" else "replay"
+    acc_id = 2 if effective_mode == "real" else 1
+    sim_date = None if effective_mode == "real" else sim_date_val
 
     pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == symbol, VirtualPosition.mode == pos_mode).first()
     if not pos or pos.quantity <= 0:
