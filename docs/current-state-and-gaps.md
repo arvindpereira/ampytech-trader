@@ -90,9 +90,12 @@ default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win
 >    carried by the rare top-0.1% winners, not by a stable signal.
 > 3. AUC ≈ 0.698 is genuine ranking skill, but (as repeatedly shown) **AUC ≠ tradable edge** — the money is
 >    only in the very top, and even there it's small and fragile.
-> 4. Alt-data features are **off** and contribute nothing (with-alt AUC 0.700 vs without-alt 0.698 = noise);
->    they were synthetic. Earlier "+0.27%/trade at 0.15", "+410% backtest", and "precision 0.434" were
->    **stale/leaky/in-sample and are discarded** — do not cite them.
+> 4. Alt-data features are **off** and contribute nothing. The insider source is now **real** (SEC Form 4,
+>    5,809 txns/3yr) but **validated as unhelpful here**: with-alt AUC 0.699 vs without-alt 0.698 = noise,
+>    because open-market *purchases* are rare (152 of 5,809) → the feature is ~0 on 99.9% of bars. Insider
+>    buying is a weeks/months signal, not hourly — a candidate for the long-term book, not this model.
+>    Earlier "+0.27%/trade at 0.15", "+410% backtest", and "precision 0.434" were **stale/leaky/in-sample
+>    and are discarded** — do not cite them.
 
 > ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers
 > (e.g. the +489%/+1085% short-term returns quoted in PR #2) are **overfit and not decision-grade**. Only

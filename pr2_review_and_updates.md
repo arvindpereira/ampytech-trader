@@ -220,12 +220,19 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   walk-forward: pooled AUC 0.698, edge only in the top ~0.1%, per-fold top-5% net negative in 4/5 folds),
   stale "+0.27%/0.15" prose removed, in-sample backtests explicitly flagged non-predictive, and the
   served-model/threshold sections (`ml-and-strategy.md`) corrected.
-- **C1 real data — insider DONE (Congress pending).** `alternative_fetcher.py` now ingests **real SEC EDGAR
-  Form 4** insider transactions (free, no key): ticker→CIK via `company_tickers.json`, Form 4s from the
-  submissions API, raw XML parsed (`parse_form4_xml`, unit-tested) for open-market P/S, keyed on the
-  **filing date** (point-in-time). `make insider` / `run.py fetch` (when `ALT_DATA_ENABLED`). Validated live
-  on AAPL/NVDA. Congress/STOCK Act is still synthetic (no free structured source wired). Kept off by default
-  until walk-forward shows the real insider signal helps.
+- **C1 real data — insider DONE & VALIDATED (negative result).** `alternative_fetcher.py` now ingests
+  **real SEC EDGAR Form 4** insider transactions (free, no key): ticker→CIK via `company_tickers.json`,
+  Form 4s from the submissions API, raw XML parsed (`parse_form4_xml`, unit-tested) for open-market P/S,
+  keyed on the **filing date** (point-in-time). `make insider` / `run.py fetch` (when `ALT_DATA_ENABLED`).
+  **Full 3-yr fetch (5,809 real transactions across 21 tickers) + walk-forward verdict: real insider
+  features do NOT help the short-term model** — pooled OOS AUC 0.699 (with) vs 0.698 (without) = noise, and
+  top-percentile net returns are statistically identical. **Why:** open-market *purchases* are extremely
+  rare (only **152 of 5,809** transactions; most are sales) → the `insider_buying_ratio` feature is ~0 on
+  99.9% of the 297k hourly bars, far too sparse to move the model. Insider *buying* is a known *weeks-to-
+  months* signal, not an hourly-breakout one — so it's a candidate for the **long-term** book, not this
+  short-term model. **`ALT_DATA_ENABLED` stays `False`.** (Foreign issuers NOK/ASML correctly returned 0
+  Form 4s; TSM's 102 "purchases" look like a foreign-issuer data-quality artifact to scrub later.)
+  Congress/STOCK Act remains synthetic (no free structured source wired).
 
 Still outstanding: **C2** (fold-forward nested threshold selection), the **portfolio-level walk-forward
 equity curve**, and a real **Congress/STOCK Act** source.
