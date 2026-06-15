@@ -35,6 +35,15 @@ import {
   Legend
 } from 'recharts';
 
+interface HedgePlan {
+  mode: string;
+  symbol: string;
+  ratio: number;
+  price: number | null;
+  notional: number;
+  shares: number | null;
+}
+
 interface ShortTermSuggestion {
   ticker: string;
   close: number;
@@ -43,6 +52,8 @@ interface ShortTermSuggestion {
   stop_loss: number | null;
   take_profit: number | null;
   reasoning: string;
+  hedge?: HedgePlan | null;
+  action_plan?: string | null;
 }
 
 interface Allocation {
@@ -72,6 +83,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor'>('dashboard');
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'long_term'>('short_term');
   const [appMode, setAppMode] = useState<'real' | 'simulated'>('real');
+  const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
   const [loading, setLoading] = useState<boolean>(true);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
   const [regime, setRegime] = useState<string>('growth');
@@ -196,7 +208,7 @@ export default function Home() {
     setLoading(true);
     try {
       // 1. Fetch Suggestions
-      const sugRes = await fetch(`http://localhost:8008/api/suggestions?mode=${appMode}`);
+      const sugRes = await fetch(`http://localhost:8008/api/suggestions?mode=${appMode}&hedge_mode=${hedgeMode}`);
       if (sugRes.ok) {
         const sugData = await sugRes.json();
         setSuggestions(sugData.short_term_suggestions || []);
@@ -363,7 +375,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchData();
-  }, [perfMode, appMode]);
+  }, [perfMode, appMode, hedgeMode]);
 
   // Universe Editor Handlers
   const handleAddTicker = async () => {
@@ -755,6 +767,30 @@ export default function Home() {
                 )}
 
                 {activeStrategy === 'short_term' ? (
+                  <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Hedge overlay:</span>
+                    <div className="toggle-group" style={{ margin: 0 }}>
+                      {([
+                        ['none', 'None (long only)'],
+                        ['beta_neutral', 'Beta-Neutral'],
+                        ['pair_trade', 'Pair Trade'],
+                      ] as const).map(([val, label]) => (
+                        <button
+                          key={val}
+                          className={`toggle-btn ${hedgeMode === val ? 'active' : ''}`}
+                          onClick={() => setHedgeMode(val)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {hedgeMode !== 'none' && (
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        Each BUY pairs with an offsetting short to neutralize market risk — see the trade plan under each row.
+                      </span>
+                    )}
+                  </div>
                   <div style={{ overflowX: 'auto' }}>
                     <table className="trade-table">
                       <thead>
@@ -770,7 +806,8 @@ export default function Home() {
                       </thead>
                       <tbody>
                         {suggestions.map((item, idx) => (
-                          <tr key={idx}>
+                          <React.Fragment key={idx}>
+                          <tr>
                             <td style={{ fontWeight: 600 }}>{item.ticker}</td>
                             <td>${item.close.toFixed(2)}</td>
                             <td>
@@ -785,10 +822,37 @@ export default function Home() {
                               {item.reasoning}
                             </td>
                           </tr>
-                        ))}
+                          {item.action === 'BUY' && item.action_plan && (
+                            <tr key={`${idx}-plan`}>
+                              <td colSpan={7} style={{ padding: '0 12px 12px 12px', borderTop: 'none' }}>
+                                <div style={{
+                                  background: 'rgba(0, 242, 254, 0.06)',
+                                  border: '1px solid var(--border-glow)',
+                                  borderRadius: '8px',
+                                  padding: '10px 12px',
+                                  fontSize: '12.5px',
+                                  lineHeight: '1.5',
+                                  color: 'var(--text-primary)',
+                                  fontFamily: 'monospace'
+                                }}>
+                                  <span style={{ color: 'var(--color-gold)', fontWeight: 600 }}>▶ Trade plan: </span>
+                                  {item.action_plan}
+                                  {item.hedge && (
+                                    <span style={{ display: 'block', marginTop: '4px', color: 'var(--color-sell)' }}>
+                                      Hedge leg: SHORT {item.hedge.shares ?? '?'} sh {item.hedge.symbol}
+                                      {item.hedge.price ? ` @ $${item.hedge.price.toFixed(2)}` : ''} ({item.hedge.ratio}× notional)
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))}
                       </tbody>
                     </table>
                   </div>
+                  </>
                 ) : (
                   <div>
                     <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
