@@ -1,23 +1,116 @@
-.PHONY: help default serve fetch train backtest simulate backtest-virtual lint
+.PHONY: help default install fetch backfill-news train walkforward backtest \
+        simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
 
-# Default target: Launches both servers and outputs their locations
-default:
-	@$(MAKE) serve
+# --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
+EPOCHS ?= 100
+DAYS   ?= 5
+MONTHS ?= 6
+SPLITS ?= 5
+VENV_PY := venv/bin/python3
+
+# Default target: print help
+default: help
 
 help:
 	@echo "========================================================================"
 	@echo "                       AMPYTECH TRADER CLI TOOLBOX                      "
 	@echo "========================================================================"
-	@echo "Available Makefile targets:"
-	@echo "  make serve             - Launches FastAPI (port 8008) & Next.js (port 3002) in parallel"
-	@echo "  make fetch             - Synchronizes stock prices, macro statistics, and sentiments"
-	@echo "  make train             - Re-trains XGBoost Breakout and HMM-MPT models"
-	@echo "  make backtest          - Audits theoretical model backtest return & drawdown (2yr)"
-	@echo "  make simulate          - Runs forward daily simulations on the Virtual Broker"
-	@echo "  make backtest-virtual  - Runs day-by-day historical replay loop over past N months"
-	@echo "  make lint              - Programmatically strips trailing whitespaces and formats files"
+	@echo "Setup:"
+	@echo "  make install           - Create backend venv + install Python & Node deps"
+	@echo "  make bootstrap         - First run: fetch data then train models"
+	@echo ""
+	@echo "Data:"
+	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
+	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
+	@echo ""
+	@echo "Models:"
+	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
+	@echo "  make walkforward       - Honest out-of-sample edge check (expanding folds) [SPLITS=$(SPLITS)]"
+	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
+	@echo ""
+	@echo "Simulation:"
+	@echo "  make simulate          - Forward Virtual Broker simulation              [DAYS=$(DAYS)]"
+	@echo "  make backtest-virtual  - Look-ahead-free historical replay              [MONTHS=$(MONTHS)]"
+	@echo ""
+	@echo "Run / misc:"
+	@echo "  make serve             - Launch FastAPI (:8008) + Next.js (:3002) together"
+	@echo "  make serve-backend     - Launch only the FastAPI backend (:8008)"
+	@echo "  make serve-frontend    - Launch only the Next.js frontend (:3002)"
+	@echo "  make schedule          - Run the APScheduler daemon (unattended fetch/train/execute)"
+	@echo "  make lint              - Strip trailing whitespace / normalize line endings"
 	@echo "========================================================================"
 
+# ----------------------------------------------------------------------------
+# Setup
+# ----------------------------------------------------------------------------
+install:
+	@echo "📦 Installing backend (venv + requirements) and frontend (npm) dependencies..."
+	cd backend && python3 -m venv venv && venv/bin/pip install --upgrade pip && venv/bin/pip install -r requirements.txt
+	cd frontend && npm install
+	@echo "✅ Install complete."
+
+bootstrap: fetch train
+	@echo "✅ Bootstrap complete. Run 'make serve' to start the app."
+
+# ----------------------------------------------------------------------------
+# Data ingestion
+# ----------------------------------------------------------------------------
+fetch:
+	@echo "========================================================================"
+	@echo "🔄 Ingesting hourly (Massive) + daily (Yahoo) prices, macro, sentiment, crisis eras..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py fetch
+	@echo "✅ Data fetch complete."
+
+backfill-news:
+	@echo "========================================================================"
+	@echo "📰 Backfilling historical daily news sentiment (~2021 -> now)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/sentiment_fetcher.py --backfill
+	@echo "✅ News sentiment backfill complete."
+
+# ----------------------------------------------------------------------------
+# Models
+# ----------------------------------------------------------------------------
+train:
+	@echo "========================================================================"
+	@echo "🧠 Training short-term XGBoost (hourly) + HMM regime (daily) + PyTorch ($(EPOCHS) epochs)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py train --epochs $(EPOCHS)
+	@echo "✅ Training complete. Artifacts in backend/ml_engine/saved_models/"
+
+walkforward:
+	@echo "========================================================================"
+	@echo "🔬 Walk-forward out-of-sample evaluation ($(SPLITS) expanding folds) — the honest edge check..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py walkforward --splits $(SPLITS)
+
+backtest:
+	@echo "========================================================================"
+	@echo "📈 In-sample PyBroker audit (short-term hourly + long-term daily MPT)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py backtest
+
+# ----------------------------------------------------------------------------
+# Simulation
+# ----------------------------------------------------------------------------
+simulate:
+	@echo "========================================================================"
+	@echo "🔮 Forward Virtual Broker simulation ($(DAYS) trading days)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py simulate --days $(DAYS)
+	@echo "✅ Simulation run complete."
+
+backtest-virtual:
+	@echo "========================================================================"
+	@echo "⏳ Look-ahead-free historical replay ($(MONTHS) months)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py backtest-virtual --months $(MONTHS)
+	@echo "✅ Historical replay simulation complete."
+
+# ----------------------------------------------------------------------------
+# Run / misc
+# ----------------------------------------------------------------------------
 serve:
 	@echo "========================================================================"
 	@echo "Launching Ampytech Trader full stack..."
@@ -25,41 +118,19 @@ serve:
 	@echo "🎨 Web Interface: http://localhost:3002"
 	@echo "Press Ctrl+C to terminate both servers."
 	@echo "========================================================================"
-	@bash -c 'trap "kill 0" EXIT; (cd backend && venv/bin/python3 run.py serve) & (cd frontend && npm run dev -- -p 3002) & wait'
+	@bash -c 'trap "kill 0" EXIT; (cd backend && $(VENV_PY) run.py serve) & (cd frontend && npm run dev -- -p 3002) & wait'
 
-fetch:
-	@echo "========================================================================"
-	@echo "🔄 Running ingestion pipelines (OHLCV prices, FRED macro indicators, news/Reddit sentiment)..."
-	@echo "========================================================================"
-	cd backend && venv/bin/python3 run.py fetch
-	@echo "✅ Data fetch complete."
+serve-backend:
+	cd backend && $(VENV_PY) run.py serve
 
-train:
-	@echo "========================================================================"
-	@echo "🧠 Training XGBoost breakout models & HMM portfolio optimizer..."
-	@echo "========================================================================"
-	cd backend && venv/bin/python3 run.py train --epochs 100
-	@echo "✅ Training complete. Artifacts saved in backend/ml_engine/saved_models/"
+serve-frontend:
+	cd frontend && npm run dev -- -p 3002
 
-backtest:
+schedule:
 	@echo "========================================================================"
-	@echo "📈 Running theoretical PyBroker strategy backtest suite (past 2 years)..."
+	@echo "⏰ Starting APScheduler daemon (daily fetch/inference/execution + weekly retrain)..."
 	@echo "========================================================================"
-	cd backend && venv/bin/python3 run.py backtest
-
-simulate:
-	@echo "========================================================================"
-	@echo "🔮 Executing forward Virtual Broker simulation for 5 trading days..."
-	@echo "========================================================================"
-	cd backend && venv/bin/python3 run.py simulate --days 5
-	@echo "✅ Simulation run complete."
-
-backtest-virtual:
-	@echo "========================================================================"
-	@echo "⏳ Executing look-ahead free historical replay simulation (6 months)..."
-	@echo "========================================================================"
-	cd backend && venv/bin/python3 run.py backtest-virtual --months 6
-	@echo "✅ Historical replay simulation complete."
+	cd backend && $(VENV_PY) run.py schedule
 
 lint:
 	@echo "========================================================================"

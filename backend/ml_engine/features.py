@@ -33,13 +33,93 @@ def compute_macd(prices, fast=12, slow=26, signal=9):
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     return macd_line, signal_line
 
-def build_features_for_df(df, sentiment_df=None, macro_df=None):
+def triple_barrier_outcomes(high, low, close, atr, horizon,
+                            atr_stop_mult=2.0, tp_mult=2.5, stop_min=0.015, stop_max=0.05):
+    """Path-dependent triple-barrier outcomes matching the executed trade.
+
+    For an entry at `close[i]`, place an ATR-based stop (`stop_min..stop_max` clipped
+    `atr_stop_mult*ATR/close`) and a take-profit at `tp_mult * stop`. Scanning forward up to
+    `horizon` bars using intrabar highs/lows, returns two aligned arrays:
+
+      * `label`  — 1 if the take-profit is touched BEFORE the stop; 0 if the stop hits first
+                   or neither hits within the horizon (timeout); same-bar ambiguity counts as a
+                   loss (conservative); NaN where ATR is undefined / window censored.
+      * `ret`    — the realised fractional return of that bracketed trade (gross, no fees):
+                   +tp% on a win, -sl% on a stop/ambiguous, and the close-to-close return at the
+                   vertical barrier on a timeout. NaN where the label is NaN.
+
+    `label` is the training target ("would this trade have won?"); `ret` lets walk-forward
+    evaluation compute the actual P&L of selected entries (it is never used as a feature).
+    """
+    n = len(close)
+    label = np.zeros(n, dtype=float)
+    ret = np.zeros(n, dtype=float)
+    resolved = np.zeros(n, dtype=bool)
+
+    sl_pct = np.clip(atr_stop_mult * atr / close, stop_min, stop_max)
+    tp_pct = sl_pct * tp_mult
+    tp_price = close * (1.0 + tp_pct)
+    sl_price = close * (1.0 - sl_pct)
+
+    for k in range(1, horizon + 1):
+        fut_high = np.full(n, np.nan)
+        fut_low = np.full(n, np.nan)
+        if k < n:
+            fut_high[:n - k] = high[k:]
+            fut_low[:n - k] = low[k:]
+        valid = ~np.isnan(fut_high)
+        tp_hit = valid & (~resolved) & (fut_high >= tp_price)
+        sl_hit = valid & (~resolved) & (fut_low <= sl_price)
+        only_tp = tp_hit & ~sl_hit             # take-profit alone this bar -> win
+        sl_first = sl_hit                       # incl. same-bar both (conservative loss)
+        label[only_tp] = 1.0
+        ret[only_tp] = tp_pct[only_tp]
+        loss_mask = sl_first & ~only_tp
+        ret[loss_mask] = -sl_pct[loss_mask]
+        resolved[tp_hit | sl_hit] = True
+
+    idx = np.arange(n)
+    # Timeouts (no barrier hit but full window available): exit at the horizon bar's close.
+    exit_close = np.full(n, np.nan)
+    if horizon < n:
+        exit_close[:n - horizon] = close[horizon:]
+    timeout = (~resolved) & (idx + horizon < n)
+    ret[timeout] = exit_close[timeout] / close[timeout] - 1.0
+
+    censored = (~resolved) & (idx + horizon >= n)   # window runs off the end -> outcome unknown
+    bad = censored | np.isnan(atr) | np.isnan(tp_price) | np.isnan(sl_price)
+    label[bad] = np.nan
+    ret[bad] = np.nan
+    return label, ret
+
+
+def triple_barrier_labels(high, low, close, atr, horizon,
+                          atr_stop_mult=2.0, tp_mult=2.5, stop_min=0.015, stop_max=0.05):
+    """Convenience wrapper returning only the win label (see `triple_barrier_outcomes`)."""
+    label, _ = triple_barrier_outcomes(high, low, close, atr, horizon,
+                                       atr_stop_mult, tp_mult, stop_min, stop_max)
+    return label
+
+
+def build_features_for_df(df, sentiment_df=None, macro_df=None,
+                          target_horizon_bars=14, target_atr_stop_mult=2.0,
+                          target_tp_mult=2.5, target_stop_min=0.015, target_stop_max=0.05):
     """
     Computes all features for a single ticker's DataFrame.
     Assumes df contains columns: ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume'].
     Assumes df is sorted chronologically by date.
+
+    `df['date']` may be an hourly timestamp ('YYYY-MM-DD HH:MM:SS') or a daily date
+    ('YYYY-MM-DD'). Daily-grained sentiment and macro series are joined on the calendar
+    date so they correctly broadcast across all intraday bars of a day.
+
+    The target is a triple-barrier WIN label over `target_horizon_bars` bars using ATR-based
+    stop/take-profit brackets (see `triple_barrier_labels`).
     """
     df = df.copy()
+
+    # Calendar-date key for joining daily-grained series onto (possibly hourly) bars.
+    df['cal_date'] = df['date'].astype(str).str.slice(0, 10)
 
     # --- Technical Indicators ---
     df['returns'] = df['close'].pct_change()
@@ -91,10 +171,16 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None):
         )
         # Flatten multi-index columns
         sent_pivot.columns = [f"{col[1]}_{col[0]}" for col in sent_pivot.columns]
-        sent_pivot = sent_pivot.reset_index()
+        sent_pivot = sent_pivot.reset_index().rename(columns={'date': 'cal_date'}).sort_values('cal_date')
 
-        # Merge with price df
-        df = pd.merge(df, sent_pivot, on='date', how='left')
+        # CRITICAL: a day's news aggregate (count/score) summarises the WHOLE day, so using it
+        # for that day's intraday bars would leak future (rest-of-day) information. Shift the
+        # daily series by one day so each trading day only sees the PREVIOUS day's sentiment.
+        sent_val_cols = [c for c in sent_pivot.columns if c != 'cal_date']
+        sent_pivot[sent_val_cols] = sent_pivot[sent_val_cols].shift(1)
+
+        # Merge by calendar date so prior-day sentiment broadcasts across all of a day's bars.
+        df = pd.merge(df, sent_pivot, on='cal_date', how='left')
 
         # Fill missing sentiment values with neutral (0) or 0 count
         for col in ['news_sentiment_score', 'reddit_sentiment_score']:
@@ -124,7 +210,12 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None):
     if macro_df is not None and not macro_df.empty:
         # Pivot macro indicators to get separate columns
         macro_pivot = macro_df.pivot(index='date', columns='indicator_name', values='value').reset_index()
-        df = pd.merge(df, macro_pivot, on='date', how='left')
+        macro_pivot = macro_pivot.rename(columns={'date': 'cal_date'}).sort_values('cal_date')
+
+        # Shift macro by one day too (use the prior day's macro state on each trading day).
+        macro_val_cols = [c for c in macro_pivot.columns if c != 'cal_date']
+        macro_pivot[macro_val_cols] = macro_pivot[macro_val_cols].shift(1)
+        df = pd.merge(df, macro_pivot, on='cal_date', how='left')
 
         # Forward fill macro indicators since they represent steady states
         for col in ['fed_funds', 'yield_spread']:
@@ -137,12 +228,13 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None):
         df['fed_funds'] = 0.05  # Sensible historical baseline
         df['yield_spread'] = 0.01
 
-    # --- Target Labels Generation (For Short-Term Classification) ---
-    # Win condition: the price rises by >= 2% relative to today's close within the next 3 trading days
-    # (Checking high of days T+1, T+2, T+3 relative to close of day T)
-    future_high_3d = df['high'].shift(-1).rolling(window=3, min_periods=1).max()
-    df['target_3d_gain'] = ((future_high_3d / df['close']) - 1.0) >= 0.02
-    df['target_3d_gain'] = df['target_3d_gain'].astype(int)
+    # --- Target Labels Generation (triple-barrier; matches the executed trade brackets) ---
+    # target_win = training label; trade_ret = realised P&L of the bracketed trade (eval only).
+    df['target_win'], df['trade_ret'] = triple_barrier_outcomes(
+        df['high'].values, df['low'].values, df['close'].values, df['atr_14'].values,
+        horizon=target_horizon_bars, atr_stop_mult=target_atr_stop_mult,
+        tp_mult=target_tp_mult, stop_min=target_stop_min, stop_max=target_stop_max,
+    )
 
     # --- Strict Look-Ahead Bias Mitigation ---
     # Shift ALL feature columns by 1 to represent data available at the market CLOSE of day T-1
@@ -252,7 +344,9 @@ def add_cross_ticker_features(df):
 
     return df
 
-def build_all_features(prices_df, sent_df, macro_df, active_universe):
+def build_all_features(prices_df, sent_df, macro_df, active_universe,
+                       target_horizon_bars=14, target_atr_stop_mult=2.0,
+                       target_tp_mult=2.5, target_stop_min=0.015, target_stop_max=0.05):
     """
     Computes individual and cross-ticker features for all active tickers.
     Returns a concatenated DataFrame containing all features.
@@ -263,7 +357,12 @@ def build_all_features(prices_df, sent_df, macro_df, active_universe):
         if len(ticker_prices) < 50:
             continue
         ticker_sent = sent_df[sent_df['ticker'] == ticker] if (sent_df is not None and not sent_df.empty) else pd.DataFrame()
-        t_feat = build_features_for_df(ticker_prices, ticker_sent, macro_df)
+        t_feat = build_features_for_df(ticker_prices, ticker_sent, macro_df,
+                                       target_horizon_bars=target_horizon_bars,
+                                       target_atr_stop_mult=target_atr_stop_mult,
+                                       target_tp_mult=target_tp_mult,
+                                       target_stop_min=target_stop_min,
+                                       target_stop_max=target_stop_max)
         processed_dfs.append(t_feat)
 
     if not processed_dfs:

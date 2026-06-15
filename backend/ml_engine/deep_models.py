@@ -79,7 +79,7 @@ def prepare_sequences(df, feature_cols, seq_len=10, fit_scaler=False, scaler_met
     df = df.copy()
 
     # Find rows that are fully valid
-    valid_cols = feature_cols + ["target_3d_gain", "ticker", "date"]
+    valid_cols = feature_cols + ["target_win", "ticker", "date"]
     df = df.dropna(subset=feature_cols)
 
     if df.empty:
@@ -115,7 +115,7 @@ def prepare_sequences(df, feature_cols, seq_len=10, fit_scaler=False, scaler_met
             continue
 
         feat_vals = ticker_df[feature_cols].values
-        target_vals = ticker_df["target_3d_gain"].values
+        target_vals = ticker_df["target_win"].values
         date_vals = ticker_df["date"].values
 
         for i in range(seq_len - 1, len(ticker_df)):
@@ -144,7 +144,7 @@ def train_temporal_attention_model(seq_len=10, epochs=30, batch_size=128):
     df = load_data_from_db()
 
     feature_cols = sorted([col for col in df.columns if col.startswith("feat_")])
-    target_col = "target_3d_gain"
+    target_col = "target_win"
 
     print("Preparing training sequences...")
     # Drop rows without targets (last few rows of dataset)

@@ -12,9 +12,13 @@ import xgboost as xgb
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import TICKER_UNIVERSE
+from app.core.config import (
+    TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, MPT_WINDOW_DAYS,
+    SHORT_TERM_ATR_STOP_MULT, SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX,
+    SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD,
+)
 from app.database import (
-    get_db, init_db, RecentPrice, TickerSentiment, MacroIndicator,
+    get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
     SentimentSourceLog
 )
@@ -87,6 +91,34 @@ def get_latest_data(db, end_date=None, mode="real"):
     } for s in sent]) if sent else pd.DataFrame()
 
     return prices_df, macro_df, sent_df
+
+
+def get_daily_data(db, end_date=None, lookback_days=600):
+    """Loads DAILY prices (daily_prices) + macro for the long-term regime/MPT path.
+    Returns (daily_prices_df, macro_df) covering ~lookback_days trading days."""
+    if end_date:
+        ref_date = datetime.strptime(end_date.split(" ")[0].split("T")[0], "%Y-%m-%d")
+    else:
+        ref_date = datetime.now()
+    start_date = (ref_date - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    end_str = ref_date.strftime("%Y-%m-%d")
+
+    q = db.query(DailyPrice).filter(DailyPrice.date >= start_date, DailyPrice.date <= end_str)
+    prices = q.all()
+    prices_df = pd.DataFrame([{
+        "ticker": p.ticker, "date": p.date, "open": p.open, "high": p.high,
+        "low": p.low, "close": p.close, "volume": p.volume,
+        "sma_10": p.sma_10, "sma_50": p.sma_50, "rsi_14": p.rsi_14,
+        "macd": p.macd, "macd_signal": p.macd_signal,
+    } for p in prices]) if prices else pd.DataFrame()
+
+    macro = db.query(MacroIndicator).filter(MacroIndicator.date >= start_date,
+                                            MacroIndicator.date <= end_str).all()
+    macro_df = pd.DataFrame([{
+        "date": m.date, "indicator_name": m.indicator_name, "value": m.value
+    } for m in macro]) if macro else pd.DataFrame()
+    return prices_df, macro_df
+
 
 _suggestions_cache = {}
 
@@ -174,12 +206,15 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         hmm_metadata = pickle.load(f)
     state_mapping = hmm_metadata["state_mapping"]
 
-    # --- Compute Current HMM Market Regime ---
-    spy_data = prices_df[prices_df["ticker"] == "SPY"].sort_values("date").copy()
+    # --- Long-term DAILY dataset (regime + MPT) — kept separate from the hourly short-term path ---
+    daily_prices_df, daily_macro_df = get_daily_data(db, end_date=date)
+
+    # --- Compute Current HMM Market Regime (on DAILY SPY + macro, matching how it was trained) ---
+    spy_data = daily_prices_df[daily_prices_df["ticker"] == "SPY"].sort_values("date").copy() if not daily_prices_df.empty else pd.DataFrame()
     if spy_data.empty:
         current_regime = "growth"
     else:
-        spy_features = build_features_for_df(spy_data, sentiment_df=None, macro_df=macro_df)
+        spy_features = build_features_for_df(spy_data, sentiment_df=None, macro_df=daily_macro_df)
         hmm_feature_cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
         last_row = spy_features[hmm_feature_cols].tail(1)
         if last_row.isna().any().any():
@@ -192,11 +227,16 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     db_tickers = db.query(UniverseTicker).all()
     active_universe = [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
 
-    # --- Compute Short-Term Signals ---
+    # --- Compute Short-Term Signals (on HOURLY bars + real sentiment) ---
     suggestions = []
 
     # Process features globally using build_all_features to generate cross-ticker metrics safely
-    full_features_df = build_all_features(prices_df, sent_df, macro_df, active_universe)
+    full_features_df = build_all_features(
+        prices_df, sent_df, macro_df, active_universe,
+        target_horizon_bars=SHORT_TERM_HORIZON_BARS,
+        target_atr_stop_mult=SHORT_TERM_ATR_STOP_MULT, target_tp_mult=SHORT_TERM_TP_MULT,
+        target_stop_min=SHORT_TERM_STOP_MIN, target_stop_max=SHORT_TERM_STOP_MAX,
+    )
     if full_features_df.empty:
         raise HTTPException(status_code=500, detail="Insufficient price data to generate prediction features.")
 
@@ -252,18 +292,18 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         if prob is None:
             continue  # No inference possible for this ticker
 
-        # Sizing and triggers
+        # Sizing and triggers. `prob` = model P(take-profit hit before stop within the horizon).
         action = "HOLD"
         confidence = prob
         reasoning = "Technicals and sentiment are in a balanced range."
 
-        # Buy trigger: probability >= 55%
-        if prob >= 0.55:
+        # Buy the high-confidence tail (thresholds are config-driven, tuned to the label's base rate).
+        if prob >= SHORT_TERM_BUY_THRESHOLD:
             action = "BUY"
-            reasoning = f"Probability of breakout ({prob*100:.1f}%) exceeds entry threshold, supported by a sentiment score of {sentiment_score:.2f}."
-        elif prob <= 0.40:
+            reasoning = f"Win probability ({prob*100:.1f}%) exceeds the entry threshold ({SHORT_TERM_BUY_THRESHOLD*100:.0f}%), supported by a sentiment score of {sentiment_score:.2f}."
+        elif prob <= SHORT_TERM_SELL_THRESHOLD:
             action = "SELL"
-            reasoning = f"Bearish breakout signal ({prob*100:.1f}%) indicates downside risk."
+            reasoning = f"Very low win probability ({prob*100:.1f}%) indicates poor risk/reward."
 
         # Extract audit features Safely
         last_row = t_feat.iloc[-1]
@@ -304,8 +344,9 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         }
 
         # Bracket orders limits
-        stop_loss_pct = min(0.05, max(0.015, (2.0 * atr) / current_close))
-        take_profit_pct = stop_loss_pct * 2.5
+        # Same brackets used to LABEL training data (triple-barrier) — keeps target ≈ execution.
+        stop_loss_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / current_close))
+        take_profit_pct = stop_loss_pct * SHORT_TERM_TP_MULT
 
         suggestions.append({
             "ticker": ticker,
@@ -319,11 +360,10 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         })
 
 
-    # --- Compute Long-Term Portfolio Weights ---
-    # Gather returns dataframe for active assets (last 252 days)
+    # --- Compute Long-Term Portfolio Weights (on DAILY returns, ~1 trading year) ---
     returns_list = []
     for ticker in active_universe:
-        t_data = prices_df[prices_df['ticker'] == ticker].sort_values('date').copy()
+        t_data = daily_prices_df[daily_prices_df['ticker'] == ticker].sort_values('date').copy() if not daily_prices_df.empty else pd.DataFrame()
         if t_data.empty:
             continue
         t_data['returns'] = t_data['close'].pct_change()
@@ -333,7 +373,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         returns_df = returns_list[0]
         for r in returns_list[1:]:
             returns_df = pd.merge(returns_df, r, on='date', how='outer')
-        returns_df = returns_df.sort_values('date').tail(252)
+        returns_df = returns_df.sort_values('date').tail(MPT_WINDOW_DAYS)
 
         opt_weights = PortfolioOptimizer.calculate_optimal_weights(returns_df, current_regime)
     else:

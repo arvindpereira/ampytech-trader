@@ -39,6 +39,10 @@ def train(epochs=None):
 def backtest():
     run_command([sys.executable, "backtesting/backtest.py"], "PyBroker Backtesting & Stress Tests")
 
+def walkforward(splits=5):
+    run_command([sys.executable, "ml_engine/models.py", "--walkforward", "--splits", str(splits)],
+                "Walk-Forward Out-of-Sample Validation")
+
 def serve():
     # Run Uvicorn to serve the FastAPI application
     run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008", "--reload"], "FastAPI Server")
@@ -50,7 +54,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "serve", "schedule", "simulate", "backtest-virtual"],
+        choices=["fetch", "train", "backtest", "walkforward", "serve", "schedule", "simulate", "backtest-virtual"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -71,6 +75,12 @@ def main():
         default=None,
         help="Number of epochs to train the deep temporal attention model"
     )
+    parser.add_argument(
+        "--splits",
+        type=int,
+        default=5,
+        help="Number of walk-forward folds"
+    )
 
     args = parser.parse_args()
 
@@ -84,6 +94,8 @@ def main():
         train(epochs=args.epochs)
     elif args.action == "backtest":
         backtest()
+    elif args.action == "walkforward":
+        walkforward(splits=args.splits)
     elif args.action == "serve":
         serve()
     elif args.action == "schedule":

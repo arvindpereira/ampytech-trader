@@ -1,53 +1,29 @@
 import sys
 import os
+import time
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
+import numpy as np
 import requests
+import urllib.parse
 
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import TICKER_UNIVERSE, MASSIVE_API_KEY, MASSIVE_BASE_URL, DATA_TIMESPAN, DATA_MULTIPLIER, DATA_LOOKBACK_DAYS
-from app.database import init_db, SessionLocal, RecentPrice, UniverseTicker
-import urllib.parse
+from app.core.config import (
+    TICKER_UNIVERSE, BENCHMARK_TICKER, MASSIVE_API_KEY, MASSIVE_BASE_URL,
+    DATA_TIMESPAN, DATA_MULTIPLIER, HOURLY_LOOKBACK_DAYS, DAILY_HISTORY_START
+)
+from app.database import init_db, SessionLocal, RecentPrice, DailyPrice, UniverseTicker
 
-def fetch_massive_indicator(indicator_type, ticker, params):
-    ticker_encoded = urllib.parse.quote(ticker)
-    url = f"{MASSIVE_BASE_URL}/v1/indicators/{indicator_type}/{ticker_encoded}"
-    headers = {}
-    if MASSIVE_API_KEY:
-        headers["Authorization"] = f"Bearer {MASSIVE_API_KEY}"
+# Symbols that differ between Massive/Polygon (class-B uses a dot) and Yahoo (uses a dash).
+MASSIVE_SYMBOL_OVERRIDES = {"BRK-B": "BRK.B"}
 
-    import time
-    max_retries = 5
-    backoff_sec = 2.0
 
-    for attempt in range(max_retries):
-        time.sleep(0.5)  # Throttle a bit to prevent aggressive hits
-        try:
-            response = requests.get(url, headers=headers, params=params)
-            if response.status_code == 429:
-                print(f"Rate limited (429) for indicator {indicator_type} on {ticker}. Retrying in {backoff_sec} seconds...")
-                time.sleep(backoff_sec)
-                backoff_sec *= 2.0
-                continue
-            response.raise_for_status()
-            data = response.json()
-            return data.get("results", {}).get("values", [])
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"Failed to fetch indicator {indicator_type} for {ticker}: {e}")
-                return []
-            time.sleep(backoff_sec)
-            backoff_sec *= 2.0
-    return []
+def map_ticker_to_massive(ticker):
+    return MASSIVE_SYMBOL_OVERRIDES.get(ticker, ticker)
 
-def timestamp_to_str(epoch_ms):
-    dt = datetime.fromtimestamp(epoch_ms / 1000.0)
-    if DATA_TIMESPAN in ["minute", "hour"]:
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        return dt.strftime("%Y-%m-%d")
 
 def map_ticker_to_yahoo(ticker):
     if ticker.startswith("X:"):
@@ -56,27 +32,104 @@ def map_ticker_to_yahoo(ticker):
         return ticker[2:] + "=X"
     return ticker
 
-def fetch_yahoo_prices(ticker, start_date, end_date):
+
+def timestamp_to_str(epoch_ms, daily=False):
+    dt = datetime.fromtimestamp(epoch_ms / 1000.0)
+    if daily:
+        return dt.strftime("%Y-%m-%d")
+    if DATA_TIMESPAN in ["minute", "hour"]:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    return dt.strftime("%Y-%m-%d")
+
+
+# ---------------------------------------------------------------------------
+# Raw source fetchers
+# ---------------------------------------------------------------------------
+
+def _massive_get(url, headers, ticker):
+    """GETs a Massive/Polygon URL with 429 backoff. Returns (json|None)."""
+    backoff_sec = 2.0
+    for attempt in range(5):
+        time.sleep(0.2)
+        try:
+            response = requests.get(url, headers=headers, timeout=60)
+            if response.status_code == 429:
+                print(f"Rate limited (429) for {ticker}. Retrying in {backoff_sec}s...")
+                time.sleep(backoff_sec)
+                backoff_sec *= 2.0
+                continue
+            if response.status_code == 403:
+                msg = response.json().get("message", "not authorized") if response.headers.get("content-type", "").startswith("application/json") else response.text[:120]
+                print(f"Massive plan does not cover {ticker}: {msg}")
+                return None
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if attempt == 4:
+                print(f"Failed Massive request for {ticker}: {e}")
+                return None
+            time.sleep(backoff_sec)
+            backoff_sec *= 2.0
+    return None
+
+
+def fetch_massive_hourly(ticker, start_date, end_date):
+    """Fetches HOURLY bars from Massive/Polygon, following the `next_url` cursor across all
+    pages (the API caps each page at ~1000 bars regardless of `limit`). No fallback to other
+    sources: if the plan does not cover the timeframe (403) or no data exists, returns []."""
+    symbol = map_ticker_to_massive(ticker)
+    ticker_encoded = urllib.parse.quote(symbol)
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
+    headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"} if MASSIVE_API_KEY else {}
+
+    url = (f"{MASSIVE_BASE_URL}/v2/aggs/ticker/{ticker_encoded}/range/"
+           f"{DATA_MULTIPLIER}/{DATA_TIMESPAN}/{start_str}/{end_str}"
+           f"?adjusted=true&sort=asc&limit=50000")
+
+    bars = []
+    pages = 0
+    while url:
+        data = _massive_get(url, headers, ticker)
+        if data is None:
+            break
+        bars.extend(data.get("results", []) or [])
+        pages += 1
+        next_url = data.get("next_url")
+        # next_url carries the cursor but not the api key; auth stays in the header.
+        url = next_url if next_url else None
+        if pages > 200:  # safety guard against runaway pagination
+            print(f"Stopping {ticker} after {pages} pages.")
+            break
+    if pages > 1:
+        print(f"{ticker}: fetched {len(bars)} hourly bars across {pages} pages.")
+    return bars
+
+
+def fetch_yahoo_daily(ticker, start_date, end_date):
+    """Fetches DAILY bars from Yahoo Finance. Returns [] for delisted/unavailable symbols."""
     yahoo_symbol = map_ticker_to_yahoo(ticker)
     p1 = int(start_date.timestamp())
     p2 = int(end_date.timestamp())
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}?period1={p1}&period2={p2}&interval=1d"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
+           f"?period1={p1}&period2={p2}&interval=1d")
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                             "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
 
-    import time
     max_retries = 5
     backoff_sec = 2.0
-
     for attempt in range(max_retries):
         try:
-            res = requests.get(url, headers=headers, timeout=15)
+            res = requests.get(url, headers=headers, timeout=20)
             if res.status_code == 429:
                 time.sleep(backoff_sec)
                 backoff_sec *= 2.0
                 continue
+            if res.status_code in (400, 404):
+                print(f"Yahoo has no data for {ticker} ({yahoo_symbol}): HTTP {res.status_code} (likely delisted/renamed).")
+                return []
             res.raise_for_status()
-            data = res.json()
-            chart = data.get("chart", {}).get("result", [])
+            chart = res.json().get("chart", {}).get("result", [])
             if not chart:
                 return []
             chart = chart[0]
@@ -85,50 +138,40 @@ def fetch_yahoo_prices(ticker, start_date, end_date):
             if not quotes:
                 return []
             quotes = quotes[0]
-
-            opens = quotes.get("open", [])
-            highs = quotes.get("high", [])
-            lows = quotes.get("low", [])
-            closes = quotes.get("close", [])
-            volumes = quotes.get("volume", [])
+            opens, highs = quotes.get("open", []), quotes.get("high", [])
+            lows, closes, volumes = quotes.get("low", []), quotes.get("close", []), quotes.get("volume", [])
 
             bars = []
             for i in range(len(timestamps)):
-                t_ms = timestamps[i] * 1000
-                o = opens[i]
-                h = highs[i]
-                l = lows[i]
-                c = closes[i]
-                v = volumes[i]
-
+                o, h, l, c = opens[i], highs[i], lows[i], closes[i]
                 if o is None or h is None or l is None or c is None:
                     continue
-
                 bars.append({
-                    "t": t_ms,
-                    "o": float(o),
-                    "h": float(h),
-                    "l": float(l),
-                    "c": float(c),
-                    "v": float(v) if v is not None else 0.0
+                    "t": timestamps[i] * 1000,
+                    "o": float(o), "h": float(h), "l": float(l), "c": float(c),
+                    "v": float(volumes[i]) if volumes[i] is not None else 0.0
                 })
             return bars
         except Exception as e:
             if attempt == max_retries - 1:
-                print(f"Failed to fetch Yahoo data for {ticker}: {e}")
+                print(f"Failed to fetch Yahoo daily data for {ticker}: {e}")
                 return []
             time.sleep(backoff_sec)
             backoff_sec *= 2.0
     return []
 
-def compute_local_indicators_for_bars(bars):
+
+# ---------------------------------------------------------------------------
+# Local indicator computation
+# ---------------------------------------------------------------------------
+
+def compute_local_indicators_for_bars(bars, daily=False):
+    """Computes SMA/RSI/MACD locally over a chronological bar series.
+    Returns (sma_10_map, sma_50_map, rsi_14_map, macd_map) keyed by formatted date string."""
     if not bars:
         return {}, {}, {}, {}
-    import pandas as pd
-    import numpy as np
 
-    df = pd.DataFrame(bars)
-    df = df.drop_duplicates(subset=['t']).sort_values('t').reset_index(drop=True)
+    df = pd.DataFrame(bars).drop_duplicates(subset=['t']).sort_values('t').reset_index(drop=True)
 
     df['sma_10'] = df['c'].rolling(window=10).mean()
     df['sma_50'] = df['c'].rolling(window=50).mean()
@@ -136,36 +179,24 @@ def compute_local_indicators_for_bars(bars):
     delta = df['c'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
-
-    avg_gain_vals = avg_gain.values
-    avg_loss_vals = avg_loss.values
-    gain_vals = gain.values
-    loss_vals = loss.values
-
+    avg_gain = gain.rolling(window=14).mean().values
+    avg_loss = loss.rolling(window=14).mean().values
+    gain_vals, loss_vals = gain.values, loss.values
     for i in range(15, len(df)):
-        if not np.isnan(avg_gain_vals[i-1]):
-            avg_gain_vals[i] = (avg_gain_vals[i-1] * 13 + gain_vals[i]) / 14
-        if not np.isnan(avg_loss_vals[i-1]):
-            avg_loss_vals[i] = (avg_loss_vals[i-1] * 13 + loss_vals[i]) / 14
-
-    df['rsi_14'] = 100 - (100 / (1 + avg_gain_vals / (avg_loss_vals + 1e-10)))
+        if not np.isnan(avg_gain[i - 1]):
+            avg_gain[i] = (avg_gain[i - 1] * 13 + gain_vals[i]) / 14
+        if not np.isnan(avg_loss[i - 1]):
+            avg_loss[i] = (avg_loss[i - 1] * 13 + loss_vals[i]) / 14
+    df['rsi_14'] = 100 - (100 / (1 + avg_gain / (avg_loss + 1e-10)))
 
     ema_12 = df['c'].ewm(span=12, adjust=False).mean()
     ema_26 = df['c'].ewm(span=26, adjust=False).mean()
     df['macd'] = ema_12 - ema_26
     df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
 
-    sma_10_map = {}
-    sma_50_map = {}
-    rsi_14_map = {}
-    macd_map = {}
-
+    sma_10_map, sma_50_map, rsi_14_map, macd_map = {}, {}, {}, {}
     for _, row in df.iterrows():
-        epoch_ms = row['t']
-        date_str = timestamp_to_str(epoch_ms)
+        date_str = timestamp_to_str(row['t'], daily=daily)
         if not np.isnan(row['sma_10']):
             sma_10_map[date_str] = float(row['sma_10'])
         if not np.isnan(row['sma_50']):
@@ -174,254 +205,210 @@ def compute_local_indicators_for_bars(bars):
             rsi_14_map[date_str] = float(row['rsi_14'])
         if not np.isnan(row['macd']) and not np.isnan(row['macd_signal']):
             macd_map[date_str] = (float(row['macd']), float(row['macd_signal']))
-
     return sma_10_map, sma_50_map, rsi_14_map, macd_map
 
-def fetch_single_ticker_data(ticker, start_date, end_date):
-    split_date = datetime(2022, 1, 1)
 
-    # 1. Fetch pre-2022 from Yahoo Finance
-    yahoo_results = []
-    if start_date < split_date:
-        fetch_end = min(end_date, split_date)
-        print(f"Fetching Yahoo historical prices for {ticker}: {start_date.strftime('%Y-%m-%d')} to {fetch_end.strftime('%Y-%m-%d')}...")
-        yahoo_results = fetch_yahoo_prices(ticker, start_date, fetch_end)
+def _write_bars(db, Model, ticker, bars, daily=False):
+    """Upserts a bar series into the given price Model, backfilling indicators on existing rows."""
+    if not bars:
+        return 0, 0
+    sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(bars, daily=daily)
 
-    # 2. Fetch post-2022 from Massive API
-    massive_results = []
-    if end_date > split_date:
-        fetch_start = max(start_date, split_date)
-        start_str = fetch_start.strftime('%Y-%m-%d')
-        end_str = end_date.strftime('%Y-%m-%d')
-        ticker_encoded = urllib.parse.quote(ticker)
+    existing_map = {p.date: p for p in db.query(Model).filter(Model.ticker == ticker).all()}
+    new_records = []
+    updated = 0
+    for bar in bars:
+        epoch_ms = bar.get("t")
+        if not epoch_ms:
+            continue
+        date_str = timestamp_to_str(epoch_ms, daily=daily)
+        macd_pair = macd_map.get(date_str)
 
-        print(f"Fetching Massive API prices for {ticker}: {start_str} to {end_str}...")
+        existing = existing_map.get(date_str)
+        if existing:
+            changed = False
+            if existing.sma_10 is None and date_str in sma_10_map:
+                existing.sma_10 = sma_10_map[date_str]; changed = True
+            if existing.sma_50 is None and date_str in sma_50_map:
+                existing.sma_50 = sma_50_map[date_str]; changed = True
+            if existing.rsi_14 is None and date_str in rsi_14_map:
+                existing.rsi_14 = rsi_14_map[date_str]; changed = True
+            if existing.macd is None and macd_pair:
+                existing.macd, existing.macd_signal = macd_pair; changed = True
+            if changed:
+                db.add(existing); updated += 1
+            continue
 
-        import time
-        max_retries = 5
-        backoff_sec = 2.0
+        new_records.append(Model(
+            ticker=ticker, date=date_str,
+            open=float(bar["o"]), high=float(bar["h"]), low=float(bar["l"]),
+            close=float(bar["c"]), volume=float(bar["v"]),
+            sma_10=sma_10_map.get(date_str), sma_50=sma_50_map.get(date_str),
+            rsi_14=rsi_14_map.get(date_str),
+            macd=macd_pair[0] if macd_pair else None,
+            macd_signal=macd_pair[1] if macd_pair else None,
+        ))
+    if new_records:
+        db.bulk_save_objects(new_records)
+    if new_records or updated:
+        db.commit()
+    return len(new_records), updated
 
-        url = f"{MASSIVE_BASE_URL}/v2/aggs/ticker/{ticker_encoded}/range/{DATA_MULTIPLIER}/{DATA_TIMESPAN}/{start_str}/{end_str}"
-        headers = {}
-        if MASSIVE_API_KEY:
-            headers["Authorization"] = f"Bearer {MASSIVE_API_KEY}"
 
-        for attempt in range(max_retries):
-            time.sleep(0.2)
-            try:
-                response = requests.get(url, headers=headers)
-                if response.status_code == 429:
-                    print(f"Rate limited (429) for {ticker}. Retrying in {backoff_sec} seconds...")
-                    time.sleep(backoff_sec)
-                    backoff_sec *= 2.0
-                    continue
-                response.raise_for_status()
-                data = response.json()
-                massive_results = data.get("results", [])
-                break
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    print(f"Failed to fetch Massive API data for {ticker}: {e}")
-                    # Fallback to Yahoo Finance for post-2022 if Massive fails
-                    print(f"Falling back to Yahoo Finance for {ticker} post-2022...")
-                    massive_results = fetch_yahoo_prices(ticker, fetch_start, end_date)
-                else:
-                    time.sleep(backoff_sec)
-                    backoff_sec *= 2.0
+def _get_active_universe(db):
+    db_tickers = db.query(UniverseTicker).all()
+    universe = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)
+    # Always include the benchmark even if not tradable.
+    return sorted(set(universe + [BENCHMARK_TICKER]))
 
-    # Combine results
-    combined_map = {bar['t']: bar for bar in yahoo_results}
-    for bar in massive_results:
-        combined_map[bar['t']] = bar
 
-    combined_results = sorted(list(combined_map.values()), key=lambda x: x['t'])
+def _earliest_latest(db, Model, ticker):
+    latest = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.desc()).first()
+    earliest = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.asc()).first()
 
-    if not combined_results:
-        print(f"No price data returned for {ticker} from any source.")
-        return ticker, [], {}, {}, {}, {}
+    def to_dt(rec):
+        if not rec:
+            return None
+        part = rec.date.split(" ")[0].split("T")[0]
+        return datetime.strptime(part, "%Y-%m-%d")
+    return to_dt(earliest), to_dt(latest)
 
-    # Compute technical indicators locally on combined series for consistency
-    sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(combined_results)
 
-    return ticker, combined_results, sma_10_map, sma_50_map, rsi_14_map, macd_map
+# ---------------------------------------------------------------------------
+# HOURLY: recent_prices (Massive)
+# ---------------------------------------------------------------------------
+
+def _looks_like_legacy_hourly_table(db, hourly_start):
+    """Detects the old mixed daily+hourly table: any Yahoo-daily-stamped rows (09:30 ET ->
+    06:30 local, or date-only) or any row older than the hourly window."""
+    start_str = hourly_start.strftime("%Y-%m-%d")
+    legacy = db.query(RecentPrice).filter(
+        (RecentPrice.date < start_str) |
+        (RecentPrice.date.like("% 06:30:00")) |
+        (~RecentPrice.date.like("% %:%"))
+    ).first()
+    return legacy is not None
 
 
 def fetch_recent_prices():
-    init_db()  # Ensure database schema is initialized
+    """Fetches a clean HOURLY-only dataset (~5y window) into recent_prices."""
+    init_db()
     db = SessionLocal()
 
     end_date = datetime.now()
-    # Default lookback based on configured setting
-    if DATA_LOOKBACK_DAYS >= 10000:
-        default_start_date = datetime(1996, 1, 1)
-    else:
-        default_start_date = end_date - timedelta(days=DATA_LOOKBACK_DAYS)
+    hourly_start = end_date - timedelta(days=HOURLY_LOOKBACK_DAYS)
+    active_universe = _get_active_universe(db)
 
-    # Load stock universe dynamically from DB (honoring user edits)
-    db_tickers = db.query(UniverseTicker).all()
-    active_universe = [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
+    print(f"Starting HOURLY price fetch for {len(active_universe)} tickers "
+          f"({hourly_start.strftime('%Y-%m-%d')} -> {end_date.strftime('%Y-%m-%d')})...")
 
-    print(f"Starting recent price fetch for {len(active_universe)} tickers in {DATA_TIMESPAN} resolution (multiplier: {DATA_MULTIPLIER})...")
+    # One-time clean rebuild if the legacy mixed table is detected.
+    if _looks_like_legacy_hourly_table(db, hourly_start):
+        n = db.query(RecentPrice).delete()
+        db.commit()
+        print(f"Detected legacy mixed-resolution rows. Purged {n} rows from recent_prices for a clean hourly rebuild.")
 
-    tickers_to_fetch = sorted(list(set(active_universe + ["BRK-B"])))
+    # Drop rows for tickers no longer in the universe to keep the table clean.
+    stale = db.query(RecentPrice).filter(~RecentPrice.ticker.in_(active_universe)).delete(synchronize_session=False)
+    if stale:
+        db.commit()
+        print(f"Removed {stale} rows for tickers no longer in the universe.")
 
-    # Define a list of fetch tasks: (ticker, start_date, end_date)
     fetch_tasks = []
-    for ticker in tickers_to_fetch:
-        latest_record = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).order_by(RecentPrice.date.desc()).first()
-        earliest_record = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).order_by(RecentPrice.date.asc()).first()
-
-        # 1. Check if we need to backfill historical data
-        if earliest_record:
-            earliest_date_part = earliest_record.date.split(" ")[0].split("T")[0]
-            earliest_dt = datetime.strptime(earliest_date_part, "%Y-%m-%d")
-            # If default_start_date is before the earliest cached date, backfill it
-            if default_start_date < earliest_dt - timedelta(days=5):
-                print(f"Ticker {ticker} needs historical backfill: {default_start_date.strftime('%Y-%m-%d')} to {earliest_date_part}")
-                fetch_tasks.append((ticker, default_start_date, earliest_dt))
-
-        # 2. Check if we need to fetch recent data forward
-        if latest_record:
-            latest_date_part = latest_record.date.split(" ")[0].split("T")[0]
-            latest_dt = datetime.strptime(latest_date_part, "%Y-%m-%d")
-            if latest_dt < end_date - timedelta(days=1):
-                fetch_tasks.append((ticker, latest_dt, end_date))
-        else:
-            # No records exist at all, fetch the full range
-            print(f"Ticker {ticker} has no cached records. Fetching full range: {default_start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-            fetch_tasks.append((ticker, default_start_date, end_date))
-
-    db.close() # Close session for thread safety before parallel execution
+    for ticker in active_universe:
+        _, latest = _earliest_latest(db, RecentPrice, ticker)
+        if latest is None:
+            fetch_tasks.append((ticker, hourly_start, end_date))
+        elif latest < end_date - timedelta(days=1):
+            fetch_tasks.append((ticker, max(hourly_start, latest), end_date))
+    db.close()
 
     if not fetch_tasks:
-        print("All tickers are already up to date.")
+        print("All tickers already up to date (hourly).")
         return
 
-    # Fetch data in parallel
+    print(f"Fetching {len(fetch_tasks)} hourly tasks in parallel...")
     results_map = {}
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    print(f"Launching parallel fetching using ThreadPoolExecutor for {len(fetch_tasks)} tasks...")
     with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {
-            executor.submit(fetch_single_ticker_data, ticker, start_date, end_date): ticker
-            for ticker, start_date, end_date in fetch_tasks
-        }
-
+        futures = {executor.submit(fetch_massive_hourly, tk, s, e): tk for tk, s, e in fetch_tasks}
         for future in as_completed(futures):
-            ticker = futures[future]
+            tk = futures[future]
             try:
-                ticker_res, results, sma_10_map, sma_50_map, rsi_14_map, macd_map = future.result()
-                if results is not None:
-                    if ticker_res in results_map:
-                        prev_results, prev_sma, prev_sma_50, prev_rsi, prev_macd = results_map[ticker_res]
-
-                        # Merge price bars and drop duplicate timestamps
-                        combined_bars = {bar['t']: bar for bar in prev_results}
-                        for bar in results:
-                            combined_bars[bar['t']] = bar
-                        new_results = sorted(list(combined_bars.values()), key=lambda x: x['t'])
-
-                        prev_sma.update(sma_10_map)
-                        prev_sma_50.update(sma_50_map)
-                        prev_rsi.update(rsi_14_map)
-                        prev_macd.update(macd_map)
-
-                        results_map[ticker_res] = (new_results, prev_sma, prev_sma_50, prev_rsi, prev_macd)
-                    else:
-                        results_map[ticker_res] = (results, sma_10_map, sma_50_map, rsi_14_map, macd_map)
+                results_map[tk] = future.result()
             except Exception as e:
-                print(f"Error executing parallel fetch for {ticker}: {e}")
+                print(f"Error fetching hourly {tk}: {e}")
 
-    # Write results sequentially to DB
-    print("\nWriting fetched data to database sequentially...")
     db = SessionLocal()
     try:
-        for ticker, (results, sma_10_map, sma_50_map, rsi_14_map, macd_map) in results_map.items():
-            if not results:
+        for ticker, bars in results_map.items():
+            if not bars:
+                print(f"No hourly bars returned for {ticker}.")
                 continue
-
-            try:
-                new_records = []
-                updated_existing_count = 0
-
-                # Pre-fetch all existing dates for this ticker to avoid N+1 queries
-                print(f"Loading existing cached dates from database for {ticker}...")
-                existing_prices = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).all()
-                existing_map = {p.date: p for p in existing_prices}
-
-                for bar in results:
-                    epoch_ms = bar.get("t")
-                    if not epoch_ms:
-                        continue
-                    dt = datetime.fromtimestamp(epoch_ms / 1000.0)
-
-                    if DATA_TIMESPAN in ["minute", "hour"]:
-                        date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        date_str = dt.strftime("%Y-%m-%d")
-
-                    existing = existing_map.get(date_str)
-
-                    macd_pair = macd_map.get(date_str)
-                    if existing:
-                        updated = False
-                        if existing.sma_10 is None and date_str in sma_10_map:
-                            existing.sma_10 = sma_10_map[date_str]
-                            updated = True
-                        if existing.sma_50 is None and date_str in sma_50_map:
-                            existing.sma_50 = sma_50_map[date_str]
-                            updated = True
-                        if existing.rsi_14 is None and date_str in rsi_14_map:
-                            existing.rsi_14 = rsi_14_map[date_str]
-                            updated = True
-                        if existing.macd is None and macd_pair:
-                            existing.macd = macd_pair[0]
-                            existing.macd_signal = macd_pair[1]
-                            updated = True
-
-                        if updated:
-                            db.add(existing)
-                            updated_existing_count += 1
-                        continue
-
-                    sma10_val = sma_10_map.get(date_str)
-                    sma50_val = sma_50_map.get(date_str)
-                    rsi14_val = rsi_14_map.get(date_str)
-                    macd_val = macd_pair[0] if macd_pair else None
-                    macd_sig_val = macd_pair[1] if macd_pair else None
-
-                    price_record = RecentPrice(
-                        ticker=ticker,
-                        date=date_str,
-                        open=float(bar["o"]),
-                        high=float(bar["h"]),
-                        low=float(bar["l"]),
-                        close=float(bar["c"]),
-                        volume=float(bar["v"]),
-                        sma_10=sma10_val,
-                        sma_50=sma50_val,
-                        rsi_14=rsi14_val,
-                        macd=macd_val,
-                        macd_signal=macd_sig_val
-                    )
-                    new_records.append(price_record)
-
-                if new_records or updated_existing_count > 0:
-                    if new_records:
-                        db.bulk_save_objects(new_records)
-                    db.commit()
-                    print(f"Added {len(new_records)} new price records and backfilled {updated_existing_count} existing records with technical indicators for {ticker}.")
-                else:
-                    print(f"No new records added or updated for {ticker} (already cached).")
-
-            except Exception as e:
-                print(f"Failed to ingest price data for {ticker}: {e}")
-                db.rollback()
-
+            added, updated = _write_bars(db, RecentPrice, ticker, bars, daily=False)
+            print(f"{ticker}: +{added} new hourly bars, {updated} backfilled.")
     finally:
         db.close()
-    print("Recent price fetch completed.\n")
+    print("Hourly price fetch completed.\n")
+
+
+# ---------------------------------------------------------------------------
+# DAILY: daily_prices (Yahoo, full history)
+# ---------------------------------------------------------------------------
+
+def fetch_daily_history():
+    """Fetches full multi-decade DAILY history (Yahoo) into daily_prices."""
+    init_db()
+    db = SessionLocal()
+
+    end_date = datetime.now()
+    default_start = datetime.strptime(DAILY_HISTORY_START, "%Y-%m-%d")
+    active_universe = _get_active_universe(db)
+
+    print(f"Starting DAILY history fetch for {len(active_universe)} tickers "
+          f"(since {DAILY_HISTORY_START})...")
+
+    fetch_tasks = []
+    for ticker in active_universe:
+        earliest, latest = _earliest_latest(db, DailyPrice, ticker)
+        if latest is None:
+            fetch_tasks.append((ticker, default_start, end_date))
+            continue
+        if latest < end_date - timedelta(days=1):
+            fetch_tasks.append((ticker, latest, end_date))
+        if earliest and default_start < earliest - timedelta(days=5):
+            fetch_tasks.append((ticker, default_start, earliest))
+    db.close()
+
+    if not fetch_tasks:
+        print("All tickers already up to date (daily).")
+        return
+
+    print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...")
+    results_map = {}
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(fetch_yahoo_daily, tk, s, e): (tk, s, e) for tk, s, e in fetch_tasks}
+        for future in as_completed(futures):
+            tk = futures[future][0]
+            try:
+                bars = future.result()
+                results_map.setdefault(tk, [])
+                results_map[tk].extend(bars)
+            except Exception as e:
+                print(f"Error fetching daily {tk}: {e}")
+
+    db = SessionLocal()
+    try:
+        for ticker, bars in results_map.items():
+            if not bars:
+                print(f"No daily history available for {ticker} (likely delisted/renamed).")
+                continue
+            added, updated = _write_bars(db, DailyPrice, ticker, bars, daily=True)
+            print(f"{ticker}: +{added} new daily bars, {updated} backfilled.")
+    finally:
+        db.close()
+    print("Daily history fetch completed.\n")
+
 
 if __name__ == "__main__":
     fetch_recent_prices()
+    fetch_daily_history()
