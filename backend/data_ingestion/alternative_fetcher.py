@@ -25,6 +25,11 @@ POLITICIANS = [
 RELATIONSHIPS = ["CEO", "CFO", "Director", "COO", "10% Owner", "VP of Engineering", "General Counsel"]
 
 def seed_alternative_data():
+    print("=" * 78)
+    print("WARNING: SEEDING *SYNTHETIC* (RANDOM) DISCLOSURES — NOT REAL DATA.")
+    print("These carry NO predictive signal. For research/plumbing only. Do not trade on them.")
+    print("Replace with a real source (SEC EDGAR Form 4 / Quiver STOCK Act) before relying on alt data.")
+    print("=" * 78)
     init_db()
     db = SessionLocal()
 

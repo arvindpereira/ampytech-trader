@@ -41,3 +41,7 @@ backend/ml_engine/saved_models/_old_breakout_pth/
 
 # Premium News Archive
 backend/data/premium_news/archive/
+
+# TS build info
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo

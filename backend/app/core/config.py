@@ -95,7 +95,11 @@ SHORT_TERM_SELL_THRESHOLD = float(os.getenv("SHORT_TERM_SELL_THRESHOLD", "0.02")
 MPT_WINDOW_DAYS = int(os.getenv("MPT_WINDOW_DAYS", "252"))                  # ~1 trading year
 
 # Alternative data and hedging configurations
-ALT_DATA_ENABLED = os.getenv("ALT_DATA_ENABLED", "True").lower() == "true"
+# NOTE: the bundled disclosures fetcher currently SEEDS SYNTHETIC (random) data, which carries no real
+# signal. Disabled by default so the production model is never trained on noise. Only enable once a REAL
+# source is wired (SEC EDGAR Form 4 for insiders; Quiver/Capitol Trades for STOCK Act). See
+# pr2_review_and_updates.md (C1).
+ALT_DATA_ENABLED = os.getenv("ALT_DATA_ENABLED", "False").lower() == "true"
 try:
     INSIDER_LOOKBACK_DAYS = int(os.getenv("INSIDER_LOOKBACK_DAYS", "30"))
 except ValueError:
