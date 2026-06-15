@@ -88,7 +88,7 @@ SHORT_TERM_STOP_MAX = float(os.getenv("SHORT_TERM_STOP_MAX", "0.05"))           
 # Entry/exit probability thresholds on the model's P(take-profit before stop). The triple-barrier
 # target has a low (~5%) base rate, so calibrated probs are small — break-even for a 2.5:1 payoff
 # is ~0.286 ignoring timeouts. BUY only the high-confidence tail; tuned against the backtest.
-SHORT_TERM_BUY_THRESHOLD = float(os.getenv("SHORT_TERM_BUY_THRESHOLD", "0.15"))
+SHORT_TERM_BUY_THRESHOLD = float(os.getenv("SHORT_TERM_BUY_THRESHOLD", "0.23"))
 SHORT_TERM_SELL_THRESHOLD = float(os.getenv("SHORT_TERM_SELL_THRESHOLD", "0.02"))
 
 # Long-term model rebalances on DAILY bars; covariance/return window in trading days.
