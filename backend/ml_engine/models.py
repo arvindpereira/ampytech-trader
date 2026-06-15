@@ -50,41 +50,37 @@ class PortfolioOptimizer:
         cov_matrix = lw.fit(returns).covariance_ * 252  # Annualized
 
         # Risk modification based on HMM Regime
-        # If we are in high volatility contraction (crisis), shrink weights or maximize Cash/Index
-        # In Growth: standard Sharpe max. In Crisis: penalize high-beta assets
+        # If we are in high volatility contraction (crisis), shrink weights or enforce strict diversification (max 10% weight)
         num_assets = len(tickers)
-
-        # Solve for Maximum Sharpe Ratio using random portfolios simulation (robust & simple retail approach)
-        rng = np.random.default_rng(42)
-        num_portfolios = 10000
-        best_sharpe = -100
-        best_weights = np.ones(num_assets) / num_assets
+        max_w = 0.10 if target_regime == "crisis" else 0.25
 
         # Convert expected returns and cov to numpy arrays
         er = exp_returns.values
         cov = cov_matrix
+        rf = 0.04
 
-        # Constraints: Weights sum to 1.0, long-only (0.0 <= w <= 0.25 to prevent over-concentration)
-        for _ in range(num_portfolios):
-            weights = rng.random(num_assets)
-            weights /= np.sum(weights)
+        # Solve for Maximum Sharpe Ratio using scipy optimize SLSQP
+        import scipy.optimize as sco
 
-            # Apply maximum concentration constraint (max 25% in one stock)
-            weights = np.clip(weights, 0.0, 0.25)
-            weights /= np.sum(weights)
+        def negative_sharpe(w, er, cov, rf):
+            p_return = np.sum(er * w)
+            p_volatility = np.sqrt(np.dot(w.T, np.dot(cov, w)))
+            return -(p_return - rf) / (p_volatility + 1e-9)
 
-            # Portfolio metrics
-            p_return = np.sum(er * weights)
-            p_volatility = np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
+        # Equal weight initial guess
+        init_guess = np.ones(num_assets) / num_assets
+        # Constraints: Weights sum to 1.0, long-only, bounded by max_w
+        bounds = tuple((0.0, max_w) for _ in range(num_assets))
+        constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0})
 
-            # Risk free rate proxy (based on regime)
-            rf = 0.04
+        res = sco.minimize(negative_sharpe, init_guess, args=(er, cov, rf),
+                           method='SLSQP', bounds=bounds, constraints=constraints)
 
-            p_sharpe = (p_return - rf) / (p_volatility + 1e-9)
-
-            if p_sharpe > best_sharpe:
-                best_sharpe = p_sharpe
-                best_weights = weights
+        if res.success:
+            best_weights = res.x
+        else:
+            # Fallback to equal weights if optimizer fails
+            best_weights = init_guess
 
         # Return dict
         optimal_weights = {tickers[i]: float(best_weights[i]) for i in range(num_assets)}
@@ -224,7 +220,7 @@ def train_models():
 
     # Sorted so the saved booster's feature order matches inference (main.py / backtest.py
     # both use sorted feat_* columns). Mismatched order triggers XGBoost feature_names errors.
-    feature_cols = sorted([col for col in df.columns if col.startswith("feat_")])
+    feature_cols = sorted([col for col in df.columns if col.startswith("feat_") and col != "feat_atr_14"])
     target_col = "target_win"
 
     # Remove rows with NaN target (last few bars: target is future-looking)
@@ -331,7 +327,7 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
     """
     print("Loading data for walk-forward evaluation...")
     df = load_data_from_db().dropna(subset=["target_win", "trade_ret"]).copy()
-    feature_cols = sorted([c for c in df.columns if c.startswith("feat_")])
+    feature_cols = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
     df = df.sort_values("dt").reset_index(drop=True)
 

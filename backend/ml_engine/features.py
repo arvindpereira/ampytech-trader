@@ -125,6 +125,10 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
     df['returns'] = df['close'].pct_change()
     df['volatility_10'] = df['returns'].rolling(window=10).std()
 
+    # Parkinson Volatility (10-bar window) - extreme value range volatility
+    ln_hl_sq = np.log(df['high'] / (df['low'] + 1e-9)) ** 2
+    df['parkinson_vol_10'] = np.sqrt(ln_hl_sq.rolling(window=10).sum() / (4 * np.log(2) * 10))
+
     # Moving Averages
     if 'sma_10' in df.columns and df['sma_10'].notna().sum() > 10:
         df['sma_10'] = df['sma_10'].ffill().bfill()
@@ -159,6 +163,17 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
 
     # ATR for volatility sizing
     df['atr_14'] = compute_atr(df, window=14)
+
+    # --- Stationarity & Price-Level Normalization ---
+    df['volume_ratio'] = df['volume'] / (df['volume'].rolling(window=20).mean() + 1e-9)
+    df['atr_ratio'] = df['atr_14'] / (df['close'] + 1e-9)
+    df['close_to_sma10'] = df['close'] / (df['sma_10'] + 1e-9) - 1.0
+    df['close_to_sma50'] = df['close'] / (df['sma_50'] + 1e-9) - 1.0
+    df['high_low_ratio'] = (df['high'] - df['low']) / (df['close'] + 1e-9)
+    df['close_to_bb_mid'] = df['close'] / (df['bb_mid'] + 1e-9) - 1.0
+    df['returns_vol_adj'] = df['returns'] / (df['volatility_10'] + 1e-9)
+    df['macd_ratio'] = df['macd'] / (df['close'] + 1e-9)
+    df['macd_signal_ratio'] = df['macd_signal'] / (df['close'] + 1e-9)
 
     # --- Merge Sentiment ---
     if sentiment_df is not None and not sentiment_df.empty:
@@ -200,11 +215,14 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         df['news_mention_count'] = 0
         df['reddit_mention_count'] = 0
 
-    # Sentiment engineered features
+    # Sentiment engineered features with exponential decay (half-life of 7 bars, ~1 trading day)
     df['combined_sentiment'] = 0.6 * df['news_sentiment_score'] + 0.4 * df['reddit_sentiment_score']
-    df['sent_sma_3'] = df['combined_sentiment'].rolling(window=3).mean()
-    df['sent_sma_7'] = df['combined_sentiment'].rolling(window=7).mean()
-    df['sent_momentum'] = df['combined_sentiment'] - df['combined_sentiment'].rolling(window=10).mean().fillna(0.0)
+    half_life = 7.0
+    alpha = 1.0 - np.exp(-np.log(2.0) / half_life)
+    df['combined_sentiment_decayed'] = df['combined_sentiment'].ewm(alpha=alpha, adjust=False).mean()
+    df['sent_sma_3'] = df['combined_sentiment_decayed'].rolling(window=3).mean()
+    df['sent_sma_7'] = df['combined_sentiment_decayed'].rolling(window=7).mean()
+    df['sent_momentum'] = df['combined_sentiment_decayed'] - df['combined_sentiment_decayed'].rolling(window=10).mean().fillna(0.0)
 
     # --- Merge Macro Indicators ---
     if macro_df is not None and not macro_df.empty:
@@ -238,13 +256,15 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
 
     # --- Strict Look-Ahead Bias Mitigation ---
     # Shift ALL feature columns by 1 to represent data available at the market CLOSE of day T-1
-    # Features shifted are technical indicators, sentiment scores, and macro factors.
+    # Note: absolute prices (open, high, low, close) are completely dropped from the training set
+    # by only shifting and prefixing the normalized stationary features.
     feature_cols = [
-        'open', 'high', 'low', 'close', 'volume', 'returns', 'volatility_10',
-        'sma_10', 'sma_50', 'ma_ratio', 'rsi_14', 'macd', 'macd_signal',
-        'bb_mid', 'bb_std', 'bb_width', 'atr_14',
+        'volume_ratio', 'returns', 'volatility_10', 'parkinson_vol_10',
+        'ma_ratio', 'rsi_14', 'bb_width', 'atr_ratio', 'atr_14',
+        'close_to_sma10', 'close_to_sma50', 'high_low_ratio', 'close_to_bb_mid',
+        'returns_vol_adj', 'macd_ratio', 'macd_signal_ratio',
         'news_sentiment_score', 'reddit_sentiment_score', 'news_mention_count', 'reddit_mention_count',
-        'combined_sentiment', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
+        'combined_sentiment_decayed', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
         'fed_funds', 'yield_spread'
     ]
 
@@ -254,7 +274,7 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
             df[f"feat_{col}"] = df[col].shift(1)
 
     # Drop rows that don't have enough history to compute indicators
-    df = df.dropna(subset=[f"feat_sma_50"])
+    df = df.dropna(subset=[f"feat_close_to_sma50"])
 
     return df
 
@@ -311,10 +331,14 @@ def add_cross_ticker_features(df):
     non_benchmark_mask = ~df['ticker'].isin(['SPY', 'QQQ'])
     df.loc[non_benchmark_mask, 'rank_return'] = df[non_benchmark_mask].groupby('date')['returns'].rank(pct=True)
     df.loc[non_benchmark_mask, 'rank_volatility'] = df[non_benchmark_mask].groupby('date')['volatility_10'].rank(pct=True)
+    df.loc[non_benchmark_mask, 'rank_volume_ratio'] = df[non_benchmark_mask].groupby('date')['volume_ratio'].rank(pct=True)
+    df.loc[non_benchmark_mask, 'rank_sentiment'] = df[non_benchmark_mask].groupby('date')['combined_sentiment_decayed'].rank(pct=True)
 
     # Fill benchmarks or missing rankings with neutral (0.5)
     df['rank_return'] = df['rank_return'].fillna(0.5)
     df['rank_volatility'] = df['rank_volatility'].fillna(0.5)
+    df['rank_volume_ratio'] = df['rank_volume_ratio'].fillna(0.5)
+    df['rank_sentiment'] = df['rank_sentiment'].fillna(0.5)
 
     # 4. Rolling correlation of returns vs SPY and QQQ (20 days)
     def get_rolling_corr(group):
@@ -331,7 +355,8 @@ def add_cross_ticker_features(df):
     # Fill NAs
     fill_cols = [
         'relative_return_spy', 'relative_return_qqq', 'relative_vol_spy', 'relative_vol_qqq',
-        'cum_rel_ret_spy_50', 'rank_return', 'rank_volatility', 'corr_spy_20', 'corr_qqq_20'
+        'cum_rel_ret_spy_50', 'rank_return', 'rank_volatility', 'rank_volume_ratio', 'rank_sentiment',
+        'corr_spy_20', 'corr_qqq_20'
     ]
     for col in fill_cols:
         df[col] = df[col].fillna(0.0)

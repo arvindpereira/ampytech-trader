@@ -143,7 +143,7 @@ def train_temporal_attention_model(seq_len=10, epochs=30, batch_size=128):
     print("Loading data from database...")
     df = load_data_from_db()
 
-    feature_cols = sorted([col for col in df.columns if col.startswith("feat_")])
+    feature_cols = sorted([col for col in df.columns if col.startswith("feat_") and col != "feat_atr_14"])
     target_col = "target_win"
 
     print("Preparing training sequences...")

@@ -240,7 +240,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     if full_features_df.empty:
         raise HTTPException(status_code=500, detail="Insufficient price data to generate prediction features.")
 
-    feature_cols = sorted([col for col in full_features_df.columns if col.startswith("feat_")])
+    feature_cols = sorted([col for col in full_features_df.columns if col.startswith("feat_") and col != "feat_atr_14"])
 
     for ticker in active_universe:
         t_feat = full_features_df[full_features_df["ticker"] == ticker]

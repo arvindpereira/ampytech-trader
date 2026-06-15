@@ -121,7 +121,7 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
         print("Error: Insufficient history to generate backtesting features.")
         return
 
-    feature_cols = sorted([col for col in backtest_df.columns if col.startswith("feat_")])
+    feature_cols = sorted([col for col in backtest_df.columns if col.startswith("feat_") and col != "feat_atr_14"])
     backtest_df['pred_prob'] = 0.0
 
     # Perform prediction per ticker to avoid cross-ticker sequence bleed
