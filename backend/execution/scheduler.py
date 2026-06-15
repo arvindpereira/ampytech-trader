@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data_ingestion.price_fetcher import fetch_recent_prices
+from data_ingestion.price_fetcher import fetch_recent_prices, fetch_daily_history
 from data_ingestion.macro_fetcher import fetch_macro_indicators
 from data_ingestion.sentiment_fetcher import fetch_sentiment
 from ml_engine.models import train_models
@@ -19,6 +19,7 @@ def daily_data_fetch_job():
     print(f"\n[{datetime.now()}] Triggering Daily Data Ingestion Job...")
     try:
         fetch_recent_prices()
+        fetch_daily_history()
         fetch_macro_indicators()
         fetch_sentiment()
         print("Daily Data Ingestion Job completed successfully.")

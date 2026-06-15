@@ -16,7 +16,8 @@ from app.core.config import (
     REDDIT_CLIENT_SECRET,
     REDDIT_USER_AGENT,
     MASSIVE_API_KEY,
-    MASSIVE_BASE_URL
+    MASSIVE_BASE_URL,
+    NEWS_HISTORY_START,
 )
 from app.database import init_db, SessionLocal, TickerSentiment, SentimentSourceLog, UniverseTicker
 
@@ -517,6 +518,99 @@ def generate_mock_sentiment(db, date_str):
     db.commit()
     print(f"Successfully simulated sentiment scores and logged sources. Added {new_records} records.")
 
+def _insight_score(article, ticker):
+    """Returns the publisher's pre-computed sentiment for `ticker` if present, else None."""
+    for ins in (article.get("insights") or []):
+        if ins.get("ticker", "").upper() == ticker.upper():
+            s = ins.get("sentiment", "").lower()
+            return {"positive": 0.8, "negative": -0.8, "neutral": 0.0}.get(s)
+    return None
+
+
+def backfill_news_sentiment(start_date_str=None):
+    """Backfills DAILY news sentiment per ticker from Massive/Polygon news history
+    (~2021->now), scoring each article with the publisher insight when available else VADER,
+    and upserting aggregates into TickerSentiment(source='news', is_mock=False).
+
+    Aggregates only (no per-article logs) to keep the table lean over years of history.
+    """
+    import urllib.parse
+    from data_ingestion.price_fetcher import _massive_get
+
+    if not MASSIVE_API_KEY:
+        print("No MASSIVE_API_KEY; cannot backfill historical news. Skipping.")
+        return
+
+    init_db()
+    db = SessionLocal()
+    headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"}
+    analyzer = SentimentIntensityAnalyzer()
+
+    start = start_date_str or NEWS_HISTORY_START
+    end = datetime.now().strftime("%Y-%m-%d")
+    universe = get_active_universe(db)
+    print(f"Backfilling news sentiment for {len(universe)} tickers ({start} -> {end})...")
+
+    for ticker in universe:
+        enc = urllib.parse.quote(ticker)
+        url = (f"{MASSIVE_BASE_URL}/v2/reference/news?ticker={enc}"
+               f"&published_utc.gte={start}T00:00:00Z&published_utc.lte={end}T23:59:59Z"
+               f"&order=asc&sort=published_utc&limit=1000")
+        daily = {}   # cal_date -> [compound, ...]
+        pages = 0
+        while url:
+            data = _massive_get(url, headers, ticker)
+            if data is None:
+                break
+            for art in (data.get("results") or []):
+                pub = (art.get("published_utc") or "")[:10]
+                if not pub:
+                    continue
+                score = _insight_score(art, ticker)
+                if score is None:
+                    text = (art.get("title", "") or "") + ". " + (art.get("description", "") or "")
+                    score = analyzer.polarity_scores(text)["compound"]
+                daily.setdefault(pub, []).append(score)
+            url = data.get("next_url")
+            pages += 1
+            if pages > 500:
+                print(f"  {ticker}: stopping at {pages} pages.")
+                break
+
+        if not daily:
+            print(f"  {ticker}: no historical news found.")
+            continue
+
+        # Upsert daily aggregates
+        for date_str, scores in daily.items():
+            avg = sum(scores) / len(scores)
+            pos = sum(1 for s in scores if s > 0.05) / len(scores)
+            neg = sum(1 for s in scores if s < -0.05) / len(scores)
+            existing = db.query(TickerSentiment).filter(
+                TickerSentiment.ticker == ticker,
+                TickerSentiment.date == date_str,
+                TickerSentiment.source == "news",
+            ).first()
+            if existing:
+                existing.sentiment_score = avg
+                existing.positive_ratio = pos
+                existing.negative_ratio = neg
+                existing.mention_count = len(scores)
+                existing.is_mock = False
+            else:
+                db.add(TickerSentiment(
+                    ticker=ticker, date=date_str, sentiment_score=avg,
+                    positive_ratio=pos, negative_ratio=neg, mention_count=len(scores),
+                    source="news", is_mock=False,
+                ))
+        db.commit()
+        total_articles = sum(len(v) for v in daily.values())
+        print(f"  {ticker}: {len(daily)} days, {total_articles} articles, {pages} pages.")
+
+    db.close()
+    print("News sentiment backfill complete.\n")
+
+
 def fetch_sentiment():
     init_db()
     db = SessionLocal()
@@ -551,4 +645,14 @@ def fetch_sentiment():
     print("\nSentiment processing completed.\n")
 
 if __name__ == "__main__":
-    fetch_sentiment()
+    import argparse
+    parser = argparse.ArgumentParser(description="Sentiment ingestion")
+    parser.add_argument("--backfill", action="store_true",
+                        help="Backfill historical daily news sentiment (~2021->now) from Massive/Polygon.")
+    parser.add_argument("--start", type=str, default=None, help="Backfill start date (YYYY-MM-DD).")
+    args = parser.parse_args()
+
+    if args.backfill:
+        backfill_news_sentiment(start_date_str=args.start)
+    else:
+        fetch_sentiment()

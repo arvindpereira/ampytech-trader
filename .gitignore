@@ -1,3 +1,12 @@
+# Secrets / environment (NEVER commit API keys)
+.env
+backend/.env
+*.env
+
+# Editor / agent / OS junk
+*.un~
+.claude/
+
 # Dependencies
 backend/venv/
 frontend/node_modules/
@@ -7,6 +16,7 @@ backend/data/trading_system.db
 backend/data/*.db
 
 # Caches
+pybroker_cache/
 backend/pybroker_cache/
 .next/
 frontend/.next/
@@ -26,6 +36,8 @@ Thumbs.db
 # Saved Models (if you want to keep them local, or track them if needed - we'll ignore them to prevent binary bloat)
 backend/ml_engine/saved_models/*.json
 backend/ml_engine/saved_models/*.pkl
+backend/ml_engine/saved_models/*.pth
+backend/ml_engine/saved_models/_old_breakout_pth/
 
 # Premium News Archive
 backend/data/premium_news/archive/

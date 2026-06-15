@@ -23,6 +23,30 @@ class RecentPrice(Base):
         PrimaryKeyConstraint("ticker", "date", name="pk_recent_prices"),
     )
 
+class DailyPrice(Base):
+    """Full multi-decade DAILY history (Yahoo Finance). Kept strictly separate from the
+    hourly recent_prices table so the two resolutions are never mixed in features.
+    Feeds long-term / regime models and the long-horizon benchmark comparison."""
+    __tablename__ = "daily_prices"
+
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)  # ISO date string YYYY-MM-DD
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False)
+
+    sma_10 = Column(Float, nullable=True)
+    sma_50 = Column(Float, nullable=True)
+    rsi_14 = Column(Float, nullable=True)
+    macd = Column(Float, nullable=True)
+    macd_signal = Column(Float, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "date", name="pk_daily_prices"),
+    )
+
 class CrisisPrice(Base):
     __tablename__ = "crisis_prices"
 

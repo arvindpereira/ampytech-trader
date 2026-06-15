@@ -10,8 +10,11 @@ from pybroker import Strategy, ExecContext, StrategyConfig
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.core.config import TICKER_UNIVERSE
-from app.database import SessionLocal, RecentPrice, CrisisPrice, MacroIndicator
+from app.core.config import (
+    TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, SHORT_TERM_ATR_STOP_MULT,
+    SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX, SHORT_TERM_BUY_THRESHOLD,
+)
+from app.database import SessionLocal, RecentPrice, DailyPrice, CrisisPrice, MacroIndicator
 from ml_engine.features import build_features_for_df
 from ml_engine.models import PortfolioOptimizer
 
@@ -56,6 +59,21 @@ def load_backtest_data(era=None):
 
     db.close()
     return prices_df, macro_df
+
+
+def load_daily_prices_df():
+    """Loads the full DAILY history (daily_prices) for the long-term regime/MPT backtest."""
+    db = SessionLocal()
+    prices = db.query(DailyPrice).all()
+    db.close()
+    if not prices:
+        return pd.DataFrame()
+    return pd.DataFrame([{
+        "ticker": p.ticker, "date": p.date, "open": p.open, "high": p.high,
+        "low": p.low, "close": p.close, "volume": p.volume,
+        "sma_10": p.sma_10, "sma_50": p.sma_50, "rsi_14": p.rsi_14,
+        "macd": p.macd, "macd_signal": p.macd_signal,
+    } for p in prices])
 
 def run_short_term_backtest(prices_df, macro_df, model_path):
     """Simulates the short-term strategy on historical prices using PyBroker."""
@@ -153,25 +171,23 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
         prob = ctx.indicator('pred_prob')[-1]
         atr = ctx.indicator('feat_atr_14')[-1]
 
-        # Entry rule: Probability of breakout >= 55%
-        if prob >= 0.55 and not ctx.long_pos():
-            # Sizing calculation based on risk: 10% maximum cash allocation
-            # Put Stop loss at 2.0x ATR below close
-            stop_loss_pct = min(0.05, max(0.015, (2.0 * atr) / ctx.close[-1]))
-            take_profit_pct = stop_loss_pct * 2.5 # 2.5 Risk-to-reward ratio
+        # Entry rule: model win-probability above the configured high-confidence threshold
+        if prob >= SHORT_TERM_BUY_THRESHOLD and not ctx.long_pos():
+            # Same ATR brackets the triple-barrier label assumes (target ≈ execution).
+            stop_loss_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / ctx.close[-1]))
+            take_profit_pct = stop_loss_pct * SHORT_TERM_TP_MULT
 
-            # Place buy order
+            # Place buy order (10% target allocation)
             ctx.buy_shares = ctx.calc_target_shares(0.1)
-            # Register stop-loss and take-profit (stop_profit) in execution context
             close_price = ctx.close[-1]
             ctx.stop_loss = stop_loss_pct * close_price
             ctx.stop_profit = take_profit_pct * close_price
 
         else:
-            # Exit rule: If we hold a position and it has been open for 3 bars (3 days), close it
-            # (This acts as a time-stop fallback if take-profit or stop-loss is not hit)
+            # Vertical barrier: close after the label horizon if neither bracket has triggered,
+            # matching the triple-barrier timeout so backtest exits == labelled outcomes.
             pos = ctx.long_pos()
-            if pos and pos.bars >= 3:
+            if pos and pos.bars >= SHORT_TERM_HORIZON_BARS:
                 ctx.sell_all_shares()
 
     # Register columns first
@@ -355,11 +371,19 @@ def main():
     try:
         prices_df, macro_df = load_backtest_data(era=era)
 
-        # Run short term backtest
+        # Short-term backtest runs on the loaded series (hourly for 'recent', daily for crisis eras)
         run_short_term_backtest(prices_df, macro_df, model_path)
 
-        # Run long term portfolio rebalance simulation
-        run_long_term_backtest(prices_df, macro_df, hmm_path, metadata_path)
+        # Long-term backtest always uses DAILY data: full daily history for 'recent',
+        # or the crisis-era daily series.
+        if era is None:
+            daily_df = load_daily_prices_df()
+            if daily_df.empty:
+                print("No daily_prices found; run 'python run.py fetch' to populate daily history.")
+            else:
+                run_long_term_backtest(daily_df, macro_df, hmm_path, metadata_path)
+        else:
+            run_long_term_backtest(prices_df, macro_df, hmm_path, metadata_path)
 
     except Exception as e:
         import traceback

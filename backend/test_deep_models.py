@@ -32,12 +32,12 @@ class TestDeepModels(unittest.TestCase):
         ticker_1_data = {col: np.random.randn(num_rows) for col in feature_cols}
         ticker_1_data["ticker"] = "AAPL"
         ticker_1_data["date"] = pd_date_range = [f"2026-06-01T{i:02d}:00:00" for i in range(num_rows)]
-        ticker_1_data["target_3d_gain"] = np.random.choice([0, 1], size=num_rows)
+        ticker_1_data["target_win"] = np.random.choice([0, 1], size=num_rows)
 
         ticker_2_data = {col: np.random.randn(num_rows) for col in feature_cols}
         ticker_2_data["ticker"] = "MSFT"
         ticker_2_data["date"] = [f"2026-06-01T{i:02d}:00:00" for i in range(num_rows)]
-        ticker_2_data["target_3d_gain"] = np.random.choice([0, 1], size=num_rows)
+        ticker_2_data["target_win"] = np.random.choice([0, 1], size=num_rows)
 
         import pandas as pd
         df1 = pd.DataFrame(ticker_1_data)
