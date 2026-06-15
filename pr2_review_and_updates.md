@@ -234,5 +234,15 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   Form 4s; TSM's 102 "purchases" look like a foreign-issuer data-quality artifact to scrub later.)
   Congress/STOCK Act remains synthetic (no free structured source wired).
 
+- **Insider at the long-term horizon — tested, inconclusive.** `ml_engine/longterm_alpha.py`
+  (`make longterm-eval`) runs a daily walk-forward predicting forward N-day *cross-sectional* outperformance,
+  with vs without insider features. At 1–3-month horizons the **top-5% picks with insider modestly beat
+  without** (63d: +12.7% vs +9.2%; 21d: +4.9% vs +3.2%) and beat the universe baseline — directionally
+  positive and theory-consistent (insider buying is slow) — **but** overall AUC ≈ 0.50, per-fold results are
+  mixed, and there are only **50 clean open-market purchase events** (after scrubbing synthetic Congress
+  rows and a TSM foreign-issuer artifact). Promising but **not robust enough to deploy**; `ALT_DATA_ENABLED`
+  stays `False`. Next, if pursued: fetch full insider history (not just 3y), widen the universe, and engineer
+  conviction features (cluster buys, CEO/CFO buys, net-buying counts) rather than a raw dollar sum.
+
 Still outstanding: **C2** (fold-forward nested threshold selection), the **portfolio-level walk-forward
-equity curve**, and a real **Congress/STOCK Act** source.
+equity curve**, a real **Congress/STOCK Act** source, and the insider follow-up above.

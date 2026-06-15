@@ -52,6 +52,12 @@ def calibrate():
     run_command([sys.executable, "ml_engine/models.py", "--calibrate"],
                 "Calibrate Served-Model BUY Threshold")
 
+def longterm_eval(horizon=21, splits=4):
+    # This research eval always tests WITH insider features on, regardless of the production flag.
+    os.environ["ALT_DATA_ENABLED"] = "True"
+    run_command([sys.executable, "ml_engine/longterm_alpha.py", "--horizon", str(horizon), "--splits", str(splits)],
+                "Long-Term Insider Alpha Walk-Forward (daily, multi-week horizon)")
+
 def serve():
     # Run Uvicorn to serve the FastAPI application
     run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008", "--reload"], "FastAPI Server")
@@ -63,7 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "serve", "schedule", "simulate", "backtest-virtual"],
+        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "serve", "schedule", "simulate", "backtest-virtual"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -90,6 +96,12 @@ def main():
         default=5,
         help="Number of walk-forward folds"
     )
+    parser.add_argument(
+        "--horizon",
+        type=int,
+        default=21,
+        help="Forward-return horizon (trading days) for longterm-eval"
+    )
 
     args = parser.parse_args()
 
@@ -107,6 +119,8 @@ def main():
         walkforward(splits=args.splits)
     elif args.action == "calibrate":
         calibrate()
+    elif args.action == "longterm-eval":
+        longterm_eval(horizon=args.horizon, splits=args.splits)
     elif args.action == "serve":
         serve()
     elif args.action == "schedule":

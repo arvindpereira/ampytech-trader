@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news insider train walkforward calibrate backtest \
+.PHONY: help default install fetch backfill-news insider train walkforward calibrate longterm-eval backtest \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -6,6 +6,7 @@ EPOCHS ?= 100
 DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
+HORIZON ?= 21
 VENV_PY := venv/bin/python3
 
 # Default target: print help
@@ -28,6 +29,7 @@ help:
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
 	@echo "  make walkforward       - Honest out-of-sample edge check (expanding folds) [SPLITS=$(SPLITS)]"
 	@echo "  make calibrate         - Calibrate the served-model BUY threshold (-> threshold.json)"
+	@echo "  make longterm-eval     - Test insider buying at the daily 1-3 month horizon [HORIZON=21]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -99,6 +101,12 @@ calibrate:
 	@echo "🎯 Calibrating the served-model BUY threshold (writes saved_models/threshold.json)..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py calibrate
+
+longterm-eval:
+	@echo "========================================================================"
+	@echo "🔭 Long-term insider-alpha walk-forward (daily, ~1-3 month horizon) [HORIZON=$(HORIZON)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py longterm-eval --horizon $(HORIZON)
 
 backtest:
 	@echo "========================================================================"

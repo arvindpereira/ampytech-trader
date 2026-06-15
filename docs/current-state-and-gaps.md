@@ -90,12 +90,14 @@ default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win
 >    carried by the rare top-0.1% winners, not by a stable signal.
 > 3. AUC ≈ 0.698 is genuine ranking skill, but (as repeatedly shown) **AUC ≠ tradable edge** — the money is
 >    only in the very top, and even there it's small and fragile.
-> 4. Alt-data features are **off** and contribute nothing. The insider source is now **real** (SEC Form 4,
->    5,809 txns/3yr) but **validated as unhelpful here**: with-alt AUC 0.699 vs without-alt 0.698 = noise,
->    because open-market *purchases* are rare (152 of 5,809) → the feature is ~0 on 99.9% of bars. Insider
->    buying is a weeks/months signal, not hourly — a candidate for the long-term book, not this model.
->    Earlier "+0.27%/trade at 0.15", "+410% backtest", and "precision 0.434" were **stale/leaky/in-sample
->    and are discarded** — do not cite them.
+> 4. Alt-data features are **off**. The insider source is now **real** (SEC Form 4). On the **hourly**
+>    model it's useless (with-alt AUC 0.699 vs 0.698 = noise; purchases too rare). On the **daily 1–3-month**
+>    horizon (`make longterm-eval`) it's **faint, theory-consistent, but inconclusive**: the top-5% picks
+>    *with* insider beat *without* at both horizons (63d: +12.7% vs +9.2%; 21d: +4.9% vs +3.2%, vs ~+11%/+4.4%
+>    universe baseline), but overall AUC ≈ 0.50 and it rests on only **50 clean purchase events** — not
+>    deployable. Needs deeper insider history + wider universe + better insider features (cluster buys,
+>    officer-level) to confirm. Earlier "+0.27%/trade at 0.15", "+410% backtest", "precision 0.434" are
+>    **stale/leaky/in-sample and discarded**.
 
 > ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers
 > (e.g. the +489%/+1085% short-term returns quoted in PR #2) are **overfit and not decision-grade**. Only
