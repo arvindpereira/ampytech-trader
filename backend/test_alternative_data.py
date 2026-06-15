@@ -199,5 +199,45 @@ class TestAlternativeData(unittest.TestCase):
         self.assertEqual(symbol, 'AAPL')
         self.assertEqual(beta, 1.0)
 
+    def test_parse_form4_xml(self):
+        """Verifies the real SEC Form 4 XML parser extracts owner, relationship and P/S transactions."""
+        from data_ingestion.alternative_fetcher import parse_form4_xml
+        xml = b"""<?xml version="1.0"?>
+        <ownershipDocument>
+          <reportingOwner>
+            <reportingOwnerId><rptOwnerName>DOE JANE</rptOwnerName></reportingOwnerId>
+            <reportingOwnerRelationship><isOfficer>1</isOfficer><officerTitle>CFO</officerTitle></reportingOwnerRelationship>
+          </reportingOwner>
+          <nonDerivativeTable>
+            <nonDerivativeTransaction>
+              <transactionDate><value>2024-03-01</value></transactionDate>
+              <transactionCoding><transactionCode>P</transactionCode></transactionCoding>
+              <transactionAmounts>
+                <transactionShares><value>1000</value></transactionShares>
+                <transactionPricePerShare><value>150.0</value></transactionPricePerShare>
+                <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
+              </transactionAmounts>
+            </nonDerivativeTransaction>
+            <nonDerivativeTransaction>
+              <transactionDate><value>2024-03-02</value></transactionDate>
+              <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+              <transactionAmounts>
+                <transactionShares><value>500</value></transactionShares>
+                <transactionPricePerShare><value>152.0</value></transactionPricePerShare>
+                <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+              </transactionAmounts>
+            </nonDerivativeTransaction>
+          </nonDerivativeTable>
+        </ownershipDocument>"""
+        name, rel, txns = parse_form4_xml(xml)
+        self.assertEqual(name, "DOE JANE")
+        self.assertEqual(rel, "CFO")
+        self.assertEqual(len(txns), 2)
+        self.assertEqual(txns[0]["code"], "P")
+        self.assertEqual(txns[0]["shares"], 1000.0)
+        self.assertEqual(txns[0]["price"], 150.0)
+        self.assertEqual(txns[1]["code"], "S")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -216,6 +216,16 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   **+0.16%/trade net** — modestly profitable at that selectivity, and a real number for the *served* model
   (the old 0.23 produced 0 signals on it).
 
-Still outstanding from this review: **C2** (threshold selection is on a single holdout — fold-forward
-nesting would be even stricter), **C4/C5** (label in-sample numbers non-predictive; reconcile docs prose vs
-table), and the real-data wiring for **C1**.
+- **C4/C5 (misleading docs) — DONE.** `current-state-and-gaps.md` §1b rewritten to one honest truth (fresh
+  walk-forward: pooled AUC 0.698, edge only in the top ~0.1%, per-fold top-5% net negative in 4/5 folds),
+  stale "+0.27%/0.15" prose removed, in-sample backtests explicitly flagged non-predictive, and the
+  served-model/threshold sections (`ml-and-strategy.md`) corrected.
+- **C1 real data — insider DONE (Congress pending).** `alternative_fetcher.py` now ingests **real SEC EDGAR
+  Form 4** insider transactions (free, no key): ticker→CIK via `company_tickers.json`, Form 4s from the
+  submissions API, raw XML parsed (`parse_form4_xml`, unit-tested) for open-market P/S, keyed on the
+  **filing date** (point-in-time). `make insider` / `run.py fetch` (when `ALT_DATA_ENABLED`). Validated live
+  on AAPL/NVDA. Congress/STOCK Act is still synthetic (no free structured source wired). Kept off by default
+  until walk-forward shows the real insider signal helps.
+
+Still outstanding: **C2** (fold-forward nested threshold selection), the **portfolio-level walk-forward
+equity curve**, and a real **Congress/STOCK Act** source.

@@ -110,9 +110,14 @@ model, and reports the resulting OOS win-rate/net-return. Inference and the back
 back to `SHORT_TERM_BUY_THRESHOLD` only if it's absent). This fixes the PR#2 issue where a single 0.23 number
 was tuned on XGBoost yet a different model served. Selective by design — many days produce 0 BUYs.
 
-**Alternative data (Congress/insider).** Off by default (`ALT_DATA_ENABLED=False`). The bundled fetcher
-seeds **synthetic/random** disclosures (no signal) — for plumbing only. Do **not** enable for real trading
-until a real source (SEC EDGAR Form 4 / Quiver STOCK Act) is wired in. See `pr2_review_and_updates.md` (C1).
+**Alternative data (insider / Congress).** Off by default (`ALT_DATA_ENABLED=False`).
+- **Insider — REAL** (SEC EDGAR Form 4, free, no key): `make insider` (or `run.py fetch` with
+  `ALT_DATA_ENABLED=True`) pulls open-market purchases/sales per ticker, keyed on the **filing date**
+  (point-in-time). **Set `SEC_USER_AGENT="Your Name your@email"`** in `.env` (SEC asks for a real contact).
+  `INSIDER_FETCH_DAYS` controls history depth (default 365). Note: insiders mostly *sell*; open-market
+  *purchases* are the rare bullish signal, so `insider_buying_ratio` is usually 0 with occasional spikes.
+- **Congress (STOCK Act) — still synthetic** (`alternative_fetcher.py --synthetic`), no real source wired
+  yet. Keep `ALT_DATA_ENABLED=False` for production until the insider signal is walk-forward-validated.
 
 ## 6. Files & artifacts
 

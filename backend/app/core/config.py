@@ -102,11 +102,17 @@ SHORT_TERM_SELL_THRESHOLD = float(os.getenv("SHORT_TERM_SELL_THRESHOLD", "0.02")
 MPT_WINDOW_DAYS = int(os.getenv("MPT_WINDOW_DAYS", "252"))                  # ~1 trading year
 
 # Alternative data and hedging configurations
-# NOTE: the bundled disclosures fetcher currently SEEDS SYNTHETIC (random) data, which carries no real
-# signal. Disabled by default so the production model is never trained on noise. Only enable once a REAL
-# source is wired (SEC EDGAR Form 4 for insiders; Quiver/Capitol Trades for STOCK Act). See
-# pr2_review_and_updates.md (C1).
+# Insider data now has a REAL source (SEC EDGAR Form 4, free/no-key); Congress (STOCK Act) is still only
+# synthetic. Kept OFF by default until the real insider signal is validated by walk-forward.
+# See pr2_review_and_updates.md (C1).
 ALT_DATA_ENABLED = os.getenv("ALT_DATA_ENABLED", "False").lower() == "true"
+
+# SEC EDGAR requires a descriptive User-Agent with contact info; set SEC_USER_AGENT to your own.
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "ampytech-trader research contact@example.com")
+try:
+    INSIDER_FETCH_DAYS = int(os.getenv("INSIDER_FETCH_DAYS", "365"))   # how much Form 4 history to pull
+except ValueError:
+    INSIDER_FETCH_DAYS = 365
 try:
     INSIDER_LOOKBACK_DAYS = int(os.getenv("INSIDER_LOOKBACK_DAYS", "30"))
 except ValueError:

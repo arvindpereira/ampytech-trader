@@ -1,13 +1,19 @@
 import sys
 import os
 import random
+import time
 from datetime import datetime, timedelta
+import xml.etree.ElementTree as ET
+import requests
 
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import init_db, SessionLocal, CongressDisclosure, InsiderDisclosure, UniverseTicker
-from app.core.config import TICKER_UNIVERSE
+from app.core.config import TICKER_UNIVERSE, SEC_USER_AGENT, INSIDER_FETCH_DAYS
+
+# Benchmarks/ETFs have no Form 4 filings.
+NON_EQUITY = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP"}
 
 POLITICIANS = [
     ("Nancy Pelosi", "house"),
@@ -190,5 +196,165 @@ def seed_alternative_data():
     
     db.close()
 
+
+# ============================================================================
+# REAL data: SEC EDGAR Form 4 insider transactions (free, no API key)
+# ============================================================================
+
+def _to_float(s):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _relationship_label(rel_el):
+    """Human-readable insider relationship from a Form 4 reportingOwnerRelationship element."""
+    if rel_el is None:
+        return "Insider"
+    def is_set(tag):
+        return (rel_el.findtext(tag) or "").strip().lower() in ("1", "true")
+    if is_set("isOfficer"):
+        return (rel_el.findtext("officerTitle") or "Officer").strip() or "Officer"
+    if is_set("isDirector"):
+        return "Director"
+    if is_set("isTenPercentOwner"):
+        return "10% Owner"
+    return "Insider"
+
+
+def parse_form4_xml(xml_bytes):
+    """Parses a raw SEC Form 4 ownership XML (pure function, no network).
+
+    Returns (insider_name, relationship, [transactions]) where each transaction is
+    {date, code, shares, price, acquired} for NON-DERIVATIVE rows. `code` is the SEC
+    transaction code (P=open-market purchase, S=open-market sale, A=award, M=exercise, ...).
+    """
+    root = ET.fromstring(xml_bytes)
+    name = (root.findtext(".//reportingOwner/reportingOwnerId/rptOwnerName") or "").strip()
+    relationship = _relationship_label(root.find(".//reportingOwner/reportingOwnerRelationship"))
+    txns = []
+    for t in root.findall(".//nonDerivativeTransaction"):
+        date = (t.findtext(".//transactionDate/value") or "").strip()
+        code = (t.findtext(".//transactionCoding/transactionCode") or "").strip()
+        shares = _to_float(t.findtext(".//transactionShares/value"))
+        price = _to_float(t.findtext(".//transactionPricePerShare/value"))
+        ad = (t.findtext(".//transactionAcquiredDisposedCode/value") or "").strip()
+        if not date or shares is None:
+            continue
+        txns.append({"date": date, "code": code, "shares": shares, "price": price or 0.0, "acquired": ad})
+    return name, relationship, txns
+
+
+def _sec_get(url, headers, raw=False, retries=3):
+    """GETs an SEC URL with polite rate-limiting (<10 req/s) and basic retries."""
+    backoff = 1.0
+    for _ in range(retries):
+        time.sleep(0.15)
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+            if r.status_code == 200:
+                return r.content if raw else r.json()
+            if r.status_code in (403, 429):
+                time.sleep(backoff)
+                backoff *= 2.0
+                continue
+            return None
+        except Exception:
+            time.sleep(0.5)
+    return None
+
+
+_CIK_CACHE = None
+
+
+def load_cik_map(headers):
+    """ticker -> CIK from SEC's free company_tickers.json (cached for the process)."""
+    global _CIK_CACHE
+    if _CIK_CACHE is None:
+        data = _sec_get("https://www.sec.gov/files/company_tickers.json", headers)
+        _CIK_CACHE = {v["ticker"]: v["cik_str"] for v in data.values()} if data else {}
+    return _CIK_CACHE
+
+
+def fetch_real_insider_data(lookback_days=None, max_filings_per_ticker=250):
+    """Ingests REAL insider transactions from SEC EDGAR Form 4 filings, keyed on the FILING date
+    (point-in-time: when the info became public, not the transaction date)."""
+    lookback_days = lookback_days or INSIDER_FETCH_DAYS
+    if "example.com" in SEC_USER_AGENT:
+        print("NOTE: set SEC_USER_AGENT='Your Name your@email' in .env — SEC asks for a real contact.")
+    headers = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
+    cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+
+    init_db()
+    db = SessionLocal()
+    db_tickers = db.query(UniverseTicker).all()
+    universe = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)
+    universe = [t for t in universe if t not in NON_EQUITY and not t.startswith(("X:", "C:"))]
+
+    cik_map = load_cik_map(headers)
+    print(f"Fetching real SEC Form 4 insider data for {len(universe)} tickers (filings since {cutoff})...")
+
+    total = 0
+    for ticker in universe:
+        cik = cik_map.get(ticker)
+        if not cik:
+            print(f"  {ticker}: no CIK on SEC; skipping.")
+            continue
+        cik10 = str(cik).zfill(10)
+        subs = _sec_get(f"https://data.sec.gov/submissions/CIK{cik10}.json", headers)
+        if not subs:
+            print(f"  {ticker}: submissions fetch failed; skipping.")
+            continue
+        rec = subs.get("filings", {}).get("recent", {})
+        forms = rec.get("form", [])
+        f4 = [(rec["filingDate"][i], rec["accessionNumber"][i], rec["primaryDocument"][i])
+              for i in range(len(forms))
+              if forms[i] == "4" and rec["filingDate"][i] >= cutoff][:max_filings_per_ticker]
+
+        # Replace any existing insider rows for this ticker (real run is authoritative).
+        db.query(InsiderDisclosure).filter(InsiderDisclosure.ticker == ticker).delete()
+        db.commit()
+
+        rows = 0
+        for filing_date, acc, primary in f4:
+            accn = acc.replace("-", "")
+            raw_doc = primary.split("/", 1)[1] if (primary.startswith("xsl") and "/" in primary) else primary
+            url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accn}/{raw_doc}"
+            xml = _sec_get(url, headers, raw=True)
+            if not xml:
+                continue
+            try:
+                name, rel, txns = parse_form4_xml(xml)
+            except ET.ParseError:
+                continue
+            for tx in txns:
+                if tx["code"] not in ("P", "S"):   # open-market purchases/sales only
+                    continue
+                ttype = "purchase" if tx["code"] == "P" else "sale"
+                db.add(InsiderDisclosure(
+                    ticker=ticker, date=filing_date, insider_name=(name or "Unknown")[:120],
+                    relationship=rel, transaction_type=ttype, shares=tx["shares"],
+                    share_price=tx["price"], total_value=tx["shares"] * tx["price"],
+                ))
+                rows += 1
+        db.commit()
+        total += rows
+        print(f"  {ticker}: {len(f4)} Form 4 filings -> {rows} open-market P/S transactions.")
+
+    db.close()
+    print(f"Real SEC Form 4 insider ingest complete: {total} transactions. "
+          f"(Congress/STOCK Act remains synthetic-only — not wired to a real source yet.)\n")
+
+
 if __name__ == "__main__":
-    seed_alternative_data()
+    import argparse
+    parser = argparse.ArgumentParser(description="Alternative disclosures ingestion")
+    parser.add_argument("--synthetic", action="store_true",
+                        help="Seed SYNTHETIC random disclosures (plumbing only, no signal).")
+    parser.add_argument("--lookback-days", type=int, default=None, help="Form 4 history window (days).")
+    args = parser.parse_args()
+    if args.synthetic:
+        seed_alternative_data()
+    else:
+        fetch_real_insider_data(lookback_days=args.lookback_days)

@@ -25,11 +25,11 @@ def fetch():
         [sys.executable, "data_ingestion/crisis_fetcher.py"],
         [sys.executable, "data_ingestion/sentiment_fetcher.py"],
     ]
-    # Alternative disclosures are SYNTHETIC for now and OFF by default. Only seed when explicitly enabled
-    # so routine fetches never inject random noise into the training data.
+    # Insider disclosures (real SEC EDGAR Form 4) are OFF by default — fetched only when ALT_DATA_ENABLED,
+    # since the signal still needs walk-forward validation before it should drive the model.
     from app.core.config import ALT_DATA_ENABLED
     if ALT_DATA_ENABLED:
-        scripts.append([sys.executable, "data_ingestion/alternative_fetcher.py"])
+        scripts.append([sys.executable, "data_ingestion/alternative_fetcher.py"])  # real Form 4
     for script in scripts:
         script_name = os.path.basename(script[1])
         run_command(script, f"Data Ingestion ({script_name})")

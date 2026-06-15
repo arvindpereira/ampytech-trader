@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news train walkforward calibrate backtest \
+.PHONY: help default install fetch backfill-news insider train walkforward calibrate backtest \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -22,6 +22,7 @@ help:
 	@echo "Data:"
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
+	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
 	@echo ""
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
@@ -69,6 +70,13 @@ backfill-news:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) data_ingestion/sentiment_fetcher.py --backfill
 	@echo "✅ News sentiment backfill complete."
+
+insider:
+	@echo "========================================================================"
+	@echo "🏛️  Fetching REAL SEC EDGAR Form 4 insider transactions (set SEC_USER_AGENT)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/alternative_fetcher.py
+	@echo "✅ Insider Form 4 ingest complete (enable ALT_DATA_ENABLED to use in features)."
 
 # ----------------------------------------------------------------------------
 # Models
