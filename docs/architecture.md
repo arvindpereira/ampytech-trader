@@ -83,9 +83,9 @@ flowchart LR
 | Module | Responsibility | Notes / gotchas |
 | :-- | :-- | :-- |
 | `data_ingestion/*` | Pull prices, macro, sentiment, crisis data into SQLite | Sources differ from README (see [data-pipeline.md](./data-pipeline.md)) |
-| `ml_engine/features.py` | Build all features for one ticker + cross-ticker features | **Row-based windows** → wrong at hourly resolution (see gaps doc) |
-| `ml_engine/models.py` | Train XGBoost + HMM; MPT optimizer; Kelly sizing | MPT = 10k random portfolios, not a solver |
-| `ml_engine/deep_models.py` | Train GRU+Self-Attention sequence classifier | Preferred at inference if `.pth` exists |
+| `ml_engine/features.py` | Build all features for one ticker + cross-ticker features | Computes stationary technical indicator ratios and Parkinson Volatility |
+| `ml_engine/models.py` | Train XGBoost + HMM; MPT optimizer; Kelly sizing | MPT = SciPy SLSQP Solver maximizing Sharpe under dynamic constraints |
+| `ml_engine/deep_models.py` | Train GRU+Self-Attention sequence classifier | Fully integrated sequence predictor (seq_len=10) |
 | `app/main.py` | **Every** API route incl. suggestions + virtual broker | 1,150 lines; also computes suggestions inline |
 | `execution/executor.py` | Sizing, bracket orders, long-term grid, Alpaca reconcile, daily stop eval | Talks to virtual broker over HTTP |
 | `execution/simulator.py` | Forward sim & day-by-day historical replay | Drives executor; toggles global `sim_date.txt` |
@@ -118,7 +118,7 @@ sequenceDiagram
     end
 ```
 
-Thresholds (in `app/main.py`): **BUY if prob ≥ 0.55**, **SELL if prob ≤ 0.40**, else HOLD.
+Thresholds (in `app/main.py`): **BUY if prob ≥ 0.15**, **SELL if prob ≤ 0.02**, else HOLD (config-driven).
 Stop-loss = `clip(2·ATR/close, 1.5%, 5%)`, take-profit = `2.5 × stop`.
 
 ## 4. Execution / simulation flow

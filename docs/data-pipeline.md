@@ -64,12 +64,7 @@ Coverage after the rebuild: `daily_prices` ≈ 182k rows, 29 tickers, 1998-01-02
 at their listing date: ARM 2023, PLTR 2020, META 2012, AVGO 2009, GOOGL 2004); `recent_prices` clean
 hourly for all 29 tickers + the `BRK-B` benchmark (fetched from Massive as `BRK.B`).
 
-> **Still open (Phase 2 — ML rewiring):** the *feature/model code* hasn't moved yet. `features.py` windows
-> are still row counts (now uniformly **hourly**, so internally consistent but "3-day"/"252-day"/"365-day"
-> names now mean hours), and the HMM/MPT long-term path still reads **hourly** `recent_prices` rather than
-> `daily_prices`. To realise the two-resolution design, the short-term model should use time-aware hourly
-> windows and the long-term/regime model should be pointed at `daily_prices`. See
-> [current-state-and-gaps.md](./current-state-and-gaps.md#g1).
+> **Completed (Stage 18 — ML rewiring):** HMM regime classification and the daily MPT portfolio rebalancing optimizer now strictly load pricing history from the `daily_prices` database table, completely separating the daily and hourly data feeds. Feature engineering has been updated with stationary indicators to eliminate price-level drift.
 
 ## 3. Incremental fetch & rate-limit protection
 

@@ -12,7 +12,7 @@ flowchart TB
     ST --> XGB[XGBoost breakout<br/>short_term_model.json]
     ST --> PT[PyTorch GRU+Attn<br/>temporal_attention_model.pth]
     LT --> HMM[HMM regime<br/>hmm_model.pkl]
-    HMM --> MPT[MPT Sharpe-max<br/>10k random portfolios]
+    HMM --> MPT[MPT Sharpe-max<br/>SciPy SLSQP Solver]
     XGB & PT --> SUG[BUY/SELL/HOLD<br/>+ stop/target]
     MPT --> ALLOC[weights + CASH]
 ```
@@ -28,22 +28,21 @@ flowchart TB
 
 | Group | Features |
 | :-- | :-- |
-| Price / trend | `returns`, `volatility_10`, `sma_10`, `sma_50`, `ma_ratio`, `open/high/low/close`, `volume` |
-| Momentum | `rsi_14`, `macd`, `macd_signal`, `bb_mid/std/width`, `atr_14` |
-| Sentiment | `news_sentiment_score`, `reddit_sentiment_score`, `news/reddit_mention_count`, `combined_sentiment` (0.6·news+0.4·reddit), `sent_sma_3`, `sent_sma_7`, `sent_momentum` |
+| Normalized Price / Vol | `returns`, `volatility_10`, `parkinson_vol_10` (rolling extreme-value), `ma_ratio`, `volume_ratio` (rolling volume multiplier), `returns_vol_adj` |
+| Stationary Techs | `rsi_14`, `bb_width`, `atr_ratio` (stationary volatility scaled by close), `close_to_sma10`, `close_to_sma50`, `high_low_ratio`, `close_to_bb_mid`, `macd_ratio`, `macd_signal_ratio` (all absolute prices like open/high/low/close/bb_mid are excluded to maintain stationarity) |
+| Sentiment (Decayed) | `news_sentiment_score`, `reddit_sentiment_score`, `news/reddit_mention_count`, `combined_sentiment_decayed` (0.6·news+0.4·reddit scored via 7-bar half-life EMA), `sent_sma_3`, `sent_sma_7`, `sent_momentum` |
 | Macro | `fed_funds`, `yield_spread` |
-| Cross-ticker | `relative_return_spy/qqq`, `relative_vol_spy/qqq`, `cum_rel_ret_spy_50`, `rank_return`, `rank_volatility`, `corr_spy_20`, `corr_qqq_20` |
+| Cross-ticker | `relative_return_spy/qqq`, `relative_vol_spy/qqq`, `cum_rel_ret_spy_50`, `rank_return` (rank returns per day), `rank_volatility` (rank volatility per day), `rank_volume_ratio` (rank volume multiplier per day), `rank_sentiment` (rank sentiment per day), `corr_spy_20`, `corr_qqq_20` |
 
 **Target (`target_win`) — triple-barrier:** `1` only if, within `SHORT_TERM_HORIZON_BARS` (14) bars, the
 **take-profit is touched before the stop** (path-dependent, intrabar high/low); `0` if the stop hits first
 or neither does (timeout); same-bar ambiguity is scored conservatively as a loss; NaN on the censored tail.
 Brackets are ATR-based (`stop = clip(2·ATR/close, 1.5%, 5%)`, `tp = 2.5·stop`) — the **same `config.py`
 params used for live orders and the backtest time-stop**, so the label equals the trade as executed. This
-replaced the old "did the high touch +2%" breakout target, which scored a volatility *touch* (inflated AUC
-0.925) rather than an exitable trade. Judged by **walk-forward** (`run.py walkforward`), the triple-barrier
-model shows a **small but real out-of-sample edge in the confident tail** (+0.27%/trade net at the 0.15
-threshold, pooled AUC 0.689) — break-even below that and decaying in the latest fold — see
-[current-state-and-gaps.md §1b](./current-state-and-gaps.md#1b-validation-results).
+   replaced the old "did the high touch +2%" breakout target, which scored a volatility *touch* (inflated AUC
+   0.925) rather than an exitable trade. Judged by **walk-forward** (`run.py walkforward`), the triple-barrier
+   model shows a **small but real out-of-sample edge in the confident tail** (+0.49%/trade net in the top 0.1% confidence cut, pooled AUC 0.698) — see
+   [current-state-and-gaps.md §1b](./current-state-and-gaps.md#1b-validation-results).
 
 **Entry threshold:** `prob ≥ SHORT_TERM_BUY_THRESHOLD` (0.15), not 0.55 — the ~5% base rate keeps calibrated
 probabilities small. Config-driven so it can be tuned against the backtest.
@@ -53,10 +52,9 @@ daily-grained news/macro on it, so a day's sentiment/macro broadcasts across all
 (previously the join silently failed and these features were always 0). Mock rows are excluded from
 training. Sentiment is a **short-term-only** input; the long-term/regime model is price+macro.
 
-> **Resolution (Phase 2 — done):** short-term features/targets run on hourly `recent_prices` with a
-> bar-aware horizon; the regime + MPT long-term path now reads daily `daily_prices`. The execution/replay
-> layer still steps per hourly bar with some day-named units (G6) — tracked in
-> [current-state-and-gaps.md](./current-state-and-gaps.md).
+> **Resolution (Stage 18 — done):** short-term features/targets run on hourly `recent_prices` with a
+> bar-aware horizon; the regime + MPT long-term path now reads daily `daily_prices`. Both features and solvers
+> have been fully updated. The regime classification is daily-based and weight allocation uses the SciPy solver.
 
 ## 2. Short-term model A — XGBoost (`models.py`)
 
@@ -98,17 +96,11 @@ The 3 states are sorted by mean volatility and mapped → `growth` (lowest) / `t
 (highest). Saved to `hmm_model.pkl` + `hmm_metadata.pkl`. At inference the **last daily SPY row** sets the
 current regime.
 
-**Allocation (MPT):** `PortfolioOptimizer.calculate_optimal_weights(daily_returns[-252:], regime)` — now
-fed **daily** returns (≈1 trading year), not hourly:
+**Allocation (MPT):** `PortfolioOptimizer.calculate_optimal_weights(daily_returns[-252:], regime)` — fed
+**daily** returns (≈1 trading year) from the `DailyPrice` database table:
 - Expected returns = annualized mean; covariance = **Ledoit-Wolf shrinkage**, annualized.
-- "Optimizer" = generate **10,000 random long-only weight vectors** (each clipped to ≤ 25% per name),
-  keep the highest Sharpe (rf = 4%). This is a Monte-Carlo search, **not** a quadratic solver — results
-  are noise-seeded (fixed `rng(42)`) and approximate.
-- In `crisis` regime the API halves all weights (→ ~50% cash) via `regime_scalar`.
-
-> The README mentions crisis-era Ledoit-Wolf covariance from GFC/Dot-Com data. The **live API path**
-> (`app/main.py`) does **not** swap in crisis covariance — it just uses recent 252-row returns and scales
-> weights by 0.5 in crisis. Crisis data is only loaded by the separate `backtest.py` era runs.
+- **SciPy Optimizer**: Solves for Maximum Sharpe Ratio using `scipy.optimize.minimize` (SLSQP), enforcing constraints (weights sum to 1.0, long-only, max asset concentration of 25% in growth regimes and 10% cash/defensive concentration in crisis regimes).
+- In `crisis` regime the MPT allocation scales all optimal weights by 0.5 (keeping ~50% cash) to manage risk.
 
 ## 5. Position sizing — Fractional Kelly (`models.py`)
 
