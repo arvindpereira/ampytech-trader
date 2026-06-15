@@ -12,7 +12,8 @@ from app.core.config import (
     ALPACA_API_KEY,
     ALPACA_SECRET_KEY,
     ALPACA_BASE_URL,
-    TICKER_UNIVERSE
+    TICKER_UNIVERSE,
+    HEDGE_MODE,
 )
 from app.database import (
     SessionLocal, init_db, ExecutedTrade, RecentPrice,
@@ -48,6 +49,49 @@ def get_alpaca_api(force_virtual=False):
             import alpaca_trade_api as tradeapi
             return tradeapi.REST(key_id=key_id, secret_key=secret_key, base_url=base_url, api_version='v2')
         return None
+
+def _is_real_alpaca():
+    """True only when real Alpaca credentials are configured (the virtual broker mock cannot short)."""
+    return bool(ALPACA_API_KEY and ALPACA_SECRET_KEY)
+
+
+def _maybe_place_hedge(api, db, sug, long_shares, long_price, mode, date_str):
+    """Places the offsetting short hedge for a just-opened long, sized to the ACTUAL long notional.
+
+    Guarded: only on real Alpaca (which supports shorting). On the virtual broker it logs and skips so
+    backtests/sims stay long-only and the user knows to place the hedge manually (see the UI trade plan).
+    """
+    hedge = sug.get("hedge") if isinstance(sug, dict) else None
+    if not hedge or not hedge.get("symbol"):
+        return
+    hsym = hedge["symbol"]
+    ratio = float(hedge.get("ratio") or 0.0)
+    hprice = hedge.get("price")
+    if ratio <= 0 or not hprice:
+        return
+
+    if not _is_real_alpaca():
+        print(f"Hedge for {sug['ticker']} ({HEDGE_MODE}): SHORT {hsym} skipped — virtual broker can't short. "
+              f"Execute manually if desired (see trade plan).")
+        return
+
+    long_notional = long_shares * long_price
+    hedge_shares = int((ratio * long_notional) / hprice)
+    if hedge_shares < 1:
+        return
+    try:
+        h_order = api.submit_order(symbol=hsym, qty=hedge_shares, side="sell",
+                                   type="market", time_in_force="gtc")
+        db.add(VirtualOrder(
+            id=h_order.id, mode=mode, ticker=hsym, qty=float(hedge_shares),
+            side="sell", type="market", status="submitted", created_at=datetime.now().isoformat()
+        ))
+        db.commit()
+        print(f"Hedge placed: SHORT {hedge_shares} {hsym} (ratio {ratio:.2f}x ${long_notional:,.0f} long in {sug['ticker']}).")
+    except Exception as e:
+        print(f"Failed to place hedge short {hsym} for {sug['ticker']}: {e}")
+        db.rollback()
+
 
 def execute_local_paper_trade(db, suggestions_data):
     """Executes trades in mock paper-trading mode, logging them in SQLite database."""
@@ -447,6 +491,10 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data, mode="real"):
                     db.add(v_order)
                 db.commit()
                 print(f"Order submitted successfully. Logged order ID: {order.id}")
+
+                # Optional market-risk hedge (real Alpaca only; sized to the actual long notional).
+                if HEDGE_MODE in ("beta_neutral", "pair_trade"):
+                    _maybe_place_hedge(api, db, sug, shares, close_price, mode, date_str)
             except Exception as e:
                 print(f"Failed to submit bracket order for {ticker}: {e}")
                 db.rollback()
@@ -742,9 +790,9 @@ def run_execution():
             sync_broker_orders(db, api)
             sync_broker_positions(db, api)
 
-            # 3. Retrieve daily recommendations
+            # 3. Retrieve daily recommendations (with hedge plan attached when hedging is enabled)
             print("Retrieving daily trade recommendations...")
-            suggestions_data = get_daily_suggestions(date=None, db=db)
+            suggestions_data = get_daily_suggestions(date=None, hedge_mode=HEDGE_MODE, db=db)
 
             # 4. Run execution
             execute_alpaca_live_paper_trade(api, db, suggestions_data)

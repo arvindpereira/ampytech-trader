@@ -25,45 +25,17 @@ current_hedges = {}      # symbol -> (hedge_symbol, hedge_value)
 active_longs = set()     # set of symbols currently long
 
 def get_hedge_info(ctx, hedge_mode):
-    if hedge_mode == 'beta_neutral':
-        try:
-            corr_spy = ctx.indicator('feat_corr_spy_20')[-1]
-            corr_qqq = ctx.indicator('feat_corr_qqq_20')[-1]
-            rel_vol_spy = ctx.indicator('feat_relative_vol_spy')[-1]
-            rel_vol_qqq = ctx.indicator('feat_relative_vol_qqq')[-1]
-        except Exception:
-            corr_spy, corr_qqq, rel_vol_spy, rel_vol_qqq = 0.8, 0.8, 1.0, 1.0
-            
-        if corr_qqq > corr_spy:
-            hedge_symbol = 'QQQ'
-            beta = corr_qqq * rel_vol_qqq
-        else:
-            hedge_symbol = 'SPY'
-            beta = corr_spy * rel_vol_spy
-        beta = max(0.3, min(2.5, beta))
-        return hedge_symbol, beta
-        
-    elif hedge_mode == 'pair_trade':
-        PEER_MAP = {
-            "MSFT": "AAPL", "AAPL": "MSFT",
-            "GOOGL": "META", "META": "GOOGL",
-            "INTC": "AMD", "AMD": "INTC",
-            "NVDA": "AMD", "ARM": "AMD",
-            "QCOM": "AVGO", "AVGO": "QCOM",
-            "CSCO": "NOK", "NOK": "CSCO",
-            "ORCL": "IBM", "IBM": "ORCL",
-            "TSM": "ASML", "ASML": "TSM",
-            "AMZN": "META", "MU": "INTC",
-            "PLTR": "ORCL", "SMCI": "NVDA",
-            "BB": "NOK"
-        }
-        peer = PEER_MAP.get(ctx.symbol)
-        if peer and peer in TICKER_UNIVERSE:
-            return peer, 1.0
-        else:
-            return 'SPY', 1.0
-            
-    return None, 0.0
+    """Backtest adapter around the shared hedging logic (reads rolling stats from the ExecContext)."""
+    from execution.hedging import compute_hedge
+    try:
+        corr_spy = ctx.indicator('feat_corr_spy_20')[-1]
+        corr_qqq = ctx.indicator('feat_corr_qqq_20')[-1]
+        rel_vol_spy = ctx.indicator('feat_relative_vol_spy')[-1]
+        rel_vol_qqq = ctx.indicator('feat_relative_vol_qqq')[-1]
+    except Exception:
+        corr_spy, corr_qqq, rel_vol_spy, rel_vol_qqq = 0.8, 0.8, 1.0, 1.0
+    return compute_hedge(ctx.symbol, hedge_mode, corr_spy, corr_qqq,
+                         rel_vol_spy, rel_vol_qqq, TICKER_UNIVERSE)
 
 # Set pybroker config to use local cache
 pybroker.enable_caches('ampytech_trader', 'pybroker_cache')

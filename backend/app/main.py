@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, MPT_WINDOW_DAYS,
     SHORT_TERM_ATR_STOP_MULT, SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX,
-    SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD,
+    SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD, HEDGE_MODE,
 )
 from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
@@ -128,9 +128,16 @@ def clear_suggestions_cache():
     print("Suggestions cache cleared successfully.")
 
 @app.get("/api/suggestions")
-def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Depends(get_db)):
+def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
+                          hedge_mode: Optional[str] = None, db=Depends(get_db)):
     """Computes daily trading suggestions (Short-Term and Long-Term) using our trained models."""
     global _suggestions_cache
+
+    # Resolve hedge mode (query param overrides the config default; validate against known modes).
+    from execution.hedging import compute_hedge, VALID_MODES
+    effective_hedge_mode = hedge_mode if hedge_mode in VALID_MODES else HEDGE_MODE
+    if effective_hedge_mode not in VALID_MODES:
+        effective_hedge_mode = "none"
 
     # Load stock universe dynamically from DB to establish part of cache key
     db_tickers = db.query(UniverseTicker).all()
@@ -150,6 +157,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     cache_key = (
         date or "live",
         mode,
+        effective_hedge_mode,
         latest_price_date,
         latest_sent_date,
         prices_count,
@@ -241,6 +249,13 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         raise HTTPException(status_code=500, detail="Insufficient price data to generate prediction features.")
 
     feature_cols = sorted([col for col in full_features_df.columns if col.startswith("feat_") and col != "feat_atr_14"])
+
+    # Inputs for sizing the example trade plan (advisory): latest price per ticker + account equity.
+    latest_close = prices_df.sort_values("date").groupby("ticker")["close"].last().to_dict()
+    acc_id = 2 if mode == "real" else 1
+    _acc = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
+    equity_for_sizing = float(_acc.equity) if (_acc and _acc.equity) else 100000.0
+    POSITION_PCT = 0.10  # example long size = 10% of equity (matches backtest/executor convention)
 
     for ticker in active_universe:
         t_feat = full_features_df[full_features_df["ticker"] == ticker]
@@ -347,16 +362,63 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         # Same brackets used to LABEL training data (triple-barrier) — keeps target ≈ execution.
         stop_loss_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / current_close))
         take_profit_pct = stop_loss_pct * SHORT_TERM_TP_MULT
+        stop_price = current_close * (1.0 - stop_loss_pct) if action == "BUY" else None
+        target_price = current_close * (1.0 + take_profit_pct) if action == "BUY" else None
+
+        # --- Build an explicit, executable trade plan (works for manual Robinhood or Alpaca) ---
+        hedge = None
+        action_plan = None
+        if action == "BUY":
+            long_notional = POSITION_PCT * equity_for_sizing
+            long_shares = long_notional / current_close if current_close > 0 else 0.0
+            plan = (f"BUY {ticker}: ~{long_shares:.0f} sh @ ${current_close:,.2f} "
+                    f"(≈{POSITION_PCT*100:.0f}% equity = ${long_notional:,.0f}). "
+                    f"Stop ${stop_price:,.2f} (-{stop_loss_pct*100:.1f}%), "
+                    f"target ${target_price:,.2f} (+{take_profit_pct*100:.1f}%). "
+                    f"Win-prob {prob*100:.0f}%.")
+
+            if effective_hedge_mode in ("beta_neutral", "pair_trade"):
+                def _f(col, dflt):
+                    v = last_row.get(col, dflt)
+                    try:
+                        v = float(v)
+                        return dflt if np.isnan(v) else v
+                    except (TypeError, ValueError):
+                        return dflt
+                hsym, beta = compute_hedge(
+                    ticker, effective_hedge_mode,
+                    corr_spy=_f("feat_corr_spy_20", 0.8), corr_qqq=_f("feat_corr_qqq_20", 0.8),
+                    rel_vol_spy=_f("feat_relative_vol_spy", 1.0), rel_vol_qqq=_f("feat_relative_vol_qqq", 1.0),
+                    universe=active_universe,
+                )
+                if hsym and hsym != ticker:
+                    hprice = latest_close.get(hsym)
+                    hedge_notional = beta * long_notional
+                    hedge_shares = (hedge_notional / hprice) if hprice else None
+                    hedge = {
+                        "mode": effective_hedge_mode,
+                        "symbol": hsym,
+                        "ratio": round(beta, 2),
+                        "price": round(float(hprice), 2) if hprice else None,
+                        "notional": round(hedge_notional, 2),
+                        "shares": round(hedge_shares, 1) if hedge_shares else None,
+                    }
+                    if hedge_shares and hprice:
+                        plan += (f" HEDGE: SHORT {hsym} ~{hedge_shares:.0f} sh @ ${hprice:,.2f} "
+                                 f"(≈{beta:.2f}x the long, ${hedge_notional:,.0f}) to offset market risk.")
+            action_plan = plan
 
         suggestions.append({
             "ticker": ticker,
             "close": current_close,
             "action": action,
             "confidence": confidence,
-            "stop_loss": current_close * (1.0 - stop_loss_pct) if action == "BUY" else None,
-            "take_profit": current_close * (1.0 + take_profit_pct) if action == "BUY" else None,
+            "stop_loss": stop_price,
+            "take_profit": target_price,
             "reasoning": reasoning,
-            "audit": audit_data
+            "audit": audit_data,
+            "hedge": hedge,
+            "action_plan": action_plan
         })
 
 
@@ -398,6 +460,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     res = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "regime": current_regime,
+        "hedge_mode": effective_hedge_mode,
         "short_term_suggestions": suggestions,
         "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True)
     }
