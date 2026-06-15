@@ -13,11 +13,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, SHORT_TERM_ATR_STOP_MULT,
     SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX, SHORT_TERM_BUY_THRESHOLD,
-    HEDGE_MODE,
+    HEDGE_MODE, SERVED_MODEL,
 )
 from app.database import SessionLocal, RecentPrice, DailyPrice, CrisisPrice, MacroIndicator
 from ml_engine.features import build_features_for_df
-from ml_engine.models import PortfolioOptimizer
+from ml_engine.models import PortfolioOptimizer, load_buy_threshold
 
 # Shared dictionary to store the target hedge allocations and active long/hedge mappings
 active_hedges = {}       # hedge_symbol -> target short allocation (float)
@@ -105,8 +105,9 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
     use_pytorch = False
     deep_model = None
     scaler_metadata = None
+    buy_threshold = load_buy_threshold()  # calibrated per served model (falls back to config)
 
-    if os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
+    if SERVED_MODEL == "pytorch" and os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
         import torch
         from ml_engine.deep_models import LightTemporalAttentionNet, prepare_sequences
         try:
@@ -222,9 +223,9 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
         prob = ctx.indicator('pred_prob')[-1]
         atr = ctx.indicator('feat_atr_14')[-1]
 
-        # Entry rule: model win-probability above the configured high-confidence threshold
+        # Entry rule: model win-probability above the calibrated high-confidence threshold
         # Do not buy if this ticker is currently being used as a short hedge to avoid position collision
-        if prob >= SHORT_TERM_BUY_THRESHOLD and not is_long and target_hedge <= 0.0:
+        if prob >= buy_threshold and not is_long and target_hedge <= 0.0:
             # Same ATR brackets the triple-barrier label assumes (target ≈ execution).
             stop_loss_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / ctx.close[-1]))
             take_profit_pct = stop_loss_pct * SHORT_TERM_TP_MULT

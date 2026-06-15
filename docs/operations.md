@@ -45,6 +45,7 @@ flowchart LR
 | `run.py serve` | FastAPI on :8008 (`--reload`) | Always (with frontend) |
 | `run.py backtest` | PyBroker short- + long-term metrics; `--era` for crisis | Audit (in-sample) |
 | `run.py walkforward [--splits N]` | **Honest OOS eval**: expanding folds, win rate + net return by confidence percentile | The real edge check |
+| `run.py calibrate` | Calibrate the served-model BUY threshold to a target selectivity → `threshold.json` | After train, or to re-tune |
 | `run.py simulate --days N` | Forward sim on last N cached bars (account 1, `live` logs) | Ad hoc |
 | `run.py backtest-virtual --months N` | Reset replay account, walk forward through virtual broker | Ad hoc |
 | `run.py schedule` | Cron daemon (below) | Unattended only |
@@ -100,6 +101,14 @@ it straight off the dashboard to execute manually (e.g. Robinhood), or let the s
 - **Live execution caveat:** the executor only places the hedge short on **real Alpaca** (set
   `ALPACA_API_KEY`/`SECRET` and `HEDGE_MODE=beta_neutral`); the built-in virtual broker can't short, so it
   logs a skip — use the on-screen trade plan to hedge manually there. Hedged backtest numbers are in-sample.
+
+**Served model & BUY threshold.** `SERVED_MODEL` (default `xgboost`) decides which short-term model
+serves and is calibrated against (set `pytorch` to opt into the deep model). The BUY threshold is **not** a
+hand-set constant: `make calibrate` (auto-run by `make train`) writes `saved_models/threshold.json` with the
+probability cutoff that yields `SHORT_TERM_SIGNAL_RATE` (default top 0.5%) on a held-out slice of the served
+model, and reports the resulting OOS win-rate/net-return. Inference and the backtest read that file (falling
+back to `SHORT_TERM_BUY_THRESHOLD` only if it's absent). This fixes the PR#2 issue where a single 0.23 number
+was tuned on XGBoost yet a different model served. Selective by design — many days produce 0 BUYs.
 
 **Alternative data (Congress/insider).** Off by default (`ALT_DATA_ENABLED=False`). The bundled fetcher
 seeds **synthetic/random** disclosures (no signal) — for plumbing only. Do **not** enable for real trading

@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news train walkforward backtest \
+.PHONY: help default install fetch backfill-news train walkforward calibrate backtest \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -26,6 +26,7 @@ help:
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
 	@echo "  make walkforward       - Honest out-of-sample edge check (expanding folds) [SPLITS=$(SPLITS)]"
+	@echo "  make calibrate         - Calibrate the served-model BUY threshold (-> threshold.json)"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -84,6 +85,12 @@ walkforward:
 	@echo "🔬 Walk-forward out-of-sample evaluation ($(SPLITS) expanding folds) — the honest edge check..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py walkforward --splits $(SPLITS)
+
+calibrate:
+	@echo "========================================================================"
+	@echo "🎯 Calibrating the served-model BUY threshold (writes saved_models/threshold.json)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py calibrate
 
 backtest:
 	@echo "========================================================================"

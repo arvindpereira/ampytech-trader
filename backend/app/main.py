@@ -181,7 +181,11 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     scaler_metadata = None
     st_model = None
 
-    if os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
+    from app.core.config import SERVED_MODEL
+    from ml_engine.models import load_buy_threshold
+    buy_threshold = load_buy_threshold()  # calibrated per served model (falls back to config)
+
+    if SERVED_MODEL == "pytorch" and os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
         import torch
         from ml_engine.deep_models import LightTemporalAttentionNet
         try:
@@ -312,10 +316,10 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         confidence = prob
         reasoning = "Technicals and sentiment are in a balanced range."
 
-        # Buy the high-confidence tail (thresholds are config-driven, tuned to the label's base rate).
-        if prob >= SHORT_TERM_BUY_THRESHOLD:
+        # Buy the high-confidence tail (threshold calibrated per served model, see threshold.json).
+        if prob >= buy_threshold:
             action = "BUY"
-            reasoning = f"Win probability ({prob*100:.1f}%) exceeds the entry threshold ({SHORT_TERM_BUY_THRESHOLD*100:.0f}%), supported by a sentiment score of {sentiment_score:.2f}."
+            reasoning = f"Win probability ({prob*100:.1f}%) exceeds the entry threshold ({buy_threshold*100:.1f}%), supported by a sentiment score of {sentiment_score:.2f}."
         elif prob <= SHORT_TERM_SELL_THRESHOLD:
             action = "SELL"
             reasoning = f"Very low win probability ({prob*100:.1f}%) indicates poor risk/reward."

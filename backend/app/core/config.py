@@ -85,9 +85,16 @@ SHORT_TERM_TP_MULT = float(os.getenv("SHORT_TERM_TP_MULT", "2.5"))              
 SHORT_TERM_STOP_MIN = float(os.getenv("SHORT_TERM_STOP_MIN", "0.015"))          # stop floor 1.5%
 SHORT_TERM_STOP_MAX = float(os.getenv("SHORT_TERM_STOP_MAX", "0.05"))           # stop cap 5%
 
-# Entry/exit probability thresholds on the model's P(take-profit before stop). The triple-barrier
-# target has a low (~5%) base rate, so calibrated probs are small — break-even for a 2.5:1 payoff
-# is ~0.286 ignoring timeouts. BUY only the high-confidence tail; tuned against the backtest.
+# Which short-term model actually serves (and is what the BUY threshold is calibrated against).
+# 'xgboost' (default) is cheap to walk-forward/calibrate; 'pytorch' is opt-in/experimental. Making this
+# explicit avoids "whatever .pth exists" silently serving an un-calibrated model (PR#2 review C6/C14).
+SERVED_MODEL = os.getenv("SERVED_MODEL", "xgboost").lower()
+
+# Entry/exit probability thresholds on the model's P(take-profit before stop). A fixed absolute threshold
+# does NOT transfer between models (different prob scales), so it is CALIBRATED per served model by
+# `calibrate_threshold()` (written to saved_models/threshold.json) to hit SHORT_TERM_SIGNAL_RATE on a
+# time-ordered holdout. SHORT_TERM_BUY_THRESHOLD is only the fallback when threshold.json is absent.
+SHORT_TERM_SIGNAL_RATE = float(os.getenv("SHORT_TERM_SIGNAL_RATE", "0.005"))  # target ~top 0.5% of bars
 SHORT_TERM_BUY_THRESHOLD = float(os.getenv("SHORT_TERM_BUY_THRESHOLD", "0.23"))
 SHORT_TERM_SELL_THRESHOLD = float(os.getenv("SHORT_TERM_SELL_THRESHOLD", "0.02"))
 

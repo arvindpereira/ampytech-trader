@@ -13,7 +13,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, SHORT_TERM_ATR_STOP_MULT,
     SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX, SHORT_TERM_BUY_THRESHOLD,
+    SHORT_TERM_SIGNAL_RATE, SERVED_MODEL,
 )
+import json
+from datetime import datetime
 from app.database import (
     SessionLocal, RecentPrice, DailyPrice, MacroIndicator, TickerSentiment, UniverseTicker
 )
@@ -310,7 +313,92 @@ def train_models():
 
     print(f"Long-Term HMM Model saved successfully to: {hmm_path}")
     print(f"Regime State Mapping: {state_mapping}")
+
+    # Calibrate the live BUY threshold for the served model (writes threshold.json).
+    try:
+        calibrate_threshold()
+    except Exception as e:
+        print(f"Threshold calibration skipped: {e}")
     print("Model training execution complete.\n")
+
+
+THRESHOLD_PATH = os.path.join(SAVED_MODELS_DIR, "threshold.json")
+
+
+def calibrate_threshold(round_trip_fee=0.001, signal_rate=None):
+    """Derives the live BUY threshold for the SERVED model and writes saved_models/threshold.json.
+
+    A fixed absolute probability does not transfer across models (XGBoost vs PyTorch have different
+    prob scales) and grid-searching it on the test metric overfits (PR#2 review C2/C6). Instead we:
+      1. train the served model on a time-ordered 80% and predict the most-recent 20% (honest OOS),
+      2. set the threshold to the quantile that yields a TARGET signal rate (a fixed selectivity prior,
+         not chosen to maximize returns), then
+      3. *report* the resulting OOS win-rate and net return so we know whether that selectivity is
+         actually profitable.
+    Inference/backtest read this threshold (per served model) instead of the static config default.
+    """
+    signal_rate = signal_rate if signal_rate is not None else SHORT_TERM_SIGNAL_RATE
+    if SERVED_MODEL != "xgboost":
+        print(f"calibrate_threshold: SERVED_MODEL={SERVED_MODEL} not auto-calibrated; "
+              f"keeping config threshold {SHORT_TERM_BUY_THRESHOLD}. (Only 'xgboost' is auto-calibrated.)")
+        return
+
+    df = load_data_from_db().dropna(subset=["target_win", "trade_ret"]).copy()
+    feature_cols = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
+    df["dt"] = pd.to_datetime(df["date"], format="mixed")
+    df = df.sort_values("dt").reset_index(drop=True)
+    split = int(len(df) * 0.8)
+    tr, te = df.iloc[:split], df.iloc[split:]
+    if len(te) < 200:
+        print("calibrate_threshold: not enough holdout rows; skipping.")
+        return
+
+    w = np.exp(-((tr["dt"].max() - tr["dt"]).dt.days) / (5.0 * 365.25))
+    m = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05,
+                          subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
+    m.fit(tr[feature_cols], tr["target_win"], sample_weight=w)
+    p = m.predict_proba(te[feature_cols])[:, 1]
+    y = te["target_win"].values
+    ret = te["trade_ret"].values
+
+    threshold = float(np.quantile(p, 1.0 - signal_rate))
+    msk = p >= threshold
+    n = int(msk.sum())
+    win_rate = float(y[msk].mean()) if n else float("nan")
+    mean_net = float((ret[msk] - round_trip_fee).mean()) if n else float("nan")
+
+    payload = {
+        "model_type": "xgboost",
+        "signal_rate": signal_rate,
+        "threshold": round(threshold, 4),
+        "holdout_rows": int(len(te)),
+        "oos_signals": n,
+        "oos_win_rate": round(win_rate, 4) if n else None,
+        "oos_mean_net_ret": round(mean_net, 5) if n else None,
+        "base_win_rate": round(float(y.mean()), 4),
+        "calibrated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    with open(THRESHOLD_PATH, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"\n--- Threshold calibration (served={SERVED_MODEL}, target top {signal_rate*100:.2f}%) ---")
+    print(f"  Threshold {threshold:.4f} -> {n} OOS signals | win {win_rate:.3f} (base {y.mean():.3f}) "
+          f"| mean net/trade {mean_net:+.4f}")
+    print(f"  {'PROFITABLE at this selectivity' if (n and mean_net > 0) else 'NOT yet profitable — treat as no edge'}")
+    print(f"  Saved to {THRESHOLD_PATH}\n")
+    return payload
+
+
+def load_buy_threshold():
+    """Returns the calibrated BUY threshold for the served model, or the config fallback."""
+    try:
+        if os.path.exists(THRESHOLD_PATH):
+            with open(THRESHOLD_PATH) as f:
+                payload = json.load(f)
+            if payload.get("model_type") == SERVED_MODEL and "threshold" in payload:
+                return float(payload["threshold"])
+    except Exception as e:
+        print(f"Could not read calibrated threshold ({e}); using config default.")
+    return SHORT_TERM_BUY_THRESHOLD
 
 
 def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
@@ -452,9 +540,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model training / evaluation")
     parser.add_argument("--train", action="store_true", help="Train production models (default)")
     parser.add_argument("--walkforward", action="store_true", help="Run walk-forward out-of-sample evaluation")
+    parser.add_argument("--calibrate", action="store_true", help="Re-calibrate the served-model BUY threshold")
     parser.add_argument("--splits", type=int, default=5, help="Number of walk-forward folds")
     args = parser.parse_args()
     if args.walkforward:
         walk_forward_evaluate(n_splits=args.splits)
+    elif args.calibrate:
+        calibrate_threshold()
     else:
         train_models()

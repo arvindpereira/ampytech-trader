@@ -205,6 +205,17 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   virtual broker can't short, logs a skip). *Still open:* margin/exposure accounting and a live short-capable
   paper path; the in-sample hedged drawdown numbers remain in-sample (see C4).
 
-Still outstanding from this review: **C2** (threshold overfit — needs nested/forward selection),
-**C4/C5** (label in-sample numbers as non-predictive; reconcile docs prose vs table), **C6** (calibrate
-threshold against the *served* model), and the real-data wiring for C1.
+- **C6 (served model vs threshold) — DONE.** `SERVED_MODEL` is now explicit (default `xgboost`; `pytorch`
+  opt-in) so inference no longer silently serves "whatever `.pth` exists" (also closes C14). The BUY
+  threshold is **calibrated to the served model**: `calibrate_threshold()` (`make calibrate`, auto-run by
+  `make train`) trains the served model on a time-ordered 80%, then sets the cutoff to hit a fixed target
+  selectivity (`SHORT_TERM_SIGNAL_RATE`, default top 0.5%) on the held-out 20% — a *selectivity prior*, not
+  a returns-maximizing search, so it does **not** overfit the metric (unlike the old 0.23). It writes
+  `saved_models/threshold.json` (`{threshold, oos_signals, oos_win_rate, oos_mean_net_ret, …}`) which
+  inference + backtest read. First calibration: threshold **0.1335**, 481 OOS signals, win 9.1% (base 5.5%),
+  **+0.16%/trade net** — modestly profitable at that selectivity, and a real number for the *served* model
+  (the old 0.23 produced 0 signals on it).
+
+Still outstanding from this review: **C2** (threshold selection is on a single holdout — fold-forward
+nesting would be even stricter), **C4/C5** (label in-sample numbers non-predictive; reconcile docs prose vs
+table), and the real-data wiring for **C1**.
