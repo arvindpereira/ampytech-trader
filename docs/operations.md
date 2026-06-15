@@ -89,6 +89,22 @@ make serve        # backend + frontend
 - Real vs mock sentiment? `sqlite3 ... "select source,sum(is_mock),count(*) from ticker_sentiments group by source;"`
   (in the inspected DB, reddit was **100% mock**, news partly mock).
 
+## 5b. Hedging & alternative data
+
+**Hedge overlay (long-short).** Off by default. Toggle in the dashboard ("Hedge overlay": None /
+Beta-Neutral / Pair Trade), or per request: `GET /api/suggestions?hedge_mode=beta_neutral`. When on, each
+BUY gets a **hedge leg** and an explicit `action_plan` string with exact long & short shares/prices — read
+it straight off the dashboard to execute manually (e.g. Robinhood), or let the scheduler place it on Alpaca.
+- `beta_neutral`: short SPY/QQQ (whichever the name tracks) sized by estimated beta.
+- `pair_trade`: short a sector peer 1:1.
+- **Live execution caveat:** the executor only places the hedge short on **real Alpaca** (set
+  `ALPACA_API_KEY`/`SECRET` and `HEDGE_MODE=beta_neutral`); the built-in virtual broker can't short, so it
+  logs a skip — use the on-screen trade plan to hedge manually there. Hedged backtest numbers are in-sample.
+
+**Alternative data (Congress/insider).** Off by default (`ALT_DATA_ENABLED=False`). The bundled fetcher
+seeds **synthetic/random** disclosures (no signal) — for plumbing only. Do **not** enable for real trading
+until a real source (SEC EDGAR Form 4 / Quiver STOCK Act) is wired in. See `pr2_review_and_updates.md` (C1).
+
 ## 6. Files & artifacts
 
 ```
