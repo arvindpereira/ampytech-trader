@@ -163,7 +163,7 @@ survivors/leaders across the dot-com, mobile, and AI cohorts). Survivorship bias
 pre-2003 daily history (delisted names like SUNW/YHOO/AOL are unavailable from any source).
 
 ### G11 — Short-term target now tradable (triple-barrier) & Price Stationarity ✅ DONE
-Replaced the volatility-touch breakout target with a **triple-barrier WIN label** (`triple_barrier_labels` in `features.py`) mapped to ATR-based stops and take-profit brackets. 
+Replaced the volatility-touch breakout target with a **triple-barrier WIN label** (`triple_barrier_labels` in `features.py`) mapped to ATR-based stops and take-profit brackets.
 **Price Stationarity**: Dropped all raw absolute price features (`open`, `high`, `low`, `close`, `bb_mid`) from the ML model training feature space. Replaced them with stationary technical ratios (SMA ratios, High-Low range ratios, Bollinger distances, and volatility-adjusted returns) to avoid non-stationary drift. Parkinson extreme-value volatility and exponentially decaying news sentiment scores have been added to the feature set.
 
 ### G12 — Walk-forward out-of-sample evaluation ✅ DONE (small real edge found)
