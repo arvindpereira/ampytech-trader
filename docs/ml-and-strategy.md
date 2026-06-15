@@ -32,6 +32,7 @@ flowchart TB
 | Stationary Techs | `rsi_14`, `bb_width`, `atr_ratio` (stationary volatility scaled by close), `close_to_sma10`, `close_to_sma50`, `high_low_ratio`, `close_to_bb_mid`, `macd_ratio`, `macd_signal_ratio` (all absolute prices like open/high/low/close/bb_mid are excluded to maintain stationarity) |
 | Sentiment (Decayed) | `news_sentiment_score`, `reddit_sentiment_score`, `news/reddit_mention_count`, `combined_sentiment_decayed` (0.6·news+0.4·reddit scored via 7-bar half-life EMA), `sent_sma_3`, `sent_sma_7`, `sent_momentum` |
 | Macro | `fed_funds`, `yield_spread` |
+| Alternative Disclosures | `insider_buying_ratio` / `insider_buying_30d` (rolling 30d corporate buying value / close), `congress_buying_ratio` / `congress_buying_90d` (rolling 90d Congressional buying value / close) |
 | Cross-ticker | `relative_return_spy/qqq`, `relative_vol_spy/qqq`, `cum_rel_ret_spy_50`, `rank_return` (rank returns per day), `rank_volatility` (rank volatility per day), `rank_volume_ratio` (rank volume multiplier per day), `rank_sentiment` (rank sentiment per day), `corr_spy_20`, `corr_qqq_20` |
 
 **Target (`target_win`) — triple-barrier:** `1` only if, within `SHORT_TERM_HORIZON_BARS` (14) bars, the
@@ -41,10 +42,9 @@ Brackets are ATR-based (`stop = clip(2·ATR/close, 1.5%, 5%)`, `tp = 2.5·stop`)
 params used for live orders and the backtest time-stop**, so the label equals the trade as executed. This
    replaced the old "did the high touch +2%" breakout target, which scored a volatility *touch* (inflated AUC
    0.925) rather than an exitable trade. Judged by **walk-forward** (`run.py walkforward`), the triple-barrier
-   model shows a **small but real out-of-sample edge in the confident tail** (+0.49%/trade net in the top 0.1% confidence cut, pooled AUC 0.698) — see
-   [current-state-and-gaps.md §1b](./current-state-and-gaps.md#1b-validation-results).
+   model shows a **small but real out-of-sample edge in the confident tail** (+0.49%/trade net in the top 0.1% confidence cut, pooled AUC 0.700).
 
-**Entry threshold:** `prob ≥ SHORT_TERM_BUY_THRESHOLD` (0.15), not 0.55 — the ~5% base rate keeps calibrated
+**Entry threshold:** `prob ≥ SHORT_TERM_BUY_THRESHOLD` (0.23), not 0.55 — the ~5% base rate keeps calibrated
 probabilities small. Config-driven so it can be tuned against the backtest.
 
 **Sentiment & macro join (fixed):** `build_features_for_df` derives `cal_date = date[:10]` and joins
@@ -52,9 +52,10 @@ daily-grained news/macro on it, so a day's sentiment/macro broadcasts across all
 (previously the join silently failed and these features were always 0). Mock rows are excluded from
 training. Sentiment is a **short-term-only** input; the long-term/regime model is price+macro.
 
-> **Resolution (Stage 18 — done):** short-term features/targets run on hourly `recent_prices` with a
+> **Resolution (Stage 19 — done):** short-term features/targets run on hourly `recent_prices` with a
 > bar-aware horizon; the regime + MPT long-term path now reads daily `daily_prices`. Both features and solvers
 > have been fully updated. The regime classification is daily-based and weight allocation uses the SciPy solver.
+> Exposes look-ahead protected Congressional and SEC Form 4 insider buying features and supports beta-neutral / pair-trade long-short hedging.
 
 ## 2. Short-term model A — XGBoost (`models.py`)
 
