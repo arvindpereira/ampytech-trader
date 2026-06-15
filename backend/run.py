@@ -23,7 +23,8 @@ def fetch():
         [sys.executable, "data_ingestion/price_fetcher.py"],
         [sys.executable, "data_ingestion/macro_fetcher.py"],
         [sys.executable, "data_ingestion/crisis_fetcher.py"],
-        [sys.executable, "data_ingestion/sentiment_fetcher.py"]
+        [sys.executable, "data_ingestion/sentiment_fetcher.py"],
+        [sys.executable, "data_ingestion/alternative_fetcher.py"]
     ]
     for script in scripts:
         script_name = os.path.basename(script[1])

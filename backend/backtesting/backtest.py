@@ -13,10 +13,57 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, SHORT_TERM_ATR_STOP_MULT,
     SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX, SHORT_TERM_BUY_THRESHOLD,
+    HEDGE_MODE,
 )
 from app.database import SessionLocal, RecentPrice, DailyPrice, CrisisPrice, MacroIndicator
 from ml_engine.features import build_features_for_df
 from ml_engine.models import PortfolioOptimizer
+
+# Shared dictionary to store the target hedge allocations and active long/hedge mappings
+active_hedges = {}       # hedge_symbol -> target short allocation (float)
+current_hedges = {}      # symbol -> (hedge_symbol, hedge_value)
+active_longs = set()     # set of symbols currently long
+
+def get_hedge_info(ctx, hedge_mode):
+    if hedge_mode == 'beta_neutral':
+        try:
+            corr_spy = ctx.indicator('feat_corr_spy_20')[-1]
+            corr_qqq = ctx.indicator('feat_corr_qqq_20')[-1]
+            rel_vol_spy = ctx.indicator('feat_relative_vol_spy')[-1]
+            rel_vol_qqq = ctx.indicator('feat_relative_vol_qqq')[-1]
+        except Exception:
+            corr_spy, corr_qqq, rel_vol_spy, rel_vol_qqq = 0.8, 0.8, 1.0, 1.0
+            
+        if corr_qqq > corr_spy:
+            hedge_symbol = 'QQQ'
+            beta = corr_qqq * rel_vol_qqq
+        else:
+            hedge_symbol = 'SPY'
+            beta = corr_spy * rel_vol_spy
+        beta = max(0.3, min(2.5, beta))
+        return hedge_symbol, beta
+        
+    elif hedge_mode == 'pair_trade':
+        PEER_MAP = {
+            "MSFT": "AAPL", "AAPL": "MSFT",
+            "GOOGL": "META", "META": "GOOGL",
+            "INTC": "AMD", "AMD": "INTC",
+            "NVDA": "AMD", "ARM": "AMD",
+            "QCOM": "AVGO", "AVGO": "QCOM",
+            "CSCO": "NOK", "NOK": "CSCO",
+            "ORCL": "IBM", "IBM": "ORCL",
+            "TSM": "ASML", "ASML": "TSM",
+            "AMZN": "META", "MU": "INTC",
+            "PLTR": "ORCL", "SMCI": "NVDA",
+            "BB": "NOK"
+        }
+        peer = PEER_MAP.get(ctx.symbol)
+        if peer and peer in TICKER_UNIVERSE:
+            return peer, 1.0
+        else:
+            return 'SPY', 1.0
+            
+    return None, 0.0
 
 # Set pybroker config to use local cache
 pybroker.enable_caches('ampytech_trader', 'pybroker_cache')
@@ -157,7 +204,8 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
     # Setup PyBroker Strategy
     # PyBroker requires columns: [date, symbol, open, high, low, close, volume]
     pyb_df = backtest_df[[
-        'date', 'ticker', 'open', 'high', 'low', 'close', 'volume', 'pred_prob', 'feat_atr_14'
+        'date', 'ticker', 'open', 'high', 'low', 'close', 'volume', 'pred_prob', 'feat_atr_14',
+        'feat_corr_spy_20', 'feat_corr_qqq_20', 'feat_relative_vol_spy', 'feat_relative_vol_qqq'
     ]].copy()
     pyb_df = pyb_df.rename(columns={'ticker': 'symbol'})
     pyb_df['date'] = pd.to_datetime(pyb_df['date'], format='mixed')
@@ -167,12 +215,44 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
 
     # Sizing and Trading execution logic
     def short_term_exec(ctx: ExecContext):
+        # 1. Check if a previously active long position was closed (by stop loss or take profit)
+        is_long = ctx.long_pos() is not None
+        was_long = ctx.symbol in active_longs
+        
+        if was_long and not is_long:
+            active_longs.remove(ctx.symbol)
+            if ctx.symbol in current_hedges:
+                hedge_symbol, hedge_val = current_hedges.pop(ctx.symbol)
+                active_hedges[hedge_symbol] = max(0.0, active_hedges.get(hedge_symbol, 0.0) - hedge_val)
+        
+        # 2. Check if this symbol is a benchmark index
+        BENCHMARKS = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP"}
+        if ctx.symbol in BENCHMARKS:
+            target_hedge = active_hedges.get(ctx.symbol, 0.0)
+            if target_hedge > 0.0:
+                if not ctx.short_pos():
+                    ctx.sell_shares = ctx.calc_target_shares(target_hedge)
+            elif ctx.short_pos():
+                ctx.cover_all_shares()
+            return
+            
+        # 3. For standard stock tickers: check if we need to manage short hedge position
+        target_hedge = active_hedges.get(ctx.symbol, 0.0)
+        if target_hedge > 0.0 and not is_long:
+            # Manage short hedge
+            if not ctx.short_pos():
+                ctx.sell_shares = ctx.calc_target_shares(target_hedge)
+        elif target_hedge <= 0.0 and ctx.short_pos():
+            ctx.cover_all_shares()
+
+        # 4. Long entry/exit logic
         # Retrieve prediction probability for the current bar
         prob = ctx.indicator('pred_prob')[-1]
         atr = ctx.indicator('feat_atr_14')[-1]
 
         # Entry rule: model win-probability above the configured high-confidence threshold
-        if prob >= SHORT_TERM_BUY_THRESHOLD and not ctx.long_pos():
+        # Do not buy if this ticker is currently being used as a short hedge to avoid position collision
+        if prob >= SHORT_TERM_BUY_THRESHOLD and not is_long and target_hedge <= 0.0:
             # Same ATR brackets the triple-barrier label assumes (target ≈ execution).
             stop_loss_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / ctx.close[-1]))
             take_profit_pct = stop_loss_pct * SHORT_TERM_TP_MULT
@@ -182,25 +262,53 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
             close_price = ctx.close[-1]
             ctx.stop_loss = stop_loss_pct * close_price
             ctx.stop_profit = take_profit_pct * close_price
+            
+            # Record active long
+            active_longs.add(ctx.symbol)
+            
+            # If hedge mode is active, set up short hedge
+            if HEDGE_MODE in ('beta_neutral', 'pair_trade'):
+                hedge_symbol, beta = get_hedge_info(ctx, HEDGE_MODE)
+                if hedge_symbol:
+                    hedge_val = 0.1 * beta
+                    current_hedges[ctx.symbol] = (hedge_symbol, hedge_val)
+                    active_hedges[hedge_symbol] = active_hedges.get(hedge_symbol, 0.0) + hedge_val
 
         else:
             # Vertical barrier: close after the label horizon if neither bracket has triggered,
             # matching the triple-barrier timeout so backtest exits == labelled outcomes.
-            pos = ctx.long_pos()
-            if pos and pos.bars >= SHORT_TERM_HORIZON_BARS:
-                ctx.sell_all_shares()
+            if is_long:
+                pos = ctx.long_pos()
+                if pos and pos.bars >= SHORT_TERM_HORIZON_BARS:
+                    ctx.sell_all_shares()
+                    # Clean up long tracking and hedges
+                    if ctx.symbol in active_longs:
+                        active_longs.remove(ctx.symbol)
+                    if ctx.symbol in current_hedges:
+                        hedge_symbol, hedge_val = current_hedges.pop(ctx.symbol)
+                        active_hedges[hedge_symbol] = max(0.0, active_hedges.get(hedge_symbol, 0.0) - hedge_val)
 
     # Register columns first
-    pybroker.register_columns(['pred_prob', 'feat_atr_14'])
+    pybroker.register_columns([
+        'pred_prob', 'feat_atr_14',
+        'feat_corr_spy_20', 'feat_corr_qqq_20',
+        'feat_relative_vol_spy', 'feat_relative_vol_qqq'
+    ])
 
     # Register Indicators
     pred_prob_ind = pybroker.indicator('pred_prob', lambda data: data.pred_prob)
     atr_ind = pybroker.indicator('feat_atr_14', lambda data: data.feat_atr_14)
+    corr_spy_ind = pybroker.indicator('feat_corr_spy_20', lambda data: data.feat_corr_spy_20)
+    corr_qqq_ind = pybroker.indicator('feat_corr_qqq_20', lambda data: data.feat_corr_qqq_20)
+    rel_vol_spy_ind = pybroker.indicator('feat_relative_vol_spy', lambda data: data.feat_relative_vol_spy)
+    rel_vol_qqq_ind = pybroker.indicator('feat_relative_vol_qqq', lambda data: data.feat_relative_vol_qqq)
 
     # Configure and run PyBroker Backtest
     config = StrategyConfig(initial_cash=100000, fee_mode=pybroker.FeeMode.ORDER_PERCENT, fee_amount=0.05) # 0.05% commissions/slippage fee
     strategy = Strategy(pybroker_data, start_date=pyb_df['date'].min(), end_date=pyb_df['date'].max(), config=config)
-    strategy.add_execution(short_term_exec, TICKER_UNIVERSE, indicators=[pred_prob_ind, atr_ind])
+    strategy.add_execution(short_term_exec, TICKER_UNIVERSE, indicators=[
+        pred_prob_ind, atr_ind, corr_spy_ind, corr_qqq_ind, rel_vol_spy_ind, rel_vol_qqq_ind
+    ])
 
     result = strategy.backtest()
     metrics = result.metrics

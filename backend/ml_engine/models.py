@@ -314,20 +314,14 @@ def train_models():
 
 
 def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
-    """Honest out-of-sample evaluation of the short-term model.
-
-    Expanding-window walk-forward: for each of `n_splits` contiguous test slices in the back
-    `(1-warmup_frac)` of history, train a FRESH model on ALL data strictly before the slice and
-    predict on it. Concatenate the per-slice predictions into one continuous out-of-sample series
-    — no slice is ever predicted by a model that has seen it.
-
-    Reports, scale-invariantly, what a *selective* strategy actually gets: win rate and mean
-    realised net return (after `round_trip_fee`) among the top-percentile most-confident entries,
-    plus the result at the live BUY threshold. Positive mean net return => genuine edge.
-    """
+    """Honest out-of-sample evaluation comparing performance with vs. without alternative data features."""
     print("Loading data for walk-forward evaluation...")
     df = load_data_from_db().dropna(subset=["target_win", "trade_ret"]).copy()
-    feature_cols = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
+    
+    alt_feature_names = ["feat_insider_buying_ratio", "feat_congress_buying_ratio", "feat_insider_buying_30d", "feat_congress_buying_90d"]
+    feature_cols_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
+    feature_cols_no_alt = sorted([c for c in feature_cols_all if c not in alt_feature_names])
+    
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
     df = df.sort_values("dt").reset_index(drop=True)
 
@@ -336,8 +330,11 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
     edges = pd.date_range(warmup_end, tmax, periods=n_splits + 1)
 
     print(f"\n=== WALK-FORWARD ({n_splits} expanding folds; warmup until {warmup_end.date()}) ===")
-    print(f"{'fold':>4} {'train':>8} {'test':>7} {'period':>21} {'AUC':>6} {'top5%win':>9} {'top5%net':>9}")
-    frames = []
+    print(f"{'fold':>4} {'train':>8} {'test':>7} {'period':>21} | {'ALL AUC':>7} {'top5%win':>8} {'top5%net':>8} | {'NOALT AUC':>9} {'top5%win':>8} {'top5%net':>8}")
+    
+    frames_all = []
+    frames_no_alt = []
+    
     for i in range(n_splits):
         lo, hi = edges[i], edges[i + 1]
         tr = df[df["dt"] < lo]
@@ -345,55 +342,109 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
         if len(tr) < 1000 or len(te) < 200:
             continue
         w = np.exp(-((tr["dt"].max() - tr["dt"]).dt.days) / (5.0 * 365.25))
-        m = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05,
-                              subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
-        m.fit(tr[feature_cols], tr["target_win"], sample_weight=w)
-        p = m.predict_proba(te[feature_cols])[:, 1]
-        fold = te[["dt", "ticker", "target_win", "trade_ret"]].copy()
-        fold["prob"] = p
-        frames.append(fold)
+        
+        # Train with ALL features
+        m_all = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05,
+                                  subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
+        m_all.fit(tr[feature_cols_all], tr["target_win"], sample_weight=w)
+        p_all = m_all.predict_proba(te[feature_cols_all])[:, 1]
+        fold_all = te[["dt", "ticker", "target_win", "trade_ret"]].copy()
+        fold_all["prob"] = p_all
+        frames_all.append(fold_all)
+        
+        # Train without alternative features
+        m_no_alt = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05,
+                                     subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
+        m_no_alt.fit(tr[feature_cols_no_alt], tr["target_win"], sample_weight=w)
+        p_no_alt = m_no_alt.predict_proba(te[feature_cols_no_alt])[:, 1]
+        fold_no_alt = te[["dt", "ticker", "target_win", "trade_ret"]].copy()
+        fold_no_alt["prob"] = p_no_alt
+        frames_no_alt.append(fold_no_alt)
 
         try:
-            auc = roc_auc_score(te["target_win"], p)
+            auc_all = roc_auc_score(te["target_win"], p_all)
         except ValueError:
-            auc = float("nan")
-        msk = p >= np.quantile(p, 0.95)
-        w5 = float(fold["target_win"][msk].mean()) if msk.sum() else float("nan")
-        r5 = float((fold["trade_ret"][msk] - round_trip_fee).mean()) if msk.sum() else float("nan")
-        print(f"{i:>4} {len(tr):>8} {len(te):>7} {str(lo.date())+'..'+str(hi.date()):>21} {auc:>6.3f} {w5:>9.3f} {r5:>9.4f}")
+            auc_all = float("nan")
+            
+        try:
+            auc_no_alt = roc_auc_score(te["target_win"], p_no_alt)
+        except ValueError:
+            auc_no_alt = float("nan")
+            
+        msk_all = p_all >= np.quantile(p_all, 0.95)
+        w5_all = float(fold_all["target_win"][msk_all].mean()) if msk_all.sum() else float("nan")
+        r5_all = float((fold_all["trade_ret"][msk_all] - round_trip_fee).mean()) if msk_all.sum() else float("nan")
+        
+        msk_no_alt = p_no_alt >= np.quantile(p_no_alt, 0.95)
+        w5_no_alt = float(fold_no_alt["target_win"][msk_no_alt].mean()) if msk_no_alt.sum() else float("nan")
+        r5_no_alt = float((fold_no_alt["trade_ret"][msk_no_alt] - round_trip_fee).mean()) if msk_no_alt.sum() else float("nan")
+        
+        print(f"{i:>4} {len(tr):>8} {len(te):>7} {str(lo.date())+'..'+str(hi.date()):>21} | "
+              f"{auc_all:>7.3f} {w5_all:>8.3f} {r5_all:>8.4f} | "
+              f"{auc_no_alt:>9.3f} {w5_no_alt:>8.3f} {r5_no_alt:>8.4f}")
 
-    if not frames:
+    if not frames_all:
         print("Not enough data for walk-forward folds.")
         return
-    oos = pd.concat(frames).sort_values("dt")
-    y, ret, p = oos["target_win"].values, oos["trade_ret"].values, oos["prob"].values
+        
+    oos_all = pd.concat(frames_all).sort_values("dt")
+    y_all, ret_all, p_all_vals = oos_all["target_win"].values, oos_all["trade_ret"].values, oos_all["prob"].values
+    
+    oos_no_alt = pd.concat(frames_no_alt).sort_values("dt")
+    y_no_alt, ret_no_alt, p_no_alt_vals = oos_no_alt["target_win"].values, oos_no_alt["trade_ret"].values, oos_no_alt["prob"].values
+    
     try:
-        pooled_auc = roc_auc_score(y, p)
+        pooled_auc_all = roc_auc_score(y_all, p_all_vals)
     except ValueError:
-        pooled_auc = float("nan")
+        pooled_auc_all = float("nan")
+        
+    try:
+        pooled_auc_no_alt = roc_auc_score(y_no_alt, p_no_alt_vals)
+    except ValueError:
+        pooled_auc_no_alt = float("nan")
 
-    print(f"\n--- Pooled OUT-OF-SAMPLE ({len(oos)} bars, {oos['dt'].min().date()} -> {oos['dt'].max().date()}) ---")
-    print(f"Pooled AUC: {pooled_auc:.3f} | base win-rate: {y.mean():.3f} | base mean net ret/bar: {ret.mean()-round_trip_fee:+.4f}")
-    print(f"{'select':>10} {'n':>7} {'win_rate':>9} {'mean_net_ret':>13} {'sum_net_ret':>12}  (break-even win ~0.286)")
+    print(f"\n--- Pooled OUT-OF-SAMPLE Comparison ({len(oos_all)} bars, {oos_all['dt'].min().date()} -> {oos_all['dt'].max().date()}) ---")
+    print(f"Model WITH Alternative Features:   Pooled AUC: {pooled_auc_all:.3f} | base win-rate: {y_all.mean():.3f} | base mean net ret/bar: {ret_all.mean()-round_trip_fee:+.4f}")
+    print(f"Model WITHOUT Alternative Features: Pooled AUC: {pooled_auc_no_alt:.3f} | base win-rate: {y_no_alt.mean():.3f} | base mean net ret/bar: {ret_no_alt.mean()-round_trip_fee:+.4f}")
+    
+    print(f"\n{'quantile':>10} | {'WITH ALT':<33} | {'WITHOUT ALT':<33}")
+    print(f"{'':>10} | {'n':>6} {'win_rate':>8} {'mean_net':>8} {'sum_net':>8} | {'n':>6} {'win_rate':>8} {'mean_net':>8} {'sum_net':>8}")
+    
     for q in [0.001, 0.005, 0.01, 0.02, 0.05, 0.10]:
-        thr = np.quantile(p, 1 - q)
-        msk = p >= thr
-        n = int(msk.sum())
-        wr = float(y[msk].mean()) if n else float("nan")
-        net = ret[msk] - round_trip_fee
-        print(f"top {q*100:>5.1f}% {n:>7} {wr:>9.3f} {net.mean():>13.4f} {net.sum():>12.3f}")
-    # At the live entry threshold
+        thr_all = np.quantile(p_all_vals, 1 - q)
+        msk_all = p_all_vals >= thr_all
+        n_all = int(msk_all.sum())
+        wr_all = float(y_all[msk_all].mean()) if n_all else float("nan")
+        net_all = ret_all[msk_all] - round_trip_fee
+        
+        thr_no_alt = np.quantile(p_no_alt_vals, 1 - q)
+        msk_no_alt = p_no_alt_vals >= thr_no_alt
+        n_no_alt = int(msk_no_alt.sum())
+        wr_no_alt = float(y_no_alt[msk_no_alt].mean()) if n_no_alt else float("nan")
+        net_no_alt = ret_no_alt[msk_no_alt] - round_trip_fee
+        
+        print(f"top {q*100:>5.1f}% | {n_all:>6} {wr_all:>8.3f} {net_all.mean():>8.4f} {net_all.sum():>8.2f} | {n_no_alt:>6} {wr_no_alt:>8.3f} {net_no_alt.mean():>8.4f} {net_no_alt.sum():>8.2f}")
+        
     from app.core.config import SHORT_TERM_BUY_THRESHOLD as BUY
-    msk = p >= BUY
-    n = int(msk.sum())
-    if n:
-        net = ret[msk] - round_trip_fee
-        print(f"\nAt live BUY threshold {BUY:.2f}: {n} signals | win {y[msk].mean():.3f} | "
-              f"mean net ret {net.mean():+.4f} | total {net.sum():+.3f}")
+    msk_all = p_all_vals >= BUY
+    n_all = int(msk_all.sum())
+    msk_no_alt = p_no_alt_vals >= BUY
+    n_no_alt = int(msk_no_alt.sum())
+    
+    print(f"\nAt live BUY threshold {BUY:.2f}:")
+    if n_all:
+        net_all = ret_all[msk_all] - round_trip_fee
+        print(f"  WITH ALT:    {n_all} signals | win {y_all[msk_all].mean():.3f} | mean net {net_all.mean():+.4f} | total {net_all.sum():+.3f}")
     else:
-        print(f"\nAt live BUY threshold {BUY:.2f}: 0 OOS signals (model rarely this confident out-of-sample).")
+        print(f"  WITH ALT:    0 signals")
+        
+    if n_no_alt:
+        net_no_alt = ret_no_alt[msk_no_alt] - round_trip_fee
+        print(f"  WITHOUT ALT: {n_no_alt} signals | win {y_no_alt[msk_no_alt].mean():.3f} | mean net {net_no_alt.mean():+.4f} | total {net_no_alt.sum():+.3f}")
+    else:
+        print(f"  WITHOUT ALT: 0 signals")
     print("Interpretation: positive mean_net_ret in the selective top buckets => genuine tradable edge.\n")
-    return oos
+    return oos_all
 
 
 if __name__ == "__main__":

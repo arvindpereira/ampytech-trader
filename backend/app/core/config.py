@@ -94,6 +94,18 @@ SHORT_TERM_SELL_THRESHOLD = float(os.getenv("SHORT_TERM_SELL_THRESHOLD", "0.02")
 # Long-term model rebalances on DAILY bars; covariance/return window in trading days.
 MPT_WINDOW_DAYS = int(os.getenv("MPT_WINDOW_DAYS", "252"))                  # ~1 trading year
 
+# Alternative data and hedging configurations
+ALT_DATA_ENABLED = os.getenv("ALT_DATA_ENABLED", "True").lower() == "true"
+try:
+    INSIDER_LOOKBACK_DAYS = int(os.getenv("INSIDER_LOOKBACK_DAYS", "30"))
+except ValueError:
+    INSIDER_LOOKBACK_DAYS = 30
+try:
+    CONGRESS_LOOKBACK_DAYS = int(os.getenv("CONGRESS_LOOKBACK_DAYS", "90"))
+except ValueError:
+    CONGRESS_LOOKBACK_DAYS = 90
+HEDGE_MODE = os.getenv("HEDGE_MODE", "none")  # 'none', 'beta_neutral', 'pair_trade'
+
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
 

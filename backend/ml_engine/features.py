@@ -1,5 +1,30 @@
 import pandas as pd
 import numpy as np
+import os
+import sys
+
+from app.database import SessionLocal, CongressDisclosure, InsiderDisclosure
+from app.core.config import ALT_DATA_ENABLED, INSIDER_LOOKBACK_DAYS, CONGRESS_LOOKBACK_DAYS
+
+def load_alternative_data_from_db():
+    if not ALT_DATA_ENABLED:
+        return pd.DataFrame(), pd.DataFrame()
+    db = SessionLocal()
+    try:
+        congress = db.query(CongressDisclosure).all()
+        insider = db.query(InsiderDisclosure).all()
+        congress_df = pd.DataFrame([{
+            "ticker": c.ticker, "date": c.date, "estimated_value": c.estimated_value, "transaction_type": c.transaction_type
+        } for c in congress]) if congress else pd.DataFrame()
+        insider_df = pd.DataFrame([{
+            "ticker": i.ticker, "date": i.date, "total_value": i.total_value, "transaction_type": i.transaction_type
+        } for i in insider]) if insider else pd.DataFrame()
+        return congress_df, insider_df
+    except Exception as e:
+        print(f"Error loading alternative disclosures from DB: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+    finally:
+        db.close()
 
 def compute_rsi(prices, window=14):
     """Computes the Relative Strength Index (RSI) using native pandas."""
@@ -103,7 +128,8 @@ def triple_barrier_labels(high, low, close, atr, horizon,
 
 def build_features_for_df(df, sentiment_df=None, macro_df=None,
                           target_horizon_bars=14, target_atr_stop_mult=2.0,
-                          target_tp_mult=2.5, target_stop_min=0.015, target_stop_max=0.05):
+                          target_tp_mult=2.5, target_stop_min=0.015, target_stop_max=0.05,
+                          congress_df=None, insider_df=None):
     """
     Computes all features for a single ticker's DataFrame.
     Assumes df contains columns: ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume'].
@@ -246,6 +272,81 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         df['fed_funds'] = 0.05  # Sensible historical baseline
         df['yield_spread'] = 0.01
 
+    # --- Alternative Data Features ---
+    if congress_df is None or insider_df is None:
+        c_global, i_global = load_alternative_data_from_db()
+        # Filter for the ticker of df
+        ticker = df['ticker'].iloc[0] if not df.empty and 'ticker' in df.columns else None
+        if ticker:
+            congress_df = c_global[c_global['ticker'] == ticker] if not c_global.empty else pd.DataFrame()
+            insider_df = i_global[i_global['ticker'] == ticker] if not i_global.empty else pd.DataFrame()
+        else:
+            congress_df = pd.DataFrame()
+            insider_df = pd.DataFrame()
+
+    if not df.empty:
+        min_date_str = df['cal_date'].min()
+        max_date_str = df['cal_date'].max()
+        min_date = pd.to_datetime(min_date_str)
+        max_date = pd.to_datetime(max_date_str)
+        
+        # Add buffer for the rolling window (max lookback is 90 days)
+        lookback_days = max(INSIDER_LOOKBACK_DAYS, CONGRESS_LOOKBACK_DAYS)
+        buffer_start = min_date - pd.Timedelta(days=lookback_days + 10)
+        
+        # Create a complete daily index of date strings
+        daily_dates = pd.date_range(start=buffer_start, end=max_date, freq='D')
+        daily_df = pd.DataFrame(index=daily_dates.strftime('%Y-%m-%d'))
+        daily_df.index.name = 'date'
+        
+        # Initialize columns to 0
+        daily_df['insider_val'] = 0.0
+        daily_df['congress_val'] = 0.0
+        
+        # Merge aggregated purchases
+        if insider_df is not None and not insider_df.empty:
+            ins_purchases = insider_df[insider_df['transaction_type'].astype(str).str.lower() == 'purchase']
+            if not ins_purchases.empty:
+                ins_agg = ins_purchases.groupby('date')['total_value'].sum()
+                daily_df['insider_val'] = daily_df.index.map(ins_agg).fillna(0.0)
+                
+        if congress_df is not None and not congress_df.empty:
+            cong_purchases = congress_df[congress_df['transaction_type'].astype(str).str.lower() == 'purchase']
+            if not cong_purchases.empty:
+                cong_agg = cong_purchases.groupby('date')['estimated_value'].sum()
+                daily_df['congress_val'] = daily_df.index.map(cong_agg).fillna(0.0)
+                
+        # Compute rolling sums on the daily level
+        daily_df['insider_sum'] = daily_df['insider_val'].rolling(window=INSIDER_LOOKBACK_DAYS, min_periods=1).sum()
+        daily_df['congress_sum'] = daily_df['congress_val'].rolling(window=CONGRESS_LOOKBACK_DAYS, min_periods=1).sum()
+        
+        # Look-ahead protection: shift by 1 day
+        daily_df['insider_sum_clean'] = daily_df['insider_sum'].shift(1).fillna(0.0)
+        daily_df['congress_sum_clean'] = daily_df['congress_sum'].shift(1).fillna(0.0)
+        
+        # Reset index to make date a column for joining
+        daily_df = daily_df.reset_index().rename(columns={'date': 'cal_date'})
+        
+        # Merge with df on cal_date
+        df = pd.merge(df, daily_df[['cal_date', 'insider_sum_clean', 'congress_sum_clean']], on='cal_date', how='left')
+        
+        # Fill NAs
+        df['insider_sum_clean'] = df['insider_sum_clean'].fillna(0.0)
+        df['congress_sum_clean'] = df['congress_sum_clean'].fillna(0.0)
+        
+        # Compute stationary ratios: divide rolling dollar sum by close price
+        df['insider_buying_ratio'] = df['insider_sum_clean'] / (df['close'] + 1e-9)
+        df['congress_buying_ratio'] = df['congress_sum_clean'] / (df['close'] + 1e-9)
+        
+        # Supporting alternative names to make them available in both formats
+        df['insider_buying_30d'] = df['insider_buying_ratio']
+        df['congress_buying_90d'] = df['congress_buying_ratio']
+    else:
+        df['insider_buying_ratio'] = 0.0
+        df['congress_buying_ratio'] = 0.0
+        df['insider_buying_30d'] = 0.0
+        df['congress_buying_90d'] = 0.0
+
     # --- Target Labels Generation (triple-barrier; matches the executed trade brackets) ---
     # target_win = training label; trade_ret = realised P&L of the bracketed trade (eval only).
     df['target_win'], df['trade_ret'] = triple_barrier_outcomes(
@@ -265,7 +366,8 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         'returns_vol_adj', 'macd_ratio', 'macd_signal_ratio',
         'news_sentiment_score', 'reddit_sentiment_score', 'news_mention_count', 'reddit_mention_count',
         'combined_sentiment_decayed', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
-        'fed_funds', 'yield_spread'
+        'fed_funds', 'yield_spread', 'insider_buying_ratio', 'congress_buying_ratio',
+        'insider_buying_30d', 'congress_buying_90d'
     ]
 
     # Keep original unshifted close & date for reference/labeling, but prefix feature names
@@ -377,17 +479,22 @@ def build_all_features(prices_df, sent_df, macro_df, active_universe,
     Returns a concatenated DataFrame containing all features.
     """
     processed_dfs = []
+    congress_df, insider_df = load_alternative_data_from_db()
     for ticker in active_universe:
         ticker_prices = prices_df[prices_df['ticker'] == ticker].sort_values('date')
         if len(ticker_prices) < 50:
             continue
         ticker_sent = sent_df[sent_df['ticker'] == ticker] if (sent_df is not None and not sent_df.empty) else pd.DataFrame()
+        ticker_congress = congress_df[congress_df['ticker'] == ticker] if not congress_df.empty else pd.DataFrame()
+        ticker_insider = insider_df[insider_df['ticker'] == ticker] if not insider_df.empty else pd.DataFrame()
         t_feat = build_features_for_df(ticker_prices, ticker_sent, macro_df,
                                        target_horizon_bars=target_horizon_bars,
                                        target_atr_stop_mult=target_atr_stop_mult,
                                        target_tp_mult=target_tp_mult,
                                        target_stop_min=target_stop_min,
-                                       target_stop_max=target_stop_max)
+                                       target_stop_max=target_stop_max,
+                                       congress_df=ticker_congress,
+                                       insider_df=ticker_insider)
         processed_dfs.append(t_feat)
 
     if not processed_dfs:

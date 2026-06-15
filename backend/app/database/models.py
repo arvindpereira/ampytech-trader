@@ -177,3 +177,29 @@ class SentimentSourceLog(Base):
     url = Column(String, nullable=True)
     score = Column(Float, nullable=False)
     is_mock = Column(Boolean, nullable=True, default=False)
+
+class CongressDisclosure(Base):
+    __tablename__ = "congress_disclosures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)   # YYYY-MM-DD (disclosure date)
+    politician_name = Column(String, nullable=False)
+    chamber = Column(String, nullable=True) # 'house' or 'senate'
+    transaction_type = Column(String, nullable=False) # 'purchase' or 'sale'
+    amount_range = Column(String, nullable=True)
+    estimated_value = Column(Float, nullable=False) # midpoint estimate of transaction value
+
+class InsiderDisclosure(Base):
+    __tablename__ = "insider_disclosures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    date = Column(String, nullable=False)   # YYYY-MM-DD (disclosure date)
+    insider_name = Column(String, nullable=False)
+    relationship = Column(String, nullable=True) # 'CEO', 'CFO', 'Director', etc.
+    transaction_type = Column(String, nullable=False) # 'purchase' or 'sale'
+    shares = Column(Float, nullable=False)
+    share_price = Column(Float, nullable=False)
+    total_value = Column(Float, nullable=False)
+
