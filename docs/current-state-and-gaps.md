@@ -63,34 +63,46 @@ The target is now *correct* (it labels the trade as executed) and edge is judged
 concatenated into one continuous out-of-sample series, scored by win rate **and** realised net return (after
 0.1% round-trip fees) of the trades a selective strategy would actually take.
 
-**Walk-forward OOS results (5 folds, 2023-08 → 2026-06, 297k bars):**
+**Walk-forward OOS results** (5 expanding folds, 2023-08→2026-06, 297k bars; served = XGBoost, alt off,
+0.1% round-trip fees). These are the **only decision-grade numbers** — pooled over all folds:
 
-| Selection | n trades | OOS win rate | mean net ret/trade | Read |
-| :-- | :-- | :-- | :-- | :-- |
-| base rate (all bars) | — | 4.9% | ~0.000 | flat, as expected |
-| top 10.0% confidence | 29,771 | 9.1% | +0.0001 | thin positive expectancy |
-| top 5.0% | 14,886 | 9.4% | +0.0001 | thin positive expectancy |
-| top 0.5% | 1,489 | 9.9% | +0.0002 | positive expectancy |
-| **live BUY threshold 0.15** | **3,325** | **7.3%** | **-0.0007** | Shift in distribution due to stationarity. Standard threshold (0.15) captures too many lower-conviction trades now. |
-| top 0.1% | 298 | 14.4% | +0.0049 | Strongest edge, positive and stable. |
-| Pooled OOS AUC | — | **0.698** (folds 0.65–0.75) | — | Improved ranking skill and generalization |
+| Selection (pooled OOS) | n trades | win rate | mean net ret/trade |
+| :-- | :-- | :-- | :-- |
+| base rate (all bars) | — | 4.9% | ~0.0000 |
+| top 0.1% confidence | 298 | **14.4%** | **+0.0049** |
+| top 0.5% (≈ live calibrated cut) | 1,489 | 9.9% | +0.0002 |
+| top 1.0% | 2,978 | 7.4% | −0.0006 |
+| top 5.0% | 14,886 | 9.4% | +0.0001 |
+| Pooled OOS AUC | — | **0.698** (folds 0.66–0.76) | — |
 
-> **What walk-forward revealed (and corrected):**
-> 1. There **is a small, real out-of-sample edge** — but only in the most-confident tail. At the 0.15 entry
->    threshold the model wins 13.6% at a 2.5:1 payoff for **+0.27%/trade net of fees**; the top 0.1% reaches
->    +0.93%/trade. Broader selections (top 1%+) are ~break-even. So the strategy must stay **very selective**
->    (~300 signals/yr across 28 tickers).
-> 2. The earlier single 80/20 split that looked like "no edge" was just the **hardest, most-recent fold**
->    (fold 4 AUC 0.642, edge ≈ 0). The earlier "+410% backtest" and "precision 0.434" were **leaky/in-sample**
->    and are discarded.
-> 3. **The edge is fragile/decaying**: the latest fold (2025-11→2026-06) shows the top-5% net return turning
->    slightly negative. Treat this as a faint, regime-sensitive signal — not a money-printer.
+**Live BUY threshold is now calibrated, not hand-set** (PR#2 review C6). `calibrate_threshold` writes
+`saved_models/threshold.json` for the served model at a fixed target selectivity (`SHORT_TERM_SIGNAL_RATE`,
+default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win **9.1%** (base 5.5%),
+**+0.0016/trade net**.
 
-**Bottom line:** data, labels, execution alignment, and now honest walk-forward evaluation are all in place
-and trustworthy. There is a **small, selective, somewhat-decaying OOS edge** — the first genuine positive
-signal, but far from "high-confidence money." Next is real alpha work (features, calibration,
-regime-conditioning) and a portfolio-level walk-forward equity curve with capital/overlap constraints. The
-long-term book compounds (~15%/yr) but is survivorship-biased.
+> **Honest read (supersedes earlier rosier prose):**
+> 1. The edge is **real but extremely thin and concentrated in the extreme tail.** Only the top ~0.1% of
+>    predictions clear a meaningful per-trade net (+0.0049 ≈ +0.5%/trade); by the top 1% it's already
+>    ~break-even or negative. Mean net at the calibrated top-0.5% cut is ~+0.0002–0.0016 — *fractions of a
+>    percent per trade*.
+> 2. It is **inconsistent across folds**: per-fold top-5% net return is **negative in 4 of the 5 folds**
+>    (only fold 3 ≈ 0), including the most recent (2025-11→2026-06: −0.0021). The pooled positives are
+>    carried by the rare top-0.1% winners, not by a stable signal.
+> 3. AUC ≈ 0.698 is genuine ranking skill, but (as repeatedly shown) **AUC ≠ tradable edge** — the money is
+>    only in the very top, and even there it's small and fragile.
+> 4. Alt-data features are **off** and contribute nothing (with-alt AUC 0.700 vs without-alt 0.698 = noise);
+>    they were synthetic. Earlier "+0.27%/trade at 0.15", "+410% backtest", and "precision 0.434" were
+>    **stale/leaky/in-sample and are discarded** — do not cite them.
+
+> ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers
+> (e.g. the +489%/+1085% short-term returns quoted in PR #2) are **overfit and not decision-grade**. Only
+> the walk-forward + calibrated-holdout numbers above reflect honest out-of-sample expectation.
+
+**Bottom line:** the machinery (data, labels, execution alignment, walk-forward eval, calibrated threshold,
+explicit served model) is trustworthy. The *edge* is **marginal, very selective, and fold-inconsistent** —
+not yet "high-confidence money." The work now is real alpha (features, regime-conditioning, calibration) and
+a portfolio-level walk-forward equity curve with capital/overlap constraints. The long-term book compounds
+(~15%/yr in-sample) but is survivorship-biased.
 
 Also fixed during validation: a latent **feature-order bug** (XGBoost trained on unsorted columns while
 inference used sorted) that was masked by the always-preferred PyTorch path and would have broken live
@@ -169,11 +181,12 @@ Replaced the volatility-touch breakout target with a **triple-barrier WIN label*
 ### G12 — Walk-forward out-of-sample evaluation ✅ DONE (small real edge found)
 `walk_forward_evaluate()` (`run.py walkforward`): expanding folds, each trained only on data before its test
 slice; pooled OOS predictions scored by win rate **and realised net return** (the labeler now emits per-trade
-`trade_ret`). Result (see §1b): pooled AUC 0.689, and a **small but real edge in the confident tail**
-(+0.27%/trade net at the 0.15 threshold; +0.93% in the top 0.1%), break-even or worse below that, decaying in
-the latest fold. This replaces the discarded in-sample +410% as the trustworthy read.
+`trade_ret`). Result (see §1b): pooled AUC **0.698**, edge **only in the extreme top 0.1%** (+0.0049/trade);
+~break-even by the top 1%, and per-fold top-5% net is **negative in 4/5 folds**. This (not the discarded
+in-sample backtests) is the trustworthy read: a marginal, fragile, very-selective edge.
 → *Remaining:* a **portfolio-level walk-forward equity curve** with capital/overlap/position limits (current
-metric is per-trade expectancy, additive, ignoring that signals overlap) — the final honest P&L picture.
+metric is per-trade expectancy, additive, ignoring that signals overlap); and fold-forward nested threshold
+selection (C2). These give the final honest P&L picture.
 
 ### G13 — PyBroker Sharpe always prints 0.00 🟡
 Every short-term backtest reports `Sharpe 0.00` regardless of returns — a metrics bug (likely needs
@@ -198,10 +211,11 @@ flowchart TD
 ```
 
 > **Where we are:** P0–P3 done — the bot uses the data correctly, the short-term target equals the executed
-> trade, and **walk-forward shows a small but real out-of-sample edge** in the confident tail (+0.27%/trade
-> net at the 0.15 threshold; pooled AUC 0.689) — not the discarded in-sample +410%, not "nothing." The
-> infrastructure and evaluation are now trustworthy. The edge is thin, very selective and decaying, so the
-> work shifts to **growing** it. Long-term book compounds (~15%/yr) but is survivorship-biased.
+> trade, the served model is explicit (XGBoost) with a **calibrated** threshold, and walk-forward shows a
+> **marginal, very-selective, fold-inconsistent** OOS edge (real only in the top ~0.1%; pooled AUC 0.698) —
+> not the discarded in-sample backtests, not "nothing." Infrastructure and evaluation are trustworthy; the
+> edge itself is thin, so the work shifts to **growing** it (real features incl. SEC Form 4, regime
+> conditioning, calibration). Long-term book compounds (~15%/yr in-sample) but is survivorship-biased.
 
 **P4 — Grow the edge (now).** Feature hygiene (drop/normalize non-stationary price-level features) and new
 features; probability calibration; a portfolio-level walk-forward **equity curve** with capital/overlap
