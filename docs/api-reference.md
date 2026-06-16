@@ -19,13 +19,23 @@ All routes are unauthenticated (local-only). `mode` is usually `real` | `simulat
 {
   "date": "2026-06-14",
   "regime": "growth|transition|crisis",
+  "hedge_mode": "none|beta_neutral|pair_trade",
   "short_term_suggestions": [
     { "ticker","close","action":"BUY|SELL|HOLD","confidence",
-      "stop_loss","take_profit","reasoning","audit": { rsi_14, macd, sma_10, news_sentiment, ... } }
+      "stop_loss","take_profit","reasoning","audit": {...},
+      "hedge": { "symbol","ratio","price","shares" } | null,   // when hedge_mode != none
+      "action_plan": "BUY … sh @ $… stop … target … [HEDGE: SHORT …]" }   // executable plan string
   ],
-  "long_term_allocation": [ { "ticker","weight","shares_multiplier" }, { "ticker":"CASH","weight" } ]
+  "long_term_allocation": [
+    { "ticker","weight","shares_multiplier","insider_tilt_score" },   // tilt score nonzero only if ALT_DATA_ENABLED
+    { "ticker":"CASH","weight" }
+  ]
 }
 ```
+
+Query params: `date?`, `mode=real|simulated`, `hedge_mode=none|beta_neutral|pair_trade`. The long-term
+weights are MPT (SciPy SLSQP) optionally tilted by the buy-side insider score (`LONGTERM_TILT_STRENGTH`,
+active only when `ALT_DATA_ENABLED`).
 
 > ⚠️ `/api/performance` with `mode != live` **fabricates** a 100-day random-walk equity curve and
 > hard-coded metrics (Sharpe 1.78, etc.) when no logs exist, "so the UI looks beautiful". `mode=live`

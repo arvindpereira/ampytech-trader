@@ -41,10 +41,10 @@ or neither does (timeout); same-bar ambiguity is scored conservatively as a loss
 Brackets are ATR-based (`stop = clip(2·ATR/close, 1.5%, 5%)`, `tp = 2.5·stop`) — the **same `config.py`
 params used for live orders and the backtest time-stop**, so the label equals the trade as executed. This
    replaced the old "did the high touch +2%" breakout target, which scored a volatility *touch* (inflated AUC
-   0.925) rather than an exitable trade. Judged by **walk-forward** (`run.py walkforward`), the triple-barrier
-   model shows a **marginal, fragile OOS edge** concentrated only in the top ~0.1% of predictions
-   (+0.0049/trade net there; ~break-even by the top 1%; pooled AUC 0.698; per-fold top-5% net negative in
-   4/5 folds). See [current-state-and-gaps.md §1b](./current-state-and-gaps.md#1b-validation-results).
+   0.925) rather than an exitable trade. Judged by the full **walk-forward + capital-aware portfolio
+   simulation** (`run.py walkforward`): pooled AUC 0.710 and a faint per-trade tail edge (+0.0048 in the top
+   0.1%), but as a **real capital-constrained portfolio the strategy LOSES 27–40%** (negative Sharpe) — not
+   deployable. See [current-state-and-gaps.md §1b](./current-state-and-gaps.md#1b-validation-results).
 
 **Entry threshold (calibrated, not hand-set):** the BUY cutoff is derived per served model by
 `calibrate_threshold()` to hit a target selectivity (`SHORT_TERM_SIGNAL_RATE`, default top 0.5%) on a

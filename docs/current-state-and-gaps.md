@@ -18,22 +18,25 @@ flowchart LR
         W6[Dashboard 3 tabs]
         W7[PyBroker backtest]
     end
-    subgraph Suspect["⚠️ Runs but output not fully trustworthy"]
-        S1["Short-term edge small & decaying"]
-        S2["Sharpe metric prints 0.00 (G13)"]
-        S6[Fabricated perf curve in API]
+    subgraph Suspect["⚠️ Runs but not money-making"]
+        S1["Short-term portfolio sim = net-NEGATIVE (-27 to -40%)"]
+        S2["PyBroker backtest Sharpe prints 0.00 (G13)"]
+        S6[Fabricated perf curve in API/G4]
+        S7["Fictional SPACE ticker (synthetic prices, G15)"]
     end
     subgraph Fixed["✅ Fully Fixed / Trusted"]
         F1["MPT = SciPy SLSQP Solver (G5)"]
         F2["Deep sequence model (G14)"]
         F3["Daily HMM connections (G1)"]
+        F4["Nested threshold (C2) + portfolio sim (G12)"]
+        F5["Insider tilt wired to live MPT (dormant)"]
     end
     subgraph Works2["✅ Now honest"]
-        H1["Walk-forward OOS eval (G12)"]
+        H1["Walk-forward + portfolio-level sim (G12)"]
         H2["Triple-barrier target = executed trade"]
     end
     subgraph Missing["❌ Not really there yet"]
-        M1[Portfolio-level equity curve w/ capital limits]
+        M1[A short-term signal with real portfolio-level edge]
         M2[Validation metrics surfaced in UI]
         M3[Real Alpaca tested]
         M4[Confidence calibration]
@@ -63,34 +66,41 @@ The target is now *correct* (it labels the trade as executed) and edge is judged
 concatenated into one continuous out-of-sample series, scored by win rate **and** realised net return (after
 0.1% round-trip fees) of the trades a selective strategy would actually take.
 
-**Walk-forward OOS results** (5 expanding folds, 2023-08→2026-06, 297k bars; served = XGBoost, alt off,
-0.1% round-trip fees). These are the **only decision-grade numbers** — pooled over all folds:
+**Walk-forward OOS results** (5 expanding folds, 2023-08→2026-06, **365k bars**, 36-ticker universe; served =
+XGBoost, alt off, 0.1% round-trip fees). Per-trade expectancy by confidence bucket:
 
 | Selection (pooled OOS) | n trades | win rate | mean net ret/trade |
 | :-- | :-- | :-- | :-- |
-| base rate (all bars) | — | 4.9% | ~0.0000 |
-| top 0.1% confidence | 298 | **14.4%** | **+0.0049** |
-| top 0.5% (≈ live calibrated cut) | 1,489 | 9.9% | +0.0002 |
-| top 1.0% | 2,978 | 7.4% | −0.0006 |
-| top 5.0% | 14,886 | 9.4% | +0.0001 |
-| Pooled OOS AUC | — | **0.698** (folds 0.66–0.76) | — |
+| base rate (all bars) | — | 4.4% | ~0.0000 |
+| top 0.1% confidence | 366 | **12.3%** | **+0.0048** |
+| top 0.5% | 1,828 | 8.5% | +0.0003 |
+| top 1.0% | 3,656 | 8.0% | −0.0003 |
+| top 5.0% | 18,277 | 9.1% | ~0.0000 |
+| Pooled OOS AUC | — | **0.710** (folds 0.67–0.77) | — |
 
-**Live BUY threshold is now calibrated, not hand-set** (PR#2 review C6). `calibrate_threshold` writes
-`saved_models/threshold.json` for the served model at a fixed target selectivity (`SHORT_TERM_SIGNAL_RATE`,
-default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win **9.1%** (base 5.5%),
-**+0.0016/trade net**.
+**Threshold selection is now nested (C6 + C2 done).** `find_optimal_threshold` picks each fold's BUY cutoff
+on the *train* fold (F1-optimized, ~0.06–0.10) and applies it to the unseen test fold — no test-set leakage.
+`calibrate_threshold` (`saved_models/threshold.json`) sets the served cutoff to a target selectivity.
 
-> **Honest read (supersedes earlier rosier prose):**
-> 1. The edge is **real but extremely thin and concentrated in the extreme tail.** Only the top ~0.1% of
->    predictions clear a meaningful per-trade net (+0.0049 ≈ +0.5%/trade); by the top 1% it's already
->    ~break-even or negative. Mean net at the calibrated top-0.5% cut is ~+0.0002–0.0016 — *fractions of a
->    percent per trade*.
-> 2. It is **inconsistent across folds**: per-fold top-5% net return is **negative in 4 of the 5 folds**
->    (only fold 3 ≈ 0), including the most recent (2025-11→2026-06: −0.0021). The pooled positives are
->    carried by the rare top-0.1% winners, not by a stable signal.
-> 3. AUC ≈ 0.698 is genuine ranking skill, but (as repeatedly shown) **AUC ≠ tradable edge** — the money is
->    only in the very top, and even there it's small and fragile.
-> 4. Alt-data features are **off** in production. The insider source is **real** (SEC Form 4) and now uses
+> ⛔ **The decisive number: a capital-constrained portfolio LOSES money.** The portfolio-level walk-forward
+> simulation (`simulate_portfolio_chronological`: max 10%/trade, ≤10 open positions, fees — i.e. what you'd
+> actually trade) over 2023→2026:
+>
+> | | Total return | Sharpe | Max DD | Final ($100k start) |
+> | :-- | :-- | :-- | :-- | :-- |
+> | short-term (no alt) | **−26.8%** | **−0.32** | −39.1% | $73,198 |
+> | short-term (with alt) | −39.9% | −0.68 | −47.2% | $60,076 |
+>
+> Per-trade top-decile expectancy is marginally positive (+0.0048), but you **cannot** trade all the rare
+> good signals: with finite capital and overlap you're forced into worse ones, and fees/drawdowns compound
+> into a **27–40% loss**. This is the honest, deployable verdict and it **supersedes the earlier "small real
+> edge" framing** — the short-term strategy, as actually executable, is **net-negative**.
+
+> **Supporting detail:**
+> 1. Per-trade edge is real but **only in the extreme top ~0.1%** (+0.0048); break-even or negative by the
+>    top 1%. AUC 0.710 is genuine ranking skill but (repeatedly) **AUC ≠ profit** — and at the portfolio
+>    level it doesn't survive capital/overlap/fees.
+> 2. Alt-data features are **off** in production. The insider source is **real** (SEC Form 4) and now uses
 >    **conviction features** (`insider_net_flow`, `insider_net_buyers`, `insider_officer_buy`,
 >    `insider_buy_count`, `insider_cluster`) computed from *all* ~9.9k transactions over 5y (16 US issuers;
 >    foreign issuers excluded) — far denser than the old raw-purchase ratio. Result by horizon
@@ -100,24 +110,24 @@ default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win
 >    folds** favor insider. Research-grade, not deployable alone (small effect, overlapping 63d windows, one
 >    bad fold), but the first genuinely *real-looking* alt-data signal — candidate for a quarterly long-term
 >    allocation tilt. Earlier "+0.27%/trade at 0.15", "+410% backtest", "precision 0.434" are **discarded**.
-> 5. **MPT insider-buy tilt — works (modestly).** `calculate_optimal_weights` accepts an
->    `expected_return_tilt`; A/B backtest (`make longterm-tilt`) over 2022–2026: a **buy-side** insider tilt
->    (officer buys / buy count / clusters) lifts the monthly-rebalanced MPT book vs no tilt — Sharpe
->    **1.45→1.53**, return 572%→634%, **and** lower drawdown (−36%→−32%), peaking around strength 0.1–0.2 and
->    robust to start date. **Key lesson:** a *net-flow* tilt (incl. selling) **hurts** — insiders sell winners
->    (comp/diversification), so it underweights the momentum names that drove returns; only insider **buying**
->    is bullish. Caveats: single regime (a tech bull + 2022 dip), unrealistic absolute returns (survivorship),
->    modest effect. Wired as a capability (off until `ALT_DATA_ENABLED`), not yet in the live allocator.
+> 3. **MPT insider-buy tilt — works (modestly) and is now WIRED into the live allocator.**
+>    `calculate_optimal_weights` accepts an `expected_return_tilt`; A/B backtest (`make longterm-tilt`) over
+>    2022–2026: a **buy-side** insider tilt (officer buys / buy count / clusters) lifts the monthly-rebalanced
+>    MPT book — Sharpe **1.45→1.53**, return 572%→634%, lower drawdown (−36%→−32%), peaking ~strength 0.1–0.2,
+>    robust to start date. **Key lesson:** a *net-flow* tilt (incl. selling) **hurts** — insiders sell winners,
+>    so it underweights the momentum names. `/api/suggestions` now applies the buy-side tilt
+>    (`LONGTERM_TILT_STRENGTH=0.15`) and returns `insider_tilt_score` per name — **but only when
+>    `ALT_DATA_ENABLED`** (off by default), so it's dormant until insider data is fetched. Caveats: single
+>    regime (tech bull + 2022 dip), survivorship-biased absolute returns, modest effect.
 
-> ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers
-> (e.g. the +489%/+1085% short-term returns quoted in PR #2) are **overfit and not decision-grade**. Only
-> the walk-forward + calibrated-holdout numbers above reflect honest out-of-sample expectation.
+> ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers are
+> **overfit and not decision-grade**. Only the walk-forward + portfolio-level simulation above are honest.
 
-**Bottom line:** the machinery (data, labels, execution alignment, walk-forward eval, calibrated threshold,
-explicit served model) is trustworthy. The *edge* is **marginal, very selective, and fold-inconsistent** —
-not yet "high-confidence money." The work now is real alpha (features, regime-conditioning, calibration) and
-a portfolio-level walk-forward equity curve with capital/overlap constraints. The long-term book compounds
-(~15%/yr in-sample) but is survivorship-biased.
+**Bottom line:** the *machinery and evaluation are trustworthy* — and that honesty now shows the short-term
+strategy **loses money** when traded as a real capital-constrained portfolio (−27% to −40%), despite a
+faint per-trade tail edge. The long-term MPT book + buy-side insider tilt is the more promising side
+(compounds in-sample, tilt helps modestly) but is survivorship-biased and one-regime. Net: **not yet
+deployable for real money**; the short-term model needs genuinely stronger features, not just better evaluation.
 
 Also fixed during validation: a latent **feature-order bug** (XGBoost trained on unsorted columns while
 inference used sorted) that was masked by the always-preferred PyTorch path and would have broken live
@@ -183,25 +193,35 @@ data during a run (see [execution-and-simulation.md §1](./execution-and-simulat
 Weekly `train_models()` retrains XGBoost+HMM only; inference prefers the PyTorch `.pth`, which goes stale.
 → Have the weekly job also run `deep_models.py --train` (or make inference precedence explicit/configurable).
 
-### G10 — Crypto/forex in the universe → RESOLVED 🟢
-The universe was equity-only assumptions (whole shares, 365-day tax, SPY/QQQ-relative features) but
-included crypto/forex tickers. **Fixed (2026-06-15):** the universe is now equities + ETFs only (28
-survivors/leaders across the dot-com, mobile, and AI cohorts). Survivorship bias is inherent for the
-pre-2003 daily history (delisted names like SUNW/YHOO/AOL are unavailable from any source).
+### G10 — Crypto/forex in the universe → RESOLVED 🟢 (universe now 36, diversified)
+Crypto/forex were dropped. The universe is now **36 tickers**: indices/sector ETFs (SPY, QQQ, XLK/XLF/XLE/
+XLV/XLP), the dot-com/mobile/AI tech cohort, **plus diversified names** (WMT, XOM, JPM, LLY, PG, GE, JNJ),
+and one **fictional ticker, `SPACE`** ("SpaceX") whose prices are **synthesized from GE as a proxy** — see
+**G15**. `data/ipo_markers.json` records inception dates so pre-IPO ranges aren't fetched. Survivorship bias
+remains inherent for pre-2003 daily history (delisted names like SUNW/YHOO/AOL are unavailable from any source).
+
+### G15 — Fictional `SPACE` ticker with synthetic prices ⚠️ (new)
+`SPACE` (a stand-in for a hypothetical SpaceX listing) is in `TICKER_UNIVERSE` and `FICTIONAL_TICKERS`; its
+hourly prices are **generated synthetically from GE** (`price_fetcher.py`). Like the old synthetic alt data,
+it carries **no real signal** and must not be traded on — it's a placeholder/demo. It also enters the
+cross-sectional features and (if alt is on) the long-term allocation, so keep it clearly flagged or remove it
+before any real-money use.
 
 ### G11 — Short-term target now tradable (triple-barrier) & Price Stationarity ✅ DONE
 Replaced the volatility-touch breakout target with a **triple-barrier WIN label** (`triple_barrier_labels` in `features.py`) mapped to ATR-based stops and take-profit brackets.
 **Price Stationarity**: Dropped all raw absolute price features (`open`, `high`, `low`, `close`, `bb_mid`) from the ML model training feature space. Replaced them with stationary technical ratios (SMA ratios, High-Low range ratios, Bollinger distances, and volatility-adjusted returns) to avoid non-stationary drift. Parkinson extreme-value volatility and exponentially decaying news sentiment scores have been added to the feature set.
 
-### G12 — Walk-forward out-of-sample evaluation ✅ DONE (small real edge found)
-`walk_forward_evaluate()` (`run.py walkforward`): expanding folds, each trained only on data before its test
-slice; pooled OOS predictions scored by win rate **and realised net return** (the labeler now emits per-trade
-`trade_ret`). Result (see §1b): pooled AUC **0.698**, edge **only in the extreme top 0.1%** (+0.0049/trade);
-~break-even by the top 1%, and per-fold top-5% net is **negative in 4/5 folds**. This (not the discarded
-in-sample backtests) is the trustworthy read: a marginal, fragile, very-selective edge.
-→ *Remaining:* a **portfolio-level walk-forward equity curve** with capital/overlap/position limits (current
-metric is per-trade expectancy, additive, ignoring that signals overlap); and fold-forward nested threshold
-selection (C2). These give the final honest P&L picture.
+### G12 — Walk-forward + nested threshold + portfolio-level simulation ✅ DONE (verdict: net-negative)
+`walk_forward_evaluate()` (`run.py walkforward`) now does the full honest pipeline:
+- expanding folds, each trained only on data before its test slice (pooled AUC **0.710**);
+- **nested threshold selection** (`find_optimal_threshold`, F1-optimized per *train* fold, applied to the
+  unseen test fold — no test-set leakage) — closes **C2**;
+- a **chronological portfolio-level simulation** (`simulate_portfolio_chronological` / `precalculate_exits`:
+  max 10%/trade, ≤10 concurrent positions, fees) — the realistic equity curve.
+
+The portfolio sim is the decisive result (§1b): the short-term strategy **loses 27–40%** over 2023→2026
+despite a faint per-trade tail edge — capital/overlap/fees turn the additive per-trade positives negative.
+This (not the discarded in-sample backtests, not the additive per-trade numbers) is the deployable verdict.
 
 ### G13 — PyBroker Sharpe always prints 0.00 🟡
 Every short-term backtest reports `Sharpe 0.00` regardless of returns — a metrics bug (likely needs
@@ -218,24 +238,26 @@ flowchart TD
     P0["P0 · Make data honest ✅ DONE<br/>two clean tables (hourly+daily)<br/>real news sentiment + fixed joins"]
     P1["P1 · Make models use the data ✅ DONE<br/>short-term=hourly, long-term=daily<br/>held-out AUC; feature-order bug fixed"]
     P2["P2 · Make the signal tradable ✅ DONE<br/>G11: triple-barrier target = executed trade<br/>config-driven brackets/threshold"]
-    P3["P3 · Trust the P&L ✅ DONE<br/>G12 walk-forward: small real OOS edge<br/>(per-trade expectancy)"]
-    P4["P4 · Grow the edge (NOW)<br/>feature hygiene + new features; calibration<br/>portfolio equity curve; G13 Sharpe; G14 deep model"]
-    P5["P5 · Visible quality & trustworthy execution<br/>G3 UI scorecard; G4 stop fake perf<br/>G6/G8 true replay + one ledger; G5 real MPT"]
+    P3["P3 · Trust the P&L ✅ DONE<br/>G12 walk-forward + nested threshold (C2)<br/>+ portfolio sim: strategy is net-negative"]
+    P4["P4 · Grow the edge (NOW)<br/>short-term LOSES money at portfolio level<br/>→ needs genuinely stronger features, not eval"]
+    P5["P5 · Visible quality & trustworthy execution<br/>G3 UI scorecard; G4 stop fake perf<br/>G6/G8 true replay + one ledger"]
     P6["P6 · Go live carefully<br/>real Alpaca paper, then tiny real $<br/>monitoring + kill switch"]
     P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6
 ```
 
-> **Where we are:** P0–P3 done — the bot uses the data correctly, the short-term target equals the executed
-> trade, the served model is explicit (XGBoost) with a **calibrated** threshold, and walk-forward shows a
-> **marginal, very-selective, fold-inconsistent** OOS edge (real only in the top ~0.1%; pooled AUC 0.698) —
-> not the discarded in-sample backtests, not "nothing." Infrastructure and evaluation are trustworthy; the
-> edge itself is thin, so the work shifts to **growing** it (real features incl. SEC Form 4, regime
-> conditioning, calibration). Long-term book compounds (~15%/yr in-sample) but is survivorship-biased.
+> **Where we are:** P0–P3 done — data correct, target = executed trade, served model explicit (XGBoost) with a
+> nested-calibrated threshold, and the full honest evaluation (walk-forward + nested threshold + **capital-aware
+> portfolio simulation**) is in place. The verdict it produced: **the short-term strategy loses 27–40% traded
+> as a real portfolio** (pooled AUC 0.710, but the tail edge doesn't survive capital/overlap/fees). The
+> long-term MPT book + buy-side insider tilt is more promising (in-sample, one regime). So P4 is no longer
+> "lift a thin edge" — it's **find a genuinely stronger short-term signal**; better evaluation won't help a
+> model that has no portfolio-level edge.
 
-**P4 — Grow the edge (now).** Feature hygiene (drop/normalize non-stationary price-level features) and new
-features; probability calibration; a portfolio-level walk-forward **equity curve** with capital/overlap
-limits (current metric is per-trade expectancy); fix the Sharpe metric (G13); retrain+validate the deep
-model on the new label (G14). Goal: lift the confident-tail edge and confirm it holds in the latest regime.
+**P4 — Grow the edge (now).** The portfolio sim says the current short-term features have **no deployable
+edge**, so the work is real alpha, not more evaluation: stronger/novel features (order-flow, cross-sectional
+momentum, regime-conditioning), probability calibration, and possibly a longer horizon / lower turnover to
+beat fees. Re-check with the portfolio sim, not per-trade expectancy. The long-term insider tilt (live-wired,
+dormant) is the nearer-term positive to harden across regimes.
 
 **P5 — Make quality visible & execution trustworthy.** UI model scorecard (G3), stop fabricating perf (G4),
 true day-stepped replay + unified ledger (G6/G8), real MPT solver + crisis covariance (G5).

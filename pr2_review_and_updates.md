@@ -253,9 +253,16 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   vs without an insider tilt. **A net-flow tilt hurts** (insiders sell winners → underweights momentum), but
   a **buy-side** tilt (officer buys / buy count / clusters) helps: Sharpe **1.45→1.53**, return 572%→634%,
   drawdown −36%→−32%, peaking at strength ~0.1–0.2 and robust to start date. Single-regime / survivorship
-  caveats apply. Capability is wired (off until `ALT_DATA_ENABLED`); not yet in the live `/api/suggestions`
-  allocator.
+  caveats apply. **Now wired into the live `/api/suggestions` allocator** (`LONGTERM_TILT_STRENGTH=0.15`,
+  buy-side, dormant until `ALT_DATA_ENABLED`); each allocation returns an `insider_tilt_score`.
 
-Still outstanding: **C2** (fold-forward nested threshold selection), the **portfolio-level walk-forward
-equity curve** for the short-term model, a real **Congress/STOCK Act** source, and wiring the buy-side
-insider tilt into the live long-term allocator.
+- **C2 (nested threshold) — DONE.** `find_optimal_threshold` selects each fold's BUY cutoff on the *train*
+  fold (F1-optimized) and applies it to the unseen test fold — no test-set leakage.
+- **Portfolio-level equity curve — DONE, and it's the headline.** `simulate_portfolio_chronological` (in the
+  `walkforward` run) simulates the short-term strategy as a real capital-constrained book (max 10%/trade,
+  ≤10 open, fees). Verdict: **−27% to −40% total return, negative Sharpe** over 2023→2026 — the strategy
+  **loses money** despite a faint per-trade tail edge. This supersedes the earlier "small real edge" read.
+
+Still outstanding: a short-term signal with **real portfolio-level edge** (the current one is net-negative),
+a real **Congress/STOCK Act** source, fixing the PyBroker backtest Sharpe (G13), and the **fictional `SPACE`
+ticker** (synthetic GE-proxy prices — flag or remove before real use; gaps doc G15).

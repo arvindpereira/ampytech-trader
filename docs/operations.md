@@ -40,17 +40,27 @@ flowchart LR
 
 | Command | What it does | Cadence |
 | :-- | :-- | :-- |
-| `run.py fetch` | Prices + macro + crisis + sentiment into SQLite (incremental) | Daily pre-open |
-| `run.py train [--epochs N]` | Train all models, write artifacts | Weekly / after changes |
+| `run.py fetch` | Prices + macro + crisis + sentiment (+ insider Form 4 if `ALT_DATA_ENABLED`) into SQLite | Daily pre-open |
+| `run.py train [--epochs N]` | Train all models, write artifacts (auto-calibrates threshold) | Weekly / after changes |
 | `run.py serve` | FastAPI on :8008 (`--reload`) | Always (with frontend) |
-| `run.py backtest` | PyBroker short- + long-term metrics; `--era` for crisis | Audit (in-sample) |
-| `run.py walkforward [--splits N]` | **Honest OOS eval**: expanding folds, win rate + net return by confidence percentile | The real edge check |
-| `run.py calibrate` | Calibrate the served-model BUY threshold to a target selectivity → `threshold.json` | After train, or to re-tune |
+| `run.py backtest` | PyBroker short- + long-term metrics; `--era` for crisis | Audit (in-sample, **not** predictive) |
+| `run.py walkforward [--splits N]` | **The honest verdict**: nested-threshold folds + **capital-aware portfolio sim** (return/Sharpe/maxDD) | The real edge check |
+| `run.py calibrate` | Calibrate the served-model BUY threshold → `threshold.json` | After train, or to re-tune |
+| `run.py longterm-eval [--horizon D]` | Daily walk-forward: does insider buying predict N-day outperformance? | Research |
+| `run.py longterm-tilt [--tilt-strength S]` | A/B backtest the insider-buy MPT tilt vs no tilt | Research |
+| `run.py insider` *(via `make insider`)* | Fetch real SEC Form 4 insider data (set `SEC_USER_AGENT`) | When using alt data |
+| `run.py popular-tickers` / `add-ticker` | Scrape popular/most-active tickers; add to universe | Universe curation |
 | `run.py simulate --days N` | Forward sim on last N cached bars (account 1, `live` logs) | Ad hoc |
 | `run.py backtest-virtual --months N` | Reset replay account, walk forward through virtual broker | Ad hoc |
 | `run.py schedule` | Cron daemon (below) | Unattended only |
 | `make serve` | Launches **both** backend (:8008) and frontend (:3002) | Dev |
+| `make backfill-news` | Backfill historical daily news sentiment (~2021→now) | One-time |
 | `make lint` | `backend/lint.py` whitespace/format cleanup | Pre-commit |
+
+> **Universe (36 tickers):** indices + sector ETFs, the dot-com/mobile/AI tech cohort, diversified names
+> (WMT, XOM, JPM, LLY, PG, GE, JNJ), and a **fictional `SPACE`** ("SpaceX") whose prices are **synthesized
+> from GE** — a demo placeholder with no real signal (see gaps doc G15). `data/ipo_markers.json` records
+> inception dates so pre-IPO ranges aren't fetched. `make bootstrap` chains `popular-tickers add-ticker fetch train`.
 
 Frontend alone: `cd frontend && npm run dev -- -p 3002` → http://localhost:3002
 
