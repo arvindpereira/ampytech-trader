@@ -888,8 +888,9 @@ export default function Home() {
                   }}>
                     Multi-day (≈{swingSuggestions[0]?.horizon_days ?? 5}-trading-day) signals from daily prices + LLM-scored
                     news headlines. In walk-forward + capital-aware portfolio simulation this added a real edge over a
-                    technicals-only baseline (Sharpe 1.55 vs 1.16, −18% vs −24% max drawdown). Candidates are ranked by
-                    win probability — take the strongest first, up to your position limit.
+                    technicals-only baseline (Sharpe 1.55 vs 1.16, −18% vs −24% max drawdown). Only the highest-conviction
+                    names are flagged BUY (capped to the same open-position limit the simulation used); lower-ranked
+                    above-threshold candidates are shown as HOLD.
                   </div>
                   {swingSuggestions.length === 0 ? (
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>

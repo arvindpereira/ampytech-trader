@@ -146,6 +146,9 @@ SWING_ATR_STOP_MULT = float(os.getenv("SWING_ATR_STOP_MULT", "2.0"))
 SWING_TP_MULT = float(os.getenv("SWING_TP_MULT", "2.5"))
 SWING_STOP_MIN = float(os.getenv("SWING_STOP_MIN", "0.015"))
 SWING_STOP_MAX = float(os.getenv("SWING_STOP_MAX", "0.05"))
+# Cap concurrent BUYs to the highest-conviction names, matching the ≤10 open positions the portfolio
+# simulation used to validate the edge. Lower-ranked above-threshold candidates are demoted to HOLD.
+SWING_TOP_N = int(os.getenv("SWING_TOP_N", "10"))
 
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")

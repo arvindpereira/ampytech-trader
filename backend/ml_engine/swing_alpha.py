@@ -27,7 +27,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import SessionLocal, DailyPrice, MacroIndicator, UniverseTicker, NewsLLMScore
 from app.core.config import (
     TICKER_UNIVERSE, SWING_HORIZON_DAYS,
-    SWING_ATR_STOP_MULT, SWING_TP_MULT, SWING_STOP_MIN, SWING_STOP_MAX,
+    SWING_ATR_STOP_MULT, SWING_TP_MULT, SWING_STOP_MIN, SWING_STOP_MAX, SWING_TOP_N,
 )
 from ml_engine.features import build_all_features
 from ml_engine.models import find_optimal_threshold, simulate_portfolio_chronological
@@ -236,12 +236,16 @@ def load_swing_model():
     return m, meta
 
 
-def build_swing_signals(daily_prices_df, daily_macro_df, active_universe, model=None, meta=None):
+def build_swing_signals(daily_prices_df, daily_macro_df, active_universe, model=None, meta=None, top_n=None):
     """Inference: per-equity swing signal for the latest date, from daily prices + LLM news.
 
     Returns a list of dicts (ticker, close, prob, action, stop/take-profit, llm_news, intensity).
     Reuses the SAME feature pipeline (build_all_features + add_llm_features) as training, so columns
-    align with the persisted model. Returns [] if the model isn't trained yet or data is missing."""
+    align with the persisted model. Returns [] if the model isn't trained yet or data is missing.
+
+    Only the `top_n` highest-conviction above-threshold names keep action=BUY (matching the ≤N open
+    positions the portfolio sim validated); lower-ranked candidates are demoted to HOLD."""
+    top_n = SWING_TOP_N if top_n is None else top_n
     if model is None or meta is None:
         model, meta = load_swing_model()
     if model is None or daily_prices_df is None or daily_prices_df.empty:
@@ -278,26 +282,39 @@ def build_swing_signals(daily_prices_df, daily_macro_df, active_universe, model=
             continue
         sl_pct = min(SWING_STOP_MAX, max(SWING_STOP_MIN, (SWING_ATR_STOP_MULT * atr) / close))
         tp_pct = sl_pct * SWING_TP_MULT
-        action = "BUY" if prob >= thr else "HOLD"
         llm_news = float(row["feat_llm_news"].values[0]) if "feat_llm_news" in row else 0.0
         llm_intensity = float(row["feat_llm_news_intensity"].values[0]) if "feat_llm_news_intensity" in row else 0.0
-        news_bit = (f" Recent news skews {'bullish' if llm_news > 0 else 'bearish'} "
-                    f"(LLM news score {llm_news:+.2f}).") if abs(llm_news) > 0.02 else ""
-        reasoning = (f"{meta['horizon']}-day win probability {prob*100:.0f}% vs entry threshold "
-                     f"{thr*100:.0f}%.{news_bit}")
         out.append({
             "ticker": tk,
             "close": round(close, 2),
-            "action": action,
             "confidence": prob,
-            "stop_loss": round(close * (1 - sl_pct), 2) if action == "BUY" else None,
-            "take_profit": round(close * (1 + tp_pct), 2) if action == "BUY" else None,
+            "_sl_pct": sl_pct, "_tp_pct": tp_pct,
             "horizon_days": meta["horizon"],
             "llm_news": round(llm_news, 3),
             "llm_news_intensity": round(llm_intensity, 2),
-            "reasoning": reasoning,
         })
+
+    # Rank by conviction, then keep BUY only for the top-N above-threshold names (≤ open-position cap).
     out.sort(key=lambda x: x["confidence"], reverse=True)
+    buys = 0
+    for s in out:
+        prob = s["confidence"]
+        is_buy = prob >= thr and buys < top_n
+        if is_buy:
+            buys += 1
+            cap_note = ""
+        elif prob >= thr:
+            cap_note = f" Above threshold but outside the top {top_n} by conviction — hold for now."
+        else:
+            cap_note = ""
+        news_bit = (f" Recent news skews {'bullish' if s['llm_news'] > 0 else 'bearish'} "
+                    f"(LLM news score {s['llm_news']:+.2f}).") if abs(s["llm_news"]) > 0.02 else ""
+        s["action"] = "BUY" if is_buy else "HOLD"
+        s["stop_loss"] = round(s["close"] * (1 - s["_sl_pct"]), 2) if is_buy else None
+        s["take_profit"] = round(s["close"] * (1 + s["_tp_pct"]), 2) if is_buy else None
+        s["reasoning"] = (f"{meta['horizon']}-day win probability {prob*100:.0f}% vs entry threshold "
+                          f"{thr*100:.0f}%.{news_bit}{cap_note}")
+        del s["_sl_pct"], s["_tp_pct"]
     return out
 
 
