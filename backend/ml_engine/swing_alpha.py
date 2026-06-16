@@ -13,7 +13,10 @@ Run (with news scored):  python ml_engine/swing_alpha.py --horizon 5 --splits 4
 """
 import os
 import sys
+import json
+import pickle
 import argparse
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -22,12 +25,19 @@ from sklearn.metrics import roc_auc_score
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import SessionLocal, DailyPrice, MacroIndicator, UniverseTicker, NewsLLMScore
-from app.core.config import TICKER_UNIVERSE
+from app.core.config import (
+    TICKER_UNIVERSE, SWING_HORIZON_DAYS,
+    SWING_ATR_STOP_MULT, SWING_TP_MULT, SWING_STOP_MIN, SWING_STOP_MAX,
+)
 from ml_engine.features import build_all_features
 from ml_engine.models import find_optimal_threshold, simulate_portfolio_chronological
 
 NON_EQUITY = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP", "SPACE"}
 LLM_FEATURES = ["feat_llm_news", "feat_llm_news_intensity", "feat_llm_news_today"]
+
+SAVED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_models")
+SWING_MODEL_PATH = os.path.join(SAVED_DIR, "swing_model.json")
+SWING_META_PATH = os.path.join(SAVED_DIR, "swing_metadata.pkl")
 
 
 def load_llm_news_daily():
@@ -177,9 +187,127 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
     print("\nVerdict: LLM news helps iff WITH beats WITHOUT on portfolio Sharpe / return.\n")
 
 
+def train_and_save(horizon=None):
+    """Trains the production swing model on ALL available data (LLM-active window) and persists it.
+
+    Saves the XGBoost model + a metadata pkl holding the exact feature columns, the calibrated BUY
+    threshold (via the same nested find_optimal_threshold used in walk-forward), and the horizon — so
+    inference reproduces training exactly."""
+    horizon = horizon or SWING_HORIZON_DAYS
+    print(f"Training production swing model (horizon={horizon}d)...")
+    full, equities, prices_df, first_llm_date = load_swing_data(horizon)
+    df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
+    df["dt"] = pd.to_datetime(df["date"], format="mixed")
+    feat_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
+    df = df.dropna(subset=feat_all)
+    if first_llm_date:
+        df = df[df["date"] >= first_llm_date]
+    df = df.sort_values("dt").reset_index(drop=True)
+    if len(df) < 1000:
+        print(f"Only {len(df)} samples in the LLM-active window — score more news first (make news-llm).")
+        return
+
+    w = np.exp(-((df["dt"].max() - df["dt"]).dt.days) / (5.0 * 365.25))
+    model = xgb.XGBClassifier(n_estimators=120, max_depth=4, learning_rate=0.05,
+                              subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
+    model.fit(df[feat_all], df["target_win"], sample_weight=w)
+    thr = find_optimal_threshold(df, feat_all, target_col="target_win", fallback_default=0.2)
+
+    os.makedirs(SAVED_DIR, exist_ok=True)
+    model.save_model(SWING_MODEL_PATH)
+    meta = {"feature_cols": feat_all, "llm_features": [c for c in LLM_FEATURES if c in feat_all],
+            "threshold": float(thr), "horizon": int(horizon), "n_samples": int(len(df)),
+            "window": [str(df["date"].min()), str(df["date"].max())],
+            "trained_at": datetime.now().isoformat()}
+    with open(SWING_META_PATH, "wb") as f:
+        pickle.dump(meta, f)
+    print(f"Saved swing model → {SWING_MODEL_PATH}")
+    print(f"  features={len(feat_all)} (incl. {meta['llm_features']}) | threshold={thr:.3f} | "
+          f"samples={len(df)} | window={meta['window'][0]}..{meta['window'][1]}")
+
+
+def load_swing_model():
+    if not (os.path.exists(SWING_MODEL_PATH) and os.path.exists(SWING_META_PATH)):
+        return None, None
+    m = xgb.XGBClassifier()
+    m.load_model(SWING_MODEL_PATH)
+    with open(SWING_META_PATH, "rb") as f:
+        meta = pickle.load(f)
+    return m, meta
+
+
+def build_swing_signals(daily_prices_df, daily_macro_df, active_universe, model=None, meta=None):
+    """Inference: per-equity swing signal for the latest date, from daily prices + LLM news.
+
+    Returns a list of dicts (ticker, close, prob, action, stop/take-profit, llm_news, intensity).
+    Reuses the SAME feature pipeline (build_all_features + add_llm_features) as training, so columns
+    align with the persisted model. Returns [] if the model isn't trained yet or data is missing."""
+    if model is None or meta is None:
+        model, meta = load_swing_model()
+    if model is None or daily_prices_df is None or daily_prices_df.empty:
+        return []
+
+    equities = [t for t in active_universe if t not in NON_EQUITY and not str(t).startswith(("X:", "C:"))]
+    feat_universe = sorted(set(equities + ["SPY", "QQQ"]))
+    prices = daily_prices_df[daily_prices_df["ticker"].isin(feat_universe)].copy()
+    if prices.empty:
+        return []
+
+    full = build_all_features(prices, None, daily_macro_df, feat_universe, target_horizon_bars=meta["horizon"])
+    if full.empty:
+        return []
+    full, _ = add_llm_features(full, load_llm_news_daily())
+    full = full[full["ticker"].isin(equities)].copy()
+
+    cols = meta["feature_cols"]
+    for c in cols:                       # guard against any column drift (e.g. insider feats off)
+        if c not in full.columns:
+            full[c] = 0.0
+
+    out = []
+    thr = meta["threshold"]
+    for tk, g in full.groupby("ticker"):
+        g = g.sort_values("cal_date").dropna(subset=cols)
+        if g.empty:
+            continue
+        row = g.iloc[[-1]]
+        prob = float(model.predict_proba(row[cols])[:, 1][0])
+        close = float(row["close"].values[0])
+        atr = float(row["atr_14"].values[0]) if "atr_14" in row else 0.0
+        if close <= 0:
+            continue
+        sl_pct = min(SWING_STOP_MAX, max(SWING_STOP_MIN, (SWING_ATR_STOP_MULT * atr) / close))
+        tp_pct = sl_pct * SWING_TP_MULT
+        action = "BUY" if prob >= thr else "HOLD"
+        llm_news = float(row["feat_llm_news"].values[0]) if "feat_llm_news" in row else 0.0
+        llm_intensity = float(row["feat_llm_news_intensity"].values[0]) if "feat_llm_news_intensity" in row else 0.0
+        news_bit = (f" Recent news skews {'bullish' if llm_news > 0 else 'bearish'} "
+                    f"(LLM news score {llm_news:+.2f}).") if abs(llm_news) > 0.02 else ""
+        reasoning = (f"{meta['horizon']}-day win probability {prob*100:.0f}% vs entry threshold "
+                     f"{thr*100:.0f}%.{news_bit}")
+        out.append({
+            "ticker": tk,
+            "close": round(close, 2),
+            "action": action,
+            "confidence": prob,
+            "stop_loss": round(close * (1 - sl_pct), 2) if action == "BUY" else None,
+            "take_profit": round(close * (1 + tp_pct), 2) if action == "BUY" else None,
+            "horizon_days": meta["horizon"],
+            "llm_news": round(llm_news, 3),
+            "llm_news_intensity": round(llm_intensity, 2),
+            "reasoning": reasoning,
+        })
+    out.sort(key=lambda x: x["confidence"], reverse=True)
+    return out
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Swing model with LLM-news features")
     ap.add_argument("--horizon", type=int, default=5, help="swing holding horizon in trading days")
     ap.add_argument("--splits", type=int, default=4)
+    ap.add_argument("--train", action="store_true", help="train + save the production swing model")
     a = ap.parse_args()
-    walk_forward_swing(horizon=a.horizon, n_splits=a.splits)
+    if a.train:
+        train_and_save(horizon=a.horizon)
+    else:
+        walk_forward_swing(horizon=a.horizon, n_splits=a.splits)

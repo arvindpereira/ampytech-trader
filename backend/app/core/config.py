@@ -135,6 +135,18 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:e4b")   # local, fast, JSON-clean (qwen3.5 emits empty under json mode)
 NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2023-01-01")  # how far back to score headlines
 
+# --- Swing (multi-day) strategy ---------------------------------------------------------------
+# The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
+# features add a real portfolio-level edge (higher return/Sharpe, lower drawdown) over a technicals-only
+# baseline — the first strategy in this repo to clear that bar. Served via /api/suggestions; the bracket
+# numbers below MUST match the triple-barrier labels build_all_features used to train it.
+SWING_ENABLED = os.getenv("SWING_ENABLED", "True").lower() in ("true", "1", "yes")
+SWING_HORIZON_DAYS = int(os.getenv("SWING_HORIZON_DAYS", "5"))   # holding horizon in trading days
+SWING_ATR_STOP_MULT = float(os.getenv("SWING_ATR_STOP_MULT", "2.0"))
+SWING_TP_MULT = float(os.getenv("SWING_TP_MULT", "2.5"))
+SWING_STOP_MIN = float(os.getenv("SWING_STOP_MIN", "0.015"))
+SWING_STOP_MAX = float(os.getenv("SWING_STOP_MAX", "0.05"))
+
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
 

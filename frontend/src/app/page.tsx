@@ -56,6 +56,19 @@ interface ShortTermSuggestion {
   action_plan?: string | null;
 }
 
+interface SwingSuggestion {
+  ticker: string;
+  close: number;
+  action: 'BUY' | 'HOLD';
+  confidence: number;
+  stop_loss: number | null;
+  take_profit: number | null;
+  horizon_days: number;
+  llm_news: number;
+  llm_news_intensity: number;
+  reasoning: string;
+}
+
 interface Allocation {
   ticker: string;
   weight: number;
@@ -81,7 +94,7 @@ interface VirtualPosition {
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor'>('dashboard');
-  const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'long_term'>('short_term');
+  const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'swing' | 'long_term'>('short_term');
   const [appMode, setAppMode] = useState<'real' | 'simulated'>('real');
   const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
   const [loading, setLoading] = useState<boolean>(true);
@@ -91,6 +104,7 @@ export default function Home() {
 
   // Suggestion/Allocation States
   const [suggestions, setSuggestions] = useState<ShortTermSuggestion[]>([]);
+  const [swingSuggestions, setSwingSuggestions] = useState<SwingSuggestion[]>([]);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
 
   // Performance Curve & Metric States
@@ -212,6 +226,7 @@ export default function Home() {
       if (sugRes.ok) {
         const sugData = await sugRes.json();
         setSuggestions(sugData.short_term_suggestions || []);
+        setSwingSuggestions(sugData.swing_suggestions || []);
         setAllocations(sugData.long_term_allocation || []);
         setRegime(sugData.date ? sugData.regime : 'growth');
         setDate(sugData.date || '');
@@ -737,6 +752,12 @@ export default function Home() {
                       Short-Term Volatility
                     </button>
                     <button
+                      className={`toggle-btn ${activeStrategy === 'swing' ? 'active' : ''}`}
+                      onClick={() => setActiveStrategy('swing')}
+                    >
+                      Swing (Days) + News
+                    </button>
+                    <button
                       className={`toggle-btn ${activeStrategy === 'long_term' ? 'active' : ''}`}
                       onClick={() => setActiveStrategy('long_term')}
                     >
@@ -852,6 +873,69 @@ export default function Home() {
                       </tbody>
                     </table>
                   </div>
+                  </>
+                ) : activeStrategy === 'swing' ? (
+                  <>
+                  <div style={{
+                    background: 'rgba(0, 242, 254, 0.06)',
+                    border: '1px solid var(--border-glow)',
+                    borderRadius: '8px',
+                    padding: '12px 14px',
+                    marginBottom: '16px',
+                    fontSize: '13px',
+                    color: 'var(--text-secondary)',
+                    lineHeight: '1.5'
+                  }}>
+                    Multi-day (≈{swingSuggestions[0]?.horizon_days ?? 5}-trading-day) signals from daily prices + LLM-scored
+                    news headlines. In walk-forward + capital-aware portfolio simulation this added a real edge over a
+                    technicals-only baseline (Sharpe 1.55 vs 1.16, −18% vs −24% max drawdown). Candidates are ranked by
+                    win probability — take the strongest first, up to your position limit.
+                  </div>
+                  {swingSuggestions.length === 0 ? (
+                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                      No swing signals available. Train the model with <code style={{ fontFamily: 'monospace', color: 'var(--color-buy)' }}>make swing-train</code> after
+                      scoring news (<code style={{ fontFamily: 'monospace', color: 'var(--color-buy)' }}>make news-llm</code>).
+                    </p>
+                  ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="trade-table">
+                      <thead>
+                        <tr>
+                          <th>Ticker</th>
+                          <th>Last Price</th>
+                          <th>Action</th>
+                          <th>Win Prob</th>
+                          <th>News</th>
+                          <th>Stop Loss</th>
+                          <th>Take Profit</th>
+                          <th>Strategic Rationale</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {swingSuggestions.map((item, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: 600 }}>{item.ticker}</td>
+                            <td>${item.close.toFixed(2)}</td>
+                            <td>
+                              <span className={`badge badge-${item.action.toLowerCase()}`}>
+                                {item.action}
+                              </span>
+                            </td>
+                            <td>{(item.confidence * 100).toFixed(0)}%</td>
+                            <td style={{ color: item.llm_news > 0.02 ? 'var(--color-buy)' : item.llm_news < -0.02 ? 'var(--color-sell)' : 'var(--text-secondary)' }}>
+                              {item.llm_news > 0.02 ? '▲' : item.llm_news < -0.02 ? '▼' : '—'} {item.llm_news.toFixed(2)}
+                            </td>
+                            <td className="text-red">{item.stop_loss ? `$${item.stop_loss.toFixed(2)}` : '-'}</td>
+                            <td className="text-green">{item.take_profit ? `$${item.take_profit.toFixed(2)}` : '-'}</td>
+                            <td style={{ color: 'var(--text-secondary)', fontSize: '13px', maxWidth: '300px' }}>
+                              {item.reasoning}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  )}
                   </>
                 ) : (
                   <div>

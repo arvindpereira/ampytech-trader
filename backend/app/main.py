@@ -16,12 +16,12 @@ from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, MPT_WINDOW_DAYS,
     SHORT_TERM_ATR_STOP_MULT, SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX,
     SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD, HEDGE_MODE,
-    ALT_DATA_ENABLED, LONGTERM_TILT_STRENGTH,
+    ALT_DATA_ENABLED, LONGTERM_TILT_STRENGTH, SWING_ENABLED,
 )
 from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    SentimentSourceLog, InsiderDisclosure
+    SentimentSourceLog, InsiderDisclosure, NewsLLMScore
 )
 from ml_engine.features import build_features_for_df, build_all_features
 from ml_engine.models import PortfolioOptimizer
@@ -159,6 +159,8 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     latest_insider = db.query(InsiderDisclosure).order_by(InsiderDisclosure.date.desc()).first() if ALT_DATA_ENABLED else None
     latest_insider_date = latest_insider.date if latest_insider else "none"
 
+    news_llm_count = db.query(NewsLLMScore).count() if SWING_ENABLED else 0
+
     cache_key = (
         date or "live",
         mode,
@@ -169,6 +171,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         sent_count,
         insider_count,
         latest_insider_date,
+        news_llm_count,
         tuple(active_universe)
     )
 
@@ -502,12 +505,22 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
             })
     long_term_allocation.append({"ticker": "CASH", "weight": cash_allocation, "insider_tilt_score": 0.0})
 
+    # --- Swing (multi-day) signals — daily prices + LLM-scored news (validated portfolio edge) ---
+    swing_suggestions = []
+    if SWING_ENABLED:
+        try:
+            from ml_engine.swing_alpha import build_swing_signals
+            swing_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, active_universe)
+        except Exception as e:
+            print(f"Error computing swing signals: {e}")
+
     res = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "regime": current_regime,
         "hedge_mode": effective_hedge_mode,
         "short_term_suggestions": suggestions,
-        "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True)
+        "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True),
+        "swing_suggestions": swing_suggestions
     }
     _suggestions_cache[cache_key] = res
     return res

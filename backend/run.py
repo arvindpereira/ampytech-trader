@@ -74,6 +74,10 @@ def swing_eval(horizon=5, splits=4):
     run_command([sys.executable, "ml_engine/swing_alpha.py", "--horizon", str(horizon), "--splits", str(splits)],
                 "Swing (multi-day) Walk-Forward + Portfolio Sim — WITH vs WITHOUT LLM news")
 
+def swing_train(horizon=5):
+    run_command([sys.executable, "ml_engine/swing_alpha.py", "--train", "--horizon", str(horizon)],
+                "Train + Save Production Swing Model (served via /api/suggestions)")
+
 def serve():
     # Run Uvicorn to serve the FastAPI application
     run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008", "--reload"], "FastAPI Server")
@@ -85,7 +89,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
+        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -156,6 +160,8 @@ def main():
     elif args.action == "swing-eval":
         # Swing horizon defaults to 5 trading days; --horizon overrides.
         swing_eval(horizon=args.horizon if args.horizon != 21 else 5, splits=args.splits)
+    elif args.action == "swing-train":
+        swing_train(horizon=args.horizon if args.horizon != 21 else 5)
     elif args.action == "serve":
         serve()
     elif args.action == "schedule":
