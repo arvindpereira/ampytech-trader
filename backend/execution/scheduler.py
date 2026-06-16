@@ -9,11 +9,15 @@ from apscheduler.triggers.cron import CronTrigger
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import timedelta
 from data_ingestion.price_fetcher import fetch_recent_prices, fetch_daily_history
 from data_ingestion.macro_fetcher import fetch_macro_indicators
 from data_ingestion.sentiment_fetcher import fetch_sentiment
+from data_ingestion.news_llm import fetch_and_score as score_news_llm
 from ml_engine.models import train_models
+from ml_engine.swing_alpha import train_and_save as train_swing_model
 from execution.executor import run_execution
+from app.core.config import SWING_ENABLED
 
 def daily_data_fetch_job():
     print(f"\n[{datetime.now()}] Triggering Daily Data Ingestion Job...")
@@ -22,6 +26,11 @@ def daily_data_fetch_job():
         fetch_daily_history()
         fetch_macro_indicators()
         fetch_sentiment()
+        # Keep the swing model's LLM-news features current: incrementally score the last week's
+        # headlines (resumable — already-scored article ids are skipped). Needs local Ollama running.
+        if SWING_ENABLED:
+            start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            score_news_llm(start=start)
         print("Daily Data Ingestion Job completed successfully.")
     except Exception as e:
         print(f"Error during Daily Data Ingestion: {e}")
@@ -43,6 +52,8 @@ def weekly_model_retrain_job():
     print(f"\n[{datetime.now()}] Triggering Weekly Model Retraining Job...")
     try:
         train_models()
+        if SWING_ENABLED:
+            train_swing_model()   # refresh the served swing model on the latest data
         print("Weekly Model Retraining completed successfully.")
     except Exception as e:
         print(f"Error during Weekly Model Retraining: {e}")
