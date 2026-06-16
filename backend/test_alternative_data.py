@@ -99,12 +99,14 @@ class TestAlternativeData(unittest.TestCase):
             "estimated_value": 50000.0
         }])
         
-        # 2. Insider buy of $100k on 2026-01-07
+        # 2. Insider buy of $100k by the CFO on 2026-01-07
         insider_df = pd.DataFrame([{
             "ticker": "TICK",
             "date": "2026-01-07",
             "transaction_type": "purchase",
-            "total_value": 100000.0
+            "total_value": 100000.0,
+            "relationship": "Chief Financial Officer",
+            "insider_name": "Alice CFO",
         }])
         
         # Compute features
@@ -117,9 +119,10 @@ class TestAlternativeData(unittest.TestCase):
             insider_df=insider_df
         )
         
-        # Check that the columns exist
-        self.assertIn("feat_insider_buying_30d", res_df.columns)
-        self.assertIn("feat_congress_buying_90d", res_df.columns)
+        # Check that the conviction columns exist
+        for col in ["feat_insider_net_flow", "feat_insider_buy_count", "feat_insider_officer_buy",
+                    "feat_insider_cluster", "feat_congress_buying_90d"]:
+            self.assertIn(col, res_df.columns)
         
         # Verify look-ahead protection:
         # A Congress buy filed on 2026-01-05:
@@ -149,19 +152,19 @@ class TestAlternativeData(unittest.TestCase):
             expected_val = 50000.0 / 102.0
             self.assertAlmostEqual(row_07.iloc[0]["feat_congress_buying_90d"], expected_val, places=4)
             
-        # Find row for 2026-01-08
+        # Find row for 2026-01-08 — insider buy filed 01-07, visible 01-08, shifted 1 bar -> still 0
         row_08 = res_df[res_df["date"] == "2026-01-08"]
         if not row_08.empty:
-            # Should not include insider buy yet (it was filed on 07, visible on 08, shifted by 1 bar -> visible on 09)
-            self.assertEqual(row_08.iloc[0]["feat_insider_buying_30d"], 0.0)
-            
-        # Find row for 2026-01-09
+            self.assertEqual(row_08.iloc[0]["feat_insider_net_flow"], 0.0)
+            self.assertEqual(row_08.iloc[0]["feat_insider_buy_count"], 0.0)
+
+        # Find row for 2026-01-09 — insider conviction features now reflect the CFO purchase
         row_09 = res_df[res_df["date"] == "2026-01-09"]
         if not row_09.empty:
-            # Should now include insider buy
-            self.assertGreater(row_09.iloc[0]["feat_insider_buying_30d"], 0.0)
-            expected_ins_val = 100000.0 / 102.0
-            self.assertAlmostEqual(row_09.iloc[0]["feat_insider_buying_30d"], expected_ins_val, places=4)
+            self.assertAlmostEqual(row_09.iloc[0]["feat_insider_net_flow"], 100000.0 / 102.0, places=4)
+            self.assertEqual(row_09.iloc[0]["feat_insider_buy_count"], 1.0)          # one purchase
+            self.assertEqual(row_09.iloc[0]["feat_insider_cluster"], 1.0)            # one distinct buyer
+            self.assertGreater(row_09.iloc[0]["feat_insider_officer_buy"], 0.0)      # CFO -> officer buy
 
     def test_hedging_logic(self):
         """Verifies that get_hedge_info behaves correctly based on correlation and volatilities."""

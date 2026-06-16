@@ -90,14 +90,16 @@ default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win
 >    carried by the rare top-0.1% winners, not by a stable signal.
 > 3. AUC ≈ 0.698 is genuine ranking skill, but (as repeatedly shown) **AUC ≠ tradable edge** — the money is
 >    only in the very top, and even there it's small and fragile.
-> 4. Alt-data features are **off**. The insider source is now **real** (SEC Form 4). On the **hourly**
->    model it's useless (with-alt AUC 0.699 vs 0.698 = noise; purchases too rare). On the **daily 1–3-month**
->    horizon (`make longterm-eval`) it's **faint, theory-consistent, but inconclusive**: the top-5% picks
->    *with* insider beat *without* at both horizons (63d: +12.7% vs +9.2%; 21d: +4.9% vs +3.2%, vs ~+11%/+4.4%
->    universe baseline), but overall AUC ≈ 0.50 and it rests on only **50 clean purchase events** — not
->    deployable. Needs deeper insider history + wider universe + better insider features (cluster buys,
->    officer-level) to confirm. Earlier "+0.27%/trade at 0.15", "+410% backtest", "precision 0.434" are
->    **stale/leaky/in-sample and discarded**.
+> 4. Alt-data features are **off** in production. The insider source is **real** (SEC Form 4) and now uses
+>    **conviction features** (`insider_net_flow`, `insider_net_buyers`, `insider_officer_buy`,
+>    `insider_buy_count`, `insider_cluster`) computed from *all* ~9.9k transactions over 5y (16 US issuers;
+>    foreign issuers excluded) — far denser than the old raw-purchase ratio. Result by horizon
+>    (`make longterm-eval HORIZON=…`): **hourly — useless**; **21-day — no help** (AUC 0.485 vs 0.502);
+>    **63-day (3-month) — a modest, consistent, theory-aligned positive**: pooled AUC 0.517 vs 0.507 (both
+>    >0.5), top-10/20% picks-with-insider beat without (+16.8% vs +16.0%; +17.4% vs +14.8%), and **4 of 5
+>    folds** favor insider. Research-grade, not deployable alone (small effect, overlapping 63d windows, one
+>    bad fold), but the first genuinely *real-looking* alt-data signal — candidate for a quarterly long-term
+>    allocation tilt. Earlier "+0.27%/trade at 0.15", "+410% backtest", "precision 0.434" are **discarded**.
 
 > ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers
 > (e.g. the +489%/+1085% short-term returns quoted in PR #2) are **overfit and not decision-grade**. Only

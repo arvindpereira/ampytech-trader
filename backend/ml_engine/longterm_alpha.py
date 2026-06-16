@@ -23,8 +23,9 @@ from app.database import SessionLocal, DailyPrice, MacroIndicator, UniverseTicke
 from app.core.config import TICKER_UNIVERSE, ALT_DATA_ENABLED
 
 NON_EQUITY = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP"}
-ALT_FEATURES = ["feat_insider_buying_ratio", "feat_congress_buying_ratio",
-                "feat_insider_buying_30d", "feat_congress_buying_90d"]
+ALT_FEATURES = ["feat_insider_net_flow", "feat_insider_buy_count", "feat_insider_net_buyers",
+                "feat_insider_officer_buy", "feat_insider_cluster",
+                "feat_congress_buying_ratio", "feat_congress_buying_90d"]
 
 
 def load_daily_features():

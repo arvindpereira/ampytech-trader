@@ -17,7 +17,9 @@ def load_alternative_data_from_db():
             "ticker": c.ticker, "date": c.date, "estimated_value": c.estimated_value, "transaction_type": c.transaction_type
         } for c in congress]) if congress else pd.DataFrame()
         insider_df = pd.DataFrame([{
-            "ticker": i.ticker, "date": i.date, "total_value": i.total_value, "transaction_type": i.transaction_type
+            "ticker": i.ticker, "date": i.date, "total_value": i.total_value,
+            "transaction_type": i.transaction_type, "relationship": i.relationship,
+            "insider_name": i.insider_name,
         } for i in insider]) if insider else pd.DataFrame()
         return congress_df, insider_df
     except Exception as e:
@@ -284,67 +286,76 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
             congress_df = pd.DataFrame()
             insider_df = pd.DataFrame()
 
+    insider_feats = ['insider_net_flow', 'insider_buy_count', 'insider_net_buyers',
+                     'insider_officer_buy', 'insider_cluster']
     if not df.empty:
-        min_date_str = df['cal_date'].min()
-        max_date_str = df['cal_date'].max()
-        min_date = pd.to_datetime(min_date_str)
-        max_date = pd.to_datetime(max_date_str)
-        
-        # Add buffer for the rolling window (max lookback is 90 days)
-        lookback_days = max(INSIDER_LOOKBACK_DAYS, CONGRESS_LOOKBACK_DAYS)
-        buffer_start = min_date - pd.Timedelta(days=lookback_days + 10)
-        
-        # Create a complete daily index of date strings
+        min_date = pd.to_datetime(df['cal_date'].min())
+        max_date = pd.to_datetime(df['cal_date'].max())
+        officer_window = 90
+        buffer_start = min_date - pd.Timedelta(days=max(INSIDER_LOOKBACK_DAYS, officer_window, CONGRESS_LOOKBACK_DAYS) + 10)
         daily_dates = pd.date_range(start=buffer_start, end=max_date, freq='D')
         daily_df = pd.DataFrame(index=daily_dates.strftime('%Y-%m-%d'))
         daily_df.index.name = 'date'
-        
-        # Initialize columns to 0
-        daily_df['insider_val'] = 0.0
-        daily_df['congress_val'] = 0.0
-        
-        # Merge aggregated purchases
+
+        # --- Insider CONVICTION features (use ALL transactions, not just the rare purchases) ---
+        for c in ['buy_val', 'sell_val', 'buy_cnt', 'dbuyers', 'dsellers', 'officer_buy_val', 'congress_val']:
+            daily_df[c] = 0.0
+
         if insider_df is not None and not insider_df.empty:
-            ins_purchases = insider_df[insider_df['transaction_type'].astype(str).str.lower() == 'purchase']
-            if not ins_purchases.empty:
-                ins_agg = ins_purchases.groupby('date')['total_value'].sum()
-                daily_df['insider_val'] = daily_df.index.map(ins_agg).fillna(0.0)
-                
+            ii = insider_df.copy()
+            ii['date'] = ii['date'].astype(str).str.slice(0, 10)
+            tt = ii['transaction_type'].astype(str).str.lower()
+            ii['is_buy'] = tt.eq('purchase')
+            ii['is_sell'] = tt.eq('sale')
+            rel = ii.get('relationship', pd.Series([''] * len(ii))).astype(str).str.lower()
+            ii['officer'] = rel.str.contains('chief|ceo|cfo|coo|president', regex=True, na=False)
+            name_col = 'insider_name' if 'insider_name' in ii.columns else None
+            buys = ii[ii['is_buy']]
+            sells = ii[ii['is_sell']]
+            daily_df['buy_val'] = daily_df.index.map(buys.groupby('date')['total_value'].sum()).fillna(0.0)
+            daily_df['sell_val'] = daily_df.index.map(sells.groupby('date')['total_value'].sum()).fillna(0.0)
+            daily_df['buy_cnt'] = daily_df.index.map(buys.groupby('date').size()).fillna(0.0)
+            if name_col:
+                daily_df['dbuyers'] = daily_df.index.map(buys.groupby('date')[name_col].nunique()).fillna(0.0)
+                daily_df['dsellers'] = daily_df.index.map(sells.groupby('date')[name_col].nunique()).fillna(0.0)
+            else:
+                daily_df['dbuyers'] = (daily_df['buy_cnt'] > 0).astype(float)
+            daily_df['officer_buy_val'] = daily_df.index.map(
+                buys[buys['officer']].groupby('date')['total_value'].sum()).fillna(0.0)
+
         if congress_df is not None and not congress_df.empty:
-            cong_purchases = congress_df[congress_df['transaction_type'].astype(str).str.lower() == 'purchase']
-            if not cong_purchases.empty:
-                cong_agg = cong_purchases.groupby('date')['estimated_value'].sum()
-                daily_df['congress_val'] = daily_df.index.map(cong_agg).fillna(0.0)
-                
-        # Compute rolling sums on the daily level
-        daily_df['insider_sum'] = daily_df['insider_val'].rolling(window=INSIDER_LOOKBACK_DAYS, min_periods=1).sum()
-        daily_df['congress_sum'] = daily_df['congress_val'].rolling(window=CONGRESS_LOOKBACK_DAYS, min_periods=1).sum()
-        
-        # Look-ahead protection: shift by 1 day
-        daily_df['insider_sum_clean'] = daily_df['insider_sum'].shift(1).fillna(0.0)
-        daily_df['congress_sum_clean'] = daily_df['congress_sum'].shift(1).fillna(0.0)
-        
-        # Reset index to make date a column for joining
+            cong_p = congress_df[congress_df['transaction_type'].astype(str).str.lower() == 'purchase']
+            if not cong_p.empty:
+                daily_df['congress_val'] = daily_df.index.map(cong_p.groupby('date')['estimated_value'].sum()).fillna(0.0)
+
+        W = INSIDER_LOOKBACK_DAYS
+        roll = lambda s, w: s.rolling(window=w, min_periods=1).sum()
+        daily_df['insider_net_flow'] = roll(daily_df['buy_val'] - daily_df['sell_val'], W)
+        daily_df['insider_buy_count'] = roll(daily_df['buy_cnt'], W)
+        daily_df['insider_net_buyers'] = roll(daily_df['dbuyers'] - daily_df['dsellers'], W)
+        daily_df['insider_cluster'] = roll(daily_df['dbuyers'], W)
+        daily_df['insider_officer_buy'] = roll(daily_df['officer_buy_val'], officer_window)
+        daily_df['congress_sum'] = roll(daily_df['congress_val'], CONGRESS_LOOKBACK_DAYS)
+
+        # Look-ahead protection: shift the daily series by one day before broadcasting onto bars.
+        out_cols = insider_feats + ['congress_sum']
+        for c in out_cols:
+            daily_df[c] = daily_df[c].shift(1).fillna(0.0)
+
         daily_df = daily_df.reset_index().rename(columns={'date': 'cal_date'})
-        
-        # Merge with df on cal_date
-        df = pd.merge(df, daily_df[['cal_date', 'insider_sum_clean', 'congress_sum_clean']], on='cal_date', how='left')
-        
-        # Fill NAs
-        df['insider_sum_clean'] = df['insider_sum_clean'].fillna(0.0)
-        df['congress_sum_clean'] = df['congress_sum_clean'].fillna(0.0)
-        
-        # Compute stationary ratios: divide rolling dollar sum by close price
-        df['insider_buying_ratio'] = df['insider_sum_clean'] / (df['close'] + 1e-9)
-        df['congress_buying_ratio'] = df['congress_sum_clean'] / (df['close'] + 1e-9)
-        
-        # Supporting alternative names to make them available in both formats
-        df['insider_buying_30d'] = df['insider_buying_ratio']
+        df = pd.merge(df, daily_df[['cal_date'] + out_cols], on='cal_date', how='left')
+        for c in out_cols:
+            df[c] = df[c].fillna(0.0)
+
+        # Normalize dollar-value features by price (stationarity); counts left as-is.
+        df['insider_net_flow'] = df['insider_net_flow'] / (df['close'] + 1e-9)
+        df['insider_officer_buy'] = df['insider_officer_buy'] / (df['close'] + 1e-9)
+        df['congress_buying_ratio'] = df['congress_sum'] / (df['close'] + 1e-9)
         df['congress_buying_90d'] = df['congress_buying_ratio']
     else:
-        df['insider_buying_ratio'] = 0.0
+        for c in insider_feats:
+            df[c] = 0.0
         df['congress_buying_ratio'] = 0.0
-        df['insider_buying_30d'] = 0.0
         df['congress_buying_90d'] = 0.0
 
     # --- Target Labels Generation (triple-barrier; matches the executed trade brackets) ---
@@ -366,8 +377,9 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         'returns_vol_adj', 'macd_ratio', 'macd_signal_ratio',
         'news_sentiment_score', 'reddit_sentiment_score', 'news_mention_count', 'reddit_mention_count',
         'combined_sentiment_decayed', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
-        'fed_funds', 'yield_spread', 'insider_buying_ratio', 'congress_buying_ratio',
-        'insider_buying_30d', 'congress_buying_90d'
+        'fed_funds', 'yield_spread',
+        'insider_net_flow', 'insider_buy_count', 'insider_net_buyers', 'insider_officer_buy', 'insider_cluster',
+        'congress_buying_ratio', 'congress_buying_90d'
     ]
 
     # Keep original unshifted close & date for reference/labeling, but prefix feature names

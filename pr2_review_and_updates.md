@@ -234,15 +234,18 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   Form 4s; TSM's 102 "purchases" look like a foreign-issuer data-quality artifact to scrub later.)
   Congress/STOCK Act remains synthetic (no free structured source wired).
 
-- **Insider at the long-term horizon — tested, inconclusive.** `ml_engine/longterm_alpha.py`
-  (`make longterm-eval`) runs a daily walk-forward predicting forward N-day *cross-sectional* outperformance,
-  with vs without insider features. At 1–3-month horizons the **top-5% picks with insider modestly beat
-  without** (63d: +12.7% vs +9.2%; 21d: +4.9% vs +3.2%) and beat the universe baseline — directionally
-  positive and theory-consistent (insider buying is slow) — **but** overall AUC ≈ 0.50, per-fold results are
-  mixed, and there are only **50 clean open-market purchase events** (after scrubbing synthetic Congress
-  rows and a TSM foreign-issuer artifact). Promising but **not robust enough to deploy**; `ALT_DATA_ENABLED`
-  stays `False`. Next, if pursued: fetch full insider history (not just 3y), widen the universe, and engineer
-  conviction features (cluster buys, CEO/CFO buys, net-buying counts) rather than a raw dollar sum.
+- **Insider at the long-term horizon — deepened + conviction features → modest real signal at 3 months.**
+  Deepened the data to **5 years / ~9.9k transactions** (16 US issuers; foreign issuers TSM/ASML/NOK/ARM/BB
+  excluded as Section-16-exempt with unreliable filings), and replaced the sparse raw-purchase ratio with
+  **conviction features** (`insider_net_flow`, `insider_net_buyers`, `insider_officer_buy`,
+  `insider_buy_count`, `insider_cluster`) that use *all* transactions (net buy/sell pressure, officer buys,
+  distinct buyers) — non-zero on ~80–90% of bars vs ~0 before. Re-tested via `longterm_alpha.py`: **21-day
+  no help** (AUC 0.485 vs 0.502); **63-day (3-month) modest, consistent positive** — pooled AUC 0.517 vs
+  0.507, top-10/20% picks-with-insider beat without (+16.8% vs +16.0%; +17.4% vs +14.8%), **4/5 folds favor
+  insider**. First genuinely real-looking alt-data result, consistent with insider buying being a quarterly
+  signal. Still research-grade (small effect, overlapping windows, one bad fold) → `ALT_DATA_ENABLED` stays
+  `False`; the natural next step is a **quarterly long-term MPT allocation tilt** by the insider score, not
+  enabling it in the short-term model.
 
 Still outstanding: **C2** (fold-forward nested threshold selection), the **portfolio-level walk-forward
 equity curve**, a real **Congress/STOCK Act** source, and the insider follow-up above.

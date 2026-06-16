@@ -406,7 +406,9 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
     print("Loading data for walk-forward evaluation...")
     df = load_data_from_db().dropna(subset=["target_win", "trade_ret"]).copy()
     
-    alt_feature_names = ["feat_insider_buying_ratio", "feat_congress_buying_ratio", "feat_insider_buying_30d", "feat_congress_buying_90d"]
+    alt_feature_names = ["feat_insider_net_flow", "feat_insider_buy_count", "feat_insider_net_buyers",
+                         "feat_insider_officer_buy", "feat_insider_cluster",
+                         "feat_congress_buying_ratio", "feat_congress_buying_90d"]
     feature_cols_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
     feature_cols_no_alt = sorted([c for c in feature_cols_all if c not in alt_feature_names])
     

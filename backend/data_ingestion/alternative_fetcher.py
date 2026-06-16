@@ -14,6 +14,9 @@ from app.core.config import TICKER_UNIVERSE, SEC_USER_AGENT, INSIDER_FETCH_DAYS
 
 # Benchmarks/ETFs have no Form 4 filings.
 NON_EQUITY = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP"}
+# Foreign private issuers are exempt from Section 16 / Form 4; any "Form 4s" under their CIK are
+# unreliable (e.g. TSM showed spurious "purchases"). Exclude them from insider analysis.
+FOREIGN_NO_FORM4 = {"TSM", "ASML", "NOK", "ARM", "BB"}
 
 POLITICIANS = [
     ("Nancy Pelosi", "house"),
@@ -290,7 +293,8 @@ def fetch_real_insider_data(lookback_days=None, max_filings_per_ticker=250):
     db = SessionLocal()
     db_tickers = db.query(UniverseTicker).all()
     universe = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)
-    universe = [t for t in universe if t not in NON_EQUITY and not t.startswith(("X:", "C:"))]
+    universe = [t for t in universe
+                if t not in NON_EQUITY and t not in FOREIGN_NO_FORM4 and not t.startswith(("X:", "C:"))]
 
     cik_map = load_cik_map(headers)
     print(f"Fetching real SEC Form 4 insider data for {len(universe)} tickers (filings since {cutoff})...")
@@ -353,8 +357,9 @@ if __name__ == "__main__":
     parser.add_argument("--synthetic", action="store_true",
                         help="Seed SYNTHETIC random disclosures (plumbing only, no signal).")
     parser.add_argument("--lookback-days", type=int, default=None, help="Form 4 history window (days).")
+    parser.add_argument("--max-filings", type=int, default=250, help="Max Form 4 filings per ticker.")
     args = parser.parse_args()
     if args.synthetic:
         seed_alternative_data()
     else:
-        fetch_real_insider_data(lookback_days=args.lookback_days)
+        fetch_real_insider_data(lookback_days=args.lookback_days, max_filings_per_ticker=args.max_filings)
