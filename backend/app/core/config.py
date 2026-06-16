@@ -130,6 +130,11 @@ try:
 except ValueError:
     LONGTERM_TILT_STRENGTH = 0.15
 
+# Local LLM (Ollama) for scoring news headlines into per-ticker directional sentiment for the SWING model.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:e4b")   # local, fast, JSON-clean (qwen3.5 emits empty under json mode)
+NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2023-01-01")  # how far back to score headlines
+
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
 

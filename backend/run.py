@@ -64,6 +64,12 @@ def longterm_tilt(strength=0.10):
                  "--tilt-strength", str(strength), "--start", "2022-01-01"],
                 "Long-Term Insider-Tilt MPT A/B Backtest")
 
+def news_llm(start=None):
+    cmd = [sys.executable, "data_ingestion/news_llm.py"]
+    if start:
+        cmd += ["--start", start]
+    run_command(cmd, "LLM News Scoring (local Ollama) for the swing model")
+
 def serve():
     # Run Uvicorn to serve the FastAPI application
     run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008", "--reload"], "FastAPI Server")
@@ -75,7 +81,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
+        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -141,6 +147,8 @@ def main():
         longterm_eval(horizon=args.horizon, splits=args.splits)
     elif args.action == "longterm-tilt":
         longterm_tilt(strength=args.tilt_strength)
+    elif args.action == "news-llm":
+        news_llm(start=args.start if hasattr(args, "start") else None)
     elif args.action == "serve":
         serve()
     elif args.action == "schedule":

@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news insider train walkforward calibrate longterm-eval longterm-tilt backtest \
+.PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt backtest \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -8,6 +8,8 @@ MONTHS ?= 6
 SPLITS ?= 5
 HORIZON ?= 21
 STRENGTH ?= 0.10
+NEWS_START ?= 2024-01-01
+LLM_MODEL ?= gemma4:e4b
 TICKER   ?=
 VENV_PY := venv/bin/python3
 
@@ -26,6 +28,7 @@ help:
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
+	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2024-01-01]"
 	@echo ""
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
@@ -112,6 +115,12 @@ longterm-eval:
 	@echo "🔭 Long-term insider-alpha walk-forward (daily, ~1-3 month horizon) [HORIZON=$(HORIZON)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py longterm-eval --horizon $(HORIZON)
+
+news-llm:
+	@echo "========================================================================"
+	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START)
 
 longterm-tilt:
 	@echo "========================================================================"

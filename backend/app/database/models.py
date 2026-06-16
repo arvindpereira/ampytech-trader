@@ -202,3 +202,23 @@ class InsiderDisclosure(Base):
     shares = Column(Float, nullable=False)
     share_price = Column(Float, nullable=False)
     total_value = Column(Float, nullable=False)
+
+
+class NewsLLMScore(Base):
+    """Per-headline directional sentiment from a local LLM (Ollama), for the SWING model. One row per
+    (ticker, article). `date` is the publication calendar date (features shift it +1 day to stay
+    look-ahead free). `llm_score` in [-1,1], `llm_relevance` in [0,1]."""
+    __tablename__ = "news_llm_scores"
+
+    ticker = Column(String, nullable=False)
+    article_id = Column(String, nullable=False)      # Polygon article id (natural dedupe key)
+    date = Column(String, nullable=False)            # YYYY-MM-DD (publish date)
+    published_utc = Column(String, nullable=True)    # full ISO timestamp
+    title = Column(String, nullable=True)
+    llm_score = Column(Float, nullable=False, default=0.0)
+    llm_relevance = Column(Float, nullable=False, default=0.0)
+    model = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "article_id", name="pk_news_llm_scores"),
+    )
