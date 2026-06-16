@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news insider train walkforward calibrate longterm-eval backtest \
+.PHONY: help default install fetch backfill-news insider train walkforward calibrate longterm-eval longterm-tilt backtest \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -7,6 +7,7 @@ DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
 HORIZON ?= 21
+STRENGTH ?= 0.10
 VENV_PY := venv/bin/python3
 
 # Default target: print help
@@ -30,6 +31,7 @@ help:
 	@echo "  make walkforward       - Honest out-of-sample edge check (expanding folds) [SPLITS=$(SPLITS)]"
 	@echo "  make calibrate         - Calibrate the served-model BUY threshold (-> threshold.json)"
 	@echo "  make longterm-eval     - Test insider buying at the daily 1-3 month horizon [HORIZON=21]"
+	@echo "  make longterm-tilt     - A/B backtest the insider-buy MPT tilt [STRENGTH=0.10]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -107,6 +109,12 @@ longterm-eval:
 	@echo "🔭 Long-term insider-alpha walk-forward (daily, ~1-3 month horizon) [HORIZON=$(HORIZON)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py longterm-eval --horizon $(HORIZON)
+
+longterm-tilt:
+	@echo "========================================================================"
+	@echo "🪙 Long-term MPT insider-buy tilt A/B backtest [STRENGTH=$(STRENGTH)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py longterm-tilt --tilt-strength $(STRENGTH)
 
 backtest:
 	@echo "========================================================================"

@@ -32,10 +32,14 @@ class PortfolioOptimizer:
     """Implements Mean-Variance Sharpe Maximization and Fractional Kelly calculations."""
 
     @staticmethod
-    def calculate_optimal_weights(returns_df, target_regime):
+    def calculate_optimal_weights(returns_df, target_regime, expected_return_tilt=None):
         """
         Runs Mean-Variance Optimization using Ledoit-Wolf shrinkage covariance.
         Returns weight allocation dictionary for tickers.
+
+        `expected_return_tilt` (optional dict {ticker: annualized-return adjustment}) is a
+        Black-Litterman-style "view": it is *added* to the historical-mean expected returns before
+        optimization, so e.g. an insider-buying score nudges the optimizer to overweight those names.
         """
         tickers = [col for col in returns_df.columns if col not in ["SPY", "QQQ", "date", "month_year"]]
         if len(tickers) < 2:
@@ -59,6 +63,8 @@ class PortfolioOptimizer:
 
         # Convert expected returns and cov to numpy arrays
         er = exp_returns.values
+        if expected_return_tilt:
+            er = er + np.array([float(expected_return_tilt.get(t, 0.0)) for t in tickers])
         cov = cov_matrix
         rf = 0.04
 

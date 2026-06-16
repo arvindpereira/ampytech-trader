@@ -146,10 +146,96 @@ def walk_forward_longterm(horizon_days=21, n_splits=4, start_date="2023-06-16"):
           "adds long-horizon selection alpha.\n")
 
 
+def _portfolio_metrics(curve, dates):
+    eq = pd.Series(curve, index=pd.to_datetime(dates))
+    rets = eq.pct_change().dropna()
+    yrs = max((eq.index[-1] - eq.index[0]).days / 365.25, 1e-9)
+    total = eq.iloc[-1] / eq.iloc[0] - 1.0
+    cagr = (eq.iloc[-1] / eq.iloc[0]) ** (1.0 / yrs) - 1.0
+    sharpe = (rets.mean() / (rets.std() + 1e-9)) * np.sqrt(252)
+    dd = (eq - eq.cummax()) / eq.cummax()
+    return total, cagr, sharpe, dd.min()
+
+
+def backtest_longterm_tilt(tilt_strength=0.05, start_date="2022-01-01", window=252):
+    """A/B backtest: monthly-rebalanced MPT portfolio WITH vs WITHOUT an insider-score tilt on expected
+    returns, over the insider-active window. Also reports equal-weight and SPY benchmarks."""
+    from ml_engine.models import PortfolioOptimizer
+    print(f"Loading daily features (ALT_DATA_ENABLED={ALT_DATA_ENABLED})...")
+    df, equities = load_daily_features()
+    df["dt"] = pd.to_datetime(df["date"], format="mixed")
+    df = df.sort_values(["ticker", "dt"]).reset_index(drop=True)
+    df["ret"] = df.groupby("ticker")["close"].pct_change()
+
+    eq = df[df["ticker"].isin(equities)].copy()
+    # BUY-SIDE conviction only: insider *selling* is mostly comp/diversification (insiders sell winners),
+    # so net-flow penalizes exactly the momentum winners. The bullish view is insider BUYING.
+    insf = [c for c in ["feat_insider_officer_buy", "feat_insider_buy_count", "feat_insider_cluster"]
+            if c in eq.columns]
+    for c in insf:
+        eq[c + "_z"] = eq.groupby("date")[c].transform(lambda s: (s - s.mean()) / (s.std() + 1e-9))
+    eq["ins_score"] = eq[[c + "_z" for c in insf]].mean(axis=1).fillna(0.0)
+
+    ret_p = eq.pivot_table(index="date", columns="ticker", values="ret")
+    score_p = eq.pivot_table(index="date", columns="ticker", values="ins_score")
+    spy_ret = df[df["ticker"] == "SPY"].set_index("date")["ret"]
+
+    all_dates = sorted(ret_p.index)
+    seen, rebal = set(), set()
+    for d in all_dates:
+        if d[:7] not in seen:
+            seen.add(d[:7]); rebal.add(d)
+    sim_dates = [d for d in all_dates if d >= start_date]
+    print(f"Backtest {sim_dates[0]}..{sim_dates[-1]} | {len(equities)} equities | "
+          f"tilt_strength={tilt_strength} | monthly rebalance")
+
+    def run(arm):
+        port, weights, curve = 1.0, {}, []
+        for d in sim_dates:
+            row = ret_p.loc[d]
+            dr = sum(w * (row[t] if (t in row and pd.notna(row[t])) else 0.0) for t, w in weights.items())
+            port *= (1.0 + dr)
+            curve.append(port)
+            if d in rebal:
+                hist = ret_p[ret_p.index < d].tail(window).dropna(axis=1, how="any")
+                cols = list(hist.columns)
+                if len(hist) > 100 and len(cols) >= 2:
+                    tilt = None
+                    if arm in ("tilt", "ew") and arm == "tilt":
+                        sr = score_p.loc[d] if d in score_p.index else None
+                        tilt = {t: tilt_strength * (float(sr[t]) if (sr is not None and pd.notna(sr[t])) else 0.0)
+                                for t in cols}
+                    if arm == "ew":
+                        weights = {t: 1.0 / len(cols) for t in cols}
+                    else:
+                        weights = PortfolioOptimizer.calculate_optimal_weights(hist, "growth", expected_return_tilt=tilt)
+        return curve
+
+    curves = {a: run(a) for a in ("tilt", "base", "ew")}
+    spy_curve, sp = [], 1.0
+    for d in sim_dates:
+        sp *= (1.0 + (spy_ret[d] if (d in spy_ret and pd.notna(spy_ret[d])) else 0.0))
+        spy_curve.append(sp)
+
+    print(f"\n--- Long-term MPT backtest ({sim_dates[0]}..{sim_dates[-1]}) ---")
+    print(f"{'strategy':<22} {'total':>9} {'CAGR':>8} {'Sharpe':>8} {'maxDD':>9}")
+    for name, key in [("MPT + insider tilt", "tilt"), ("MPT (base)", "base"),
+                      ("Equal-weight", "ew"), ("SPY (buy-hold)", None)]:
+        c = spy_curve if key is None else curves[key]
+        t, g, s, dd = _portfolio_metrics(c, sim_dates)
+        print(f"{name:<22} {t*100:>8.1f}% {g*100:>7.1f}% {s:>8.2f} {dd*100:>8.1f}%")
+    print("\nInterpretation: tilt helps iff it beats the base MPT on Sharpe / drawdown-adjusted return.\n")
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Long-term insider-alpha walk-forward test")
+    ap = argparse.ArgumentParser(description="Long-term insider-alpha tests")
     ap.add_argument("--horizon", type=int, default=21, help="forward return horizon in trading days")
     ap.add_argument("--splits", type=int, default=4)
     ap.add_argument("--start", type=str, default="2023-06-16", help="insider-active window start")
+    ap.add_argument("--backtest-tilt", action="store_true", help="run the MPT insider-tilt A/B backtest")
+    ap.add_argument("--tilt-strength", type=float, default=0.05, help="annualized return per unit insider z-score")
     a = ap.parse_args()
-    walk_forward_longterm(horizon_days=a.horizon, n_splits=a.splits, start_date=a.start)
+    if a.backtest_tilt:
+        backtest_longterm_tilt(tilt_strength=a.tilt_strength, start_date=a.start)
+    else:
+        walk_forward_longterm(horizon_days=a.horizon, n_splits=a.splits, start_date=a.start)

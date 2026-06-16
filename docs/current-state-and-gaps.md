@@ -100,6 +100,14 @@ default top 0.5%). Latest: **threshold 0.1335**, single-holdout 481 signals, win
 >    folds** favor insider. Research-grade, not deployable alone (small effect, overlapping 63d windows, one
 >    bad fold), but the first genuinely *real-looking* alt-data signal — candidate for a quarterly long-term
 >    allocation tilt. Earlier "+0.27%/trade at 0.15", "+410% backtest", "precision 0.434" are **discarded**.
+> 5. **MPT insider-buy tilt — works (modestly).** `calculate_optimal_weights` accepts an
+>    `expected_return_tilt`; A/B backtest (`make longterm-tilt`) over 2022–2026: a **buy-side** insider tilt
+>    (officer buys / buy count / clusters) lifts the monthly-rebalanced MPT book vs no tilt — Sharpe
+>    **1.45→1.53**, return 572%→634%, **and** lower drawdown (−36%→−32%), peaking around strength 0.1–0.2 and
+>    robust to start date. **Key lesson:** a *net-flow* tilt (incl. selling) **hurts** — insiders sell winners
+>    (comp/diversification), so it underweights the momentum names that drove returns; only insider **buying**
+>    is bullish. Caveats: single regime (a tech bull + 2022 dip), unrealistic absolute returns (survivorship),
+>    modest effect. Wired as a capability (off until `ALT_DATA_ENABLED`), not yet in the live allocator.
 
 > ⚠️ **In-sample ≠ predictive.** `run.py backtest` trains and tests on the *same* span; its big numbers
 > (e.g. the +489%/+1085% short-term returns quoted in PR #2) are **overfit and not decision-grade**. Only

@@ -247,5 +247,15 @@ Decisions taken with the user and implemented on branch `strategy-optimization`:
   `False`; the natural next step is a **quarterly long-term MPT allocation tilt** by the insider score, not
   enabling it in the short-term model.
 
+- **Insider MPT tilt — implemented & backtested, it works (buy-side only).** `calculate_optimal_weights`
+  now accepts an `expected_return_tilt` (Black-Litterman-style view added to expected returns), and
+  `longterm_alpha.backtest_longterm_tilt` (`make longterm-tilt`) A/B-tests a monthly-rebalanced MPT book with
+  vs without an insider tilt. **A net-flow tilt hurts** (insiders sell winners → underweights momentum), but
+  a **buy-side** tilt (officer buys / buy count / clusters) helps: Sharpe **1.45→1.53**, return 572%→634%,
+  drawdown −36%→−32%, peaking at strength ~0.1–0.2 and robust to start date. Single-regime / survivorship
+  caveats apply. Capability is wired (off until `ALT_DATA_ENABLED`); not yet in the live `/api/suggestions`
+  allocator.
+
 Still outstanding: **C2** (fold-forward nested threshold selection), the **portfolio-level walk-forward
-equity curve**, a real **Congress/STOCK Act** source, and the insider follow-up above.
+equity curve** for the short-term model, a real **Congress/STOCK Act** source, and wiring the buy-side
+insider tilt into the live long-term allocator.
