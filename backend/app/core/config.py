@@ -32,6 +32,8 @@ TICKER_UNIVERSE = [
     "GOOGL", "NVDA", "AVGO", "NOK", "BB",
     # AI boom leaders
     "META", "TSM", "ASML", "MU", "ARM", "PLTR", "SMCI",
+    # Newly IPOed and diversified sectors
+    "SPACE", "WMT", "XOM", "JPM", "LLY", "PG", "GE", "JNJ",
 ]
 
 # Benchmark used for the long-term performance comparison (kept separate so it is always

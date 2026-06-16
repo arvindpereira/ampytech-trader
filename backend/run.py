@@ -75,8 +75,14 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "serve", "schedule", "simulate", "backtest-virtual"],
+        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
         help="Pipeline stage to execute"
+    )
+    parser.add_argument(
+        "--symbol",
+        type=str,
+        default=None,
+        help="Ticker symbol to add (for add-ticker action)"
     )
     parser.add_argument(
         "--days",
@@ -145,6 +151,13 @@ def main():
     elif args.action == "backtest-virtual":
         from execution.simulator import run_historical_replay
         run_historical_replay(args.months)
+    elif args.action == "popular-tickers":
+        run_command([sys.executable, "data_ingestion/popular_tickers.py"], "Fetch Popular & Trending Tickers")
+    elif args.action == "add-ticker":
+        if args.symbol:
+            run_command([sys.executable, "data_ingestion/popular_tickers.py", "--add", args.symbol], f"Add Ticker {args.symbol}")
+        else:
+            print("Please specify a ticker symbol to add using --symbol.")
 
 if __name__ == "__main__":
     main()

@@ -454,7 +454,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
                 if not eq_df.empty:
                     latest_feat_date = eq_df["date"].max()
                     latest_eq_df = eq_df[eq_df["date"] == latest_feat_date].copy()
-                    
+
                     insf = [c for c in ["feat_insider_officer_buy", "feat_insider_buy_count", "feat_insider_cluster"]
                             if c in latest_eq_df.columns]
                     if insf:
@@ -464,7 +464,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
                             mean_val = vals.mean()
                             std_val = vals.std()
                             latest_eq_df[c + "_z"] = (vals - mean_val) / (std_val + 1e-9)
-                        
+
                         latest_eq_df["ins_score"] = latest_eq_df[[c + "_z" for c in insf]].mean(axis=1).fillna(0.0)
                         scores_dict = latest_eq_df.set_index("ticker")["ins_score"].to_dict()
                         expected_return_tilt = {

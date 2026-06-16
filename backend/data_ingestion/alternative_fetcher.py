@@ -83,7 +83,7 @@ def seed_alternative_data():
 
             name, chamber = random.choice(POLITICIANS)
             tx_type = random.choices(["purchase", "sale"], weights=[0.65, 0.35])[0]
-            
+
             amount_range = random.choice([
                 "$1,000 - $15,000",
                 "$15,001 - $50,000",
@@ -116,7 +116,7 @@ def seed_alternative_data():
     # 2. Seed Corporate Insider (SEC Form 4) Trades
     print("Seeding SEC Form 4 Corporate Insider disclosures...")
     insider_count = 0
-    
+
     # We want to create "insider buying clusters" to give the machine learning model
     # a clear, clean statistical signal to learn from.
     # We will simulate high-conviction cluster purchase months for specific tickers,
@@ -135,7 +135,7 @@ def seed_alternative_data():
             insider_name = f"Insider {random.randint(100, 999)}"
             relationship = random.choice(RELATIONSHIPS)
             tx_type = random.choices(["purchase", "sale"], weights=[0.45, 0.55])[0] # sales are more common normally
-            
+
             shares = random.randint(500, 10000)
             share_price = random.uniform(50.0, 400.0)
             total_value = shares * share_price
@@ -160,7 +160,7 @@ def seed_alternative_data():
             for _ in range(num_clusters):
                 cluster_days = random.randint(0, days_range)
                 cluster_date = start_date + timedelta(days=cluster_days)
-                
+
                 # 3 to 5 insiders buying within the same 5-day window
                 cluster_size = random.randint(3, 5)
                 for i in range(cluster_size):
@@ -196,7 +196,7 @@ def seed_alternative_data():
     except Exception as e:
         db.rollback()
         print(f"Failed to commit seeded disclosures: {e}")
-    
+
     db.close()
 
 

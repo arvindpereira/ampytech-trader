@@ -202,4 +202,3 @@ class InsiderDisclosure(Base):
     shares = Column(Float, nullable=False)
     share_price = Column(Float, nullable=False)
     total_value = Column(Float, nullable=False)
-

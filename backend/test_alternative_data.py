@@ -15,18 +15,18 @@ from ml_engine.features import build_features_for_df
 from backtesting.backtest import get_hedge_info
 
 class TestAlternativeData(unittest.TestCase):
-    
+
     def setUp(self):
         self.db = SessionLocal()
-        
+
     def tearDown(self):
         self.db.close()
-        
+
     def test_database_insertion(self):
         """Verifies that we can insert and retrieve Congress and Insider disclosures correctly."""
         # Clean up any existing test records if necessary (or just test adding new ones)
         test_ticker = "TEST_TICKER_XYZ"
-        
+
         # Add Congress Disclosure
         c_disc = CongressDisclosure(
             ticker=test_ticker,
@@ -38,7 +38,7 @@ class TestAlternativeData(unittest.TestCase):
             estimated_value=32500.0
         )
         self.db.add(c_disc)
-        
+
         # Add Insider Disclosure
         i_disc = InsiderDisclosure(
             ticker=test_ticker,
@@ -51,20 +51,20 @@ class TestAlternativeData(unittest.TestCase):
             total_value=100000.0
         )
         self.db.add(i_disc)
-        
+
         self.db.commit()
-        
+
         # Retrieve and verify
         retrieved_c = self.db.query(CongressDisclosure).filter_by(ticker=test_ticker).first()
         self.assertIsNotNone(retrieved_c)
         self.assertEqual(retrieved_c.politician_name, "Senator Bob")
         self.assertEqual(retrieved_c.estimated_value, 32500.0)
-        
+
         retrieved_i = self.db.query(InsiderDisclosure).filter_by(ticker=test_ticker).first()
         self.assertIsNotNone(retrieved_i)
         self.assertEqual(retrieved_i.insider_name, "Alice CEO")
         self.assertEqual(retrieved_i.total_value, 100000.0)
-        
+
         # Clean up
         self.db.delete(retrieved_c)
         self.db.delete(retrieved_i)
@@ -89,7 +89,7 @@ class TestAlternativeData(unittest.TestCase):
             "macd_signal": [0.0] * len(dates),
         }
         df = pd.DataFrame(prices_data)
-        
+
         # Create mock disclosures
         # 1. Congress buy of $50k on 2026-01-05
         congress_df = pd.DataFrame([{
@@ -98,7 +98,7 @@ class TestAlternativeData(unittest.TestCase):
             "transaction_type": "purchase",
             "estimated_value": 50000.0
         }])
-        
+
         # 2. Insider buy of $100k by the CFO on 2026-01-07
         insider_df = pd.DataFrame([{
             "ticker": "TICK",
@@ -108,7 +108,7 @@ class TestAlternativeData(unittest.TestCase):
             "relationship": "Chief Financial Officer",
             "insider_name": "Alice CFO",
         }])
-        
+
         # Compute features
         res_df = build_features_for_df(
             df,
@@ -118,31 +118,31 @@ class TestAlternativeData(unittest.TestCase):
             congress_df=congress_df,
             insider_df=insider_df
         )
-        
+
         # Check that the conviction columns exist
         for col in ["feat_insider_net_flow", "feat_insider_buy_count", "feat_insider_officer_buy",
                     "feat_insider_cluster", "feat_congress_buying_90d"]:
             self.assertIn(col, res_df.columns)
-        
+
         # Verify look-ahead protection:
         # A Congress buy filed on 2026-01-05:
         # - On 2026-01-05, the disclosure is filed. Since we shift the daily series by 1 day, it is first visible in the daily series on 2026-01-06.
         # - Shifting the feature by 1 bar means that on 2026-01-06, the feature `feat_congress_buying_90d` must still be 0.
         # - On 2026-01-07, the feature `feat_congress_buying_90d` should become positive (50000.0 / close_price).
         # Let's inspect the results:
-        
+
         res_df = res_df.sort_values("date").reset_index(drop=True)
-        
+
         # Find row for 2026-01-05
         row_05 = res_df[res_df["date"] == "2026-01-05"]
         if not row_05.empty:
             self.assertEqual(row_05.iloc[0]["feat_congress_buying_90d"], 0.0)
-            
+
         # Find row for 2026-01-06 (should still be 0.0 because of the 1-bar shift of the daily series)
         row_06 = res_df[res_df["date"] == "2026-01-06"]
         if not row_06.empty:
             self.assertEqual(row_06.iloc[0]["feat_congress_buying_90d"], 0.0)
-            
+
         # Find row for 2026-01-07 (should be positive now)
         row_07 = res_df[res_df["date"] == "2026-01-07"]
         if not row_07.empty:
@@ -151,7 +151,7 @@ class TestAlternativeData(unittest.TestCase):
             # Wait, let's verify: row_07's feature is row_06's value = 50000.0 / 102.0
             expected_val = 50000.0 / 102.0
             self.assertAlmostEqual(row_07.iloc[0]["feat_congress_buying_90d"], expected_val, places=4)
-            
+
         # Find row for 2026-01-08 — insider buy filed 01-07, visible 01-08, shifted 1 bar -> still 0
         row_08 = res_df[res_df["date"] == "2026-01-08"]
         if not row_08.empty:
@@ -171,7 +171,7 @@ class TestAlternativeData(unittest.TestCase):
         # Create a mock ExecContext
         ctx = MagicMock()
         ctx.symbol = "AAPL"
-        
+
         # Set up indicators map for ctx
         indicators = {
             'feat_corr_spy_20': [0.5],
@@ -181,13 +181,13 @@ class TestAlternativeData(unittest.TestCase):
         }
         ctx.indicators = set(indicators.keys())
         ctx.indicator.side_effect = lambda name: indicators[name]
-        
+
         # Test beta_neutral mode (should pick QQQ because 0.8 > 0.5)
         symbol, beta = get_hedge_info(ctx, 'beta_neutral')
         self.assertEqual(symbol, 'QQQ')
         # beta = corr_qqq * rel_vol_qqq = 0.8 * 0.9 = 0.72
         self.assertAlmostEqual(beta, 0.72)
-        
+
         # Test beta_neutral when SPY correlation is higher
         indicators['feat_corr_spy_20'] = [0.9]
         indicators['feat_corr_qqq_20'] = [0.4]
@@ -195,7 +195,7 @@ class TestAlternativeData(unittest.TestCase):
         self.assertEqual(symbol, 'SPY')
         # beta = corr_spy * rel_vol_spy = 0.9 * 1.2 = 1.08
         self.assertAlmostEqual(beta, 1.08)
-        
+
         # Test pair_trade mode for MSFT -> peer is AAPL
         ctx.symbol = "MSFT"
         symbol, beta = get_hedge_info(ctx, 'pair_trade')

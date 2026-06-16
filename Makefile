@@ -1,5 +1,5 @@
 .PHONY: help default install fetch backfill-news insider train walkforward calibrate longterm-eval longterm-tilt backtest \
-        simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
+        simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
 EPOCHS ?= 100
@@ -8,6 +8,7 @@ MONTHS ?= 6
 SPLITS ?= 5
 HORIZON ?= 21
 STRENGTH ?= 0.10
+TICKER   ?=
 VENV_PY := venv/bin/python3
 
 # Default target: print help
@@ -43,6 +44,8 @@ help:
 	@echo "  make serve-backend     - Launch only the FastAPI backend (:8008)"
 	@echo "  make serve-frontend    - Launch only the Next.js frontend (:3002)"
 	@echo "  make schedule          - Run the APScheduler daemon (unattended fetch/train/execute)"
+	@echo "  make popular-tickers   - Find trending, active, gainer, and loser stocks"
+	@echo "  make add-ticker TICKER=SYMBOL - Add a new symbol to your trading universe"
 	@echo "  make lint              - Strip trailing whitespace / normalize line endings"
 	@echo "========================================================================"
 
@@ -169,3 +172,16 @@ lint:
 	@echo "========================================================================"
 	python3 backend/lint.py
 	@echo "✅ Formatting complete. Ready to review and commit!"
+
+popular-tickers:
+	@echo "========================================================================"
+	@echo "🔥 Fetching trending, active, gainer, and loser stocks..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py popular-tickers
+
+add-ticker:
+	@echo "========================================================================"
+	@echo "➕ Adding ticker $(TICKER) to the database..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py add-ticker --symbol "$(TICKER)"
+

@@ -191,13 +191,13 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
         # 1. Check if a previously active long position was closed (by stop loss or take profit)
         is_long = ctx.long_pos() is not None
         was_long = ctx.symbol in active_longs
-        
+
         if was_long and not is_long:
             active_longs.remove(ctx.symbol)
             if ctx.symbol in current_hedges:
                 hedge_symbol, hedge_val = current_hedges.pop(ctx.symbol)
                 active_hedges[hedge_symbol] = max(0.0, active_hedges.get(hedge_symbol, 0.0) - hedge_val)
-        
+
         # 2. Check if this symbol is a benchmark index
         BENCHMARKS = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP"}
         if ctx.symbol in BENCHMARKS:
@@ -208,7 +208,7 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
             elif ctx.short_pos():
                 ctx.cover_all_shares()
             return
-            
+
         # 3. For standard stock tickers: check if we need to manage short hedge position
         target_hedge = active_hedges.get(ctx.symbol, 0.0)
         if target_hedge > 0.0 and not is_long:
@@ -235,10 +235,10 @@ def run_short_term_backtest(prices_df, macro_df, model_path):
             close_price = ctx.close[-1]
             ctx.stop_loss = stop_loss_pct * close_price
             ctx.stop_profit = take_profit_pct * close_price
-            
+
             # Record active long
             active_longs.add(ctx.symbol)
-            
+
             # If hedge mode is active, set up short hedge
             if HEDGE_MODE in ('beta_neutral', 'pair_trade'):
                 hedge_symbol, beta = get_hedge_info(ctx, HEDGE_MODE)
