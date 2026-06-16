@@ -20,6 +20,9 @@ from app.database import init_db, SessionLocal, RecentPrice, DailyPrice, Univers
 # Symbols that differ between Massive/Polygon (class-B uses a dot) and Yahoo (uses a dash).
 MASSIVE_SYMBOL_OVERRIDES = {"BRK-B": "BRK.B"}
 
+# Fictional tickers (e.g. SpaceX SPACE) that should be generated synthetically.
+FICTIONAL_TICKERS = {"SPACE"}
+
 
 def map_ticker_to_massive(ticker):
     return MASSIVE_SYMBOL_OVERRIDES.get(ticker, ticker)
@@ -125,7 +128,17 @@ def fetch_yahoo_daily(ticker, start_date, end_date):
                 time.sleep(backoff_sec)
                 backoff_sec *= 2.0
                 continue
-            if res.status_code in (400, 404):
+            if res.status_code == 400:
+                try:
+                    res_json = res.json()
+                    err_desc = res_json.get("chart", {}).get("error", {}).get("description", "")
+                    if "Data doesn't exist for startDate" in err_desc:
+                        return "PRE_IPO_LIMIT"
+                except Exception:
+                    pass
+                print(f"Yahoo has no data for {ticker} ({yahoo_symbol}): HTTP {res.status_code} (likely delisted/renamed).")
+                return []
+            if res.status_code == 404:
                 print(f"Yahoo has no data for {ticker} ({yahoo_symbol}): HTTP {res.status_code} (likely delisted/renamed).")
                 return []
             res.raise_for_status()
@@ -316,6 +329,8 @@ def fetch_recent_prices():
 
     fetch_tasks = []
     for ticker in active_universe:
+        if ticker in FICTIONAL_TICKERS:
+            continue
         _, latest = _earliest_latest(db, RecentPrice, ticker)
         if latest is None:
             fetch_tasks.append((ticker, hourly_start, end_date))
@@ -346,6 +361,36 @@ def fetch_recent_prices():
                 continue
             added, updated = _write_bars(db, RecentPrice, ticker, bars, daily=False)
             print(f"{ticker}: +{added} new hourly bars, {updated} backfilled.")
+
+        # Synthetic SPACE hourly price generation using GE as proxy
+        active_universe = _get_active_universe(db)
+        if "SPACE" in active_universe:
+            space_count = db.query(RecentPrice).filter(RecentPrice.ticker == "SPACE").count()
+            if space_count < 100:
+                db.query(RecentPrice).filter(RecentPrice.ticker == "SPACE").delete()
+                ge_prices = db.query(RecentPrice).filter(RecentPrice.ticker == "GE").all()
+                if ge_prices:
+                    ge_latest = db.query(RecentPrice).filter(RecentPrice.ticker == "GE").order_by(RecentPrice.date.desc()).first()
+                    mult = 210.50 / ge_latest.close if ge_latest and ge_latest.close else 1.2
+                    new_space_prices = []
+                    for p in ge_prices:
+                        new_space_prices.append(RecentPrice(
+                            ticker="SPACE",
+                            date=p.date,
+                            open=p.open * mult,
+                            high=p.high * mult,
+                            low=p.low * mult,
+                            close=p.close * mult,
+                            volume=p.volume,
+                            sma_10=p.sma_10 * mult if p.sma_10 else None,
+                            sma_50=p.sma_50 * mult if p.sma_50 else None,
+                            rsi_14=p.rsi_14,
+                            macd=p.macd * mult if p.macd else None,
+                            macd_signal=p.macd_signal * mult if p.macd_signal else None
+                        ))
+                    db.bulk_save_objects(new_space_prices)
+                    db.commit()
+                    print(f"Synthesized {len(new_space_prices)} hourly prices for SPACE using GE as proxy (multiplier: {mult:.4f}).")
     finally:
         db.close()
     print("Hourly price fetch completed.\n")
@@ -367,8 +412,22 @@ def fetch_daily_history():
     print(f"Starting DAILY history fetch for {len(active_universe)} tickers "
           f"(since {DAILY_HISTORY_START})...")
 
+    # Load IPO markers to skip pre-IPO queries
+    import json
+    from app.core.config import DATA_STORAGE_DIR
+    ipo_markers_path = os.path.join(DATA_STORAGE_DIR, "ipo_markers.json")
+    ipo_markers = {}
+    if os.path.exists(ipo_markers_path):
+        try:
+            with open(ipo_markers_path, "r") as f:
+                ipo_markers = json.load(f)
+        except Exception:
+            pass
+
     fetch_tasks = []
     for ticker in active_universe:
+        if ticker in FICTIONAL_TICKERS:
+            continue
         earliest, latest = _earliest_latest(db, DailyPrice, ticker)
         if latest is None:
             fetch_tasks.append((ticker, default_start, end_date))
@@ -376,34 +435,88 @@ def fetch_daily_history():
         if latest < end_date - timedelta(days=1):
             fetch_tasks.append((ticker, latest, end_date))
         if earliest and default_start < earliest - timedelta(days=5):
+            if ticker in ipo_markers:
+                continue
             fetch_tasks.append((ticker, default_start, earliest))
     db.close()
 
     if not fetch_tasks:
         print("All tickers already up to date (daily).")
-        return
+    else:
+        print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...")
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(fetch_yahoo_daily, tk, s, e): (tk, s, e) for tk, s, e in fetch_tasks}
+            for future in as_completed(futures):
+                tk = futures[future][0]
+                try:
+                    bars = future.result()
+                    results_map.setdefault(tk, [])
+                    if bars == "PRE_IPO_LIMIT":
+                        results_map[tk] = "PRE_IPO_LIMIT"
+                    else:
+                        if isinstance(results_map[tk], list):
+                            results_map[tk].extend(bars)
+                except Exception as e:
+                    print(f"Error fetching daily {tk}: {e}")
 
-    print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...")
-    results_map = {}
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(fetch_yahoo_daily, tk, s, e): (tk, s, e) for tk, s, e in fetch_tasks}
-        for future in as_completed(futures):
-            tk = futures[future][0]
+        db = SessionLocal()
+        ipo_markers_updated = False
+        try:
+            for ticker, bars in results_map.items():
+                if bars == "PRE_IPO_LIMIT":
+                    earliest, _ = _earliest_latest(db, DailyPrice, ticker)
+                    if earliest:
+                        ipo_markers[ticker] = earliest.strftime("%Y-%m-%d")
+                        ipo_markers_updated = True
+                    continue
+                if not bars:
+                    print(f"No daily history available for {ticker} (likely delisted/renamed).")
+                    continue
+                added, updated = _write_bars(db, DailyPrice, ticker, bars, daily=True)
+                print(f"{ticker}: +{added} new daily bars, {updated} backfilled.")
+        finally:
+            db.close()
+
+        if ipo_markers_updated:
             try:
-                bars = future.result()
-                results_map.setdefault(tk, [])
-                results_map[tk].extend(bars)
+                with open(ipo_markers_path, "w") as f:
+                    json.dump(ipo_markers, f)
+                print(f"Saved IPO start markers to {ipo_markers_path}")
             except Exception as e:
-                print(f"Error fetching daily {tk}: {e}")
+                print(f"Error saving ipo_markers: {e}")
 
+    # Synthetic SPACE daily generation
     db = SessionLocal()
     try:
-        for ticker, bars in results_map.items():
-            if not bars:
-                print(f"No daily history available for {ticker} (likely delisted/renamed).")
-                continue
-            added, updated = _write_bars(db, DailyPrice, ticker, bars, daily=True)
-            print(f"{ticker}: +{added} new daily bars, {updated} backfilled.")
+        active_universe = _get_active_universe(db)
+        if "SPACE" in active_universe:
+            space_count = db.query(DailyPrice).filter(DailyPrice.ticker == "SPACE").count()
+            if space_count < 100:
+                db.query(DailyPrice).filter(DailyPrice.ticker == "SPACE").delete()
+                ge_prices = db.query(DailyPrice).filter(DailyPrice.ticker == "GE").all()
+                if ge_prices:
+                    ge_latest = db.query(DailyPrice).filter(DailyPrice.ticker == "GE").order_by(DailyPrice.date.desc()).first()
+                    mult = 210.50 / ge_latest.close if ge_latest and ge_latest.close else 1.2
+                    new_space_prices = []
+                    for p in ge_prices:
+                        new_space_prices.append(DailyPrice(
+                            ticker="SPACE",
+                            date=p.date,
+                            open=p.open * mult,
+                            high=p.high * mult,
+                            low=p.low * mult,
+                            close=p.close * mult,
+                            volume=p.volume,
+                            sma_10=p.sma_10 * mult if p.sma_10 else None,
+                            sma_50=p.sma_50 * mult if p.sma_50 else None,
+                            rsi_14=p.rsi_14,
+                            macd=p.macd * mult if p.macd else None,
+                            macd_signal=p.macd_signal * mult if p.macd_signal else None
+                        ))
+                    db.bulk_save_objects(new_space_prices)
+                    db.commit()
+                    print(f"Synthesized {len(new_space_prices)} daily prices for SPACE using GE as proxy (multiplier: {mult:.4f}).")
     finally:
         db.close()
     print("Daily history fetch completed.\n")
