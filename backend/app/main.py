@@ -16,11 +16,12 @@ from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, MPT_WINDOW_DAYS,
     SHORT_TERM_ATR_STOP_MULT, SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX,
     SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD, HEDGE_MODE,
+    ALT_DATA_ENABLED, LONGTERM_TILT_STRENGTH,
 )
 from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    SentimentSourceLog
+    SentimentSourceLog, InsiderDisclosure
 )
 from ml_engine.features import build_features_for_df, build_all_features
 from ml_engine.models import PortfolioOptimizer
@@ -154,6 +155,10 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     prices_count = db.query(RecentPrice).count()
     sent_count = db.query(TickerSentiment).count()
 
+    insider_count = db.query(InsiderDisclosure).count() if ALT_DATA_ENABLED else 0
+    latest_insider = db.query(InsiderDisclosure).order_by(InsiderDisclosure.date.desc()).first() if ALT_DATA_ENABLED else None
+    latest_insider_date = latest_insider.date if latest_insider else "none"
+
     cache_key = (
         date or "live",
         mode,
@@ -162,6 +167,8 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         latest_sent_date,
         prices_count,
         sent_count,
+        insider_count,
+        latest_insider_date,
         tuple(active_universe)
     )
 
@@ -435,13 +442,46 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         t_data['returns'] = t_data['close'].pct_change()
         returns_list.append(t_data[['date', 'returns']].rename(columns={'returns': ticker}))
 
+    scores_dict = {}
+    expected_return_tilt = None
+    if ALT_DATA_ENABLED:
+        try:
+            feat_universe = sorted(set(active_universe + ["SPY", "QQQ"]))
+            daily_features_df = build_all_features(daily_prices_df, None, daily_macro_df, feat_universe)
+            if not daily_features_df.empty:
+                equities = [t for t in active_universe if t not in ["SPY", "QQQ"] and not t.startswith(("X:", "C:"))]
+                eq_df = daily_features_df[daily_features_df["ticker"].isin(equities)].copy()
+                if not eq_df.empty:
+                    latest_feat_date = eq_df["date"].max()
+                    latest_eq_df = eq_df[eq_df["date"] == latest_feat_date].copy()
+                    
+                    insf = [c for c in ["feat_insider_officer_buy", "feat_insider_buy_count", "feat_insider_cluster"]
+                            if c in latest_eq_df.columns]
+                    if insf:
+                        # Calculate z-scores cross-sectionally for the latest date
+                        for c in insf:
+                            vals = latest_eq_df[c]
+                            mean_val = vals.mean()
+                            std_val = vals.std()
+                            latest_eq_df[c + "_z"] = (vals - mean_val) / (std_val + 1e-9)
+                        
+                        latest_eq_df["ins_score"] = latest_eq_df[[c + "_z" for c in insf]].mean(axis=1).fillna(0.0)
+                        scores_dict = latest_eq_df.set_index("ticker")["ins_score"].to_dict()
+                        expected_return_tilt = {
+                            t: float(LONGTERM_TILT_STRENGTH * scores_dict.get(t, 0.0))
+                            for t in equities
+                        }
+                        print(f"Computed expected return tilt on date {latest_feat_date}: {expected_return_tilt}")
+        except Exception as e:
+            print(f"Error computing expected return tilt in Suggestions API: {e}")
+
     if returns_list:
         returns_df = returns_list[0]
         for r in returns_list[1:]:
             returns_df = pd.merge(returns_df, r, on='date', how='outer')
         returns_df = returns_df.sort_values('date').tail(MPT_WINDOW_DAYS)
 
-        opt_weights = PortfolioOptimizer.calculate_optimal_weights(returns_df, current_regime)
+        opt_weights = PortfolioOptimizer.calculate_optimal_weights(returns_df, current_regime, expected_return_tilt=expected_return_tilt)
     else:
         opt_weights = {}
 
@@ -457,9 +497,10 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
             long_term_allocation.append({
                 "ticker": ticker,
                 "weight": weight,
-                "shares_multiplier": 1.0
+                "shares_multiplier": 1.0,
+                "insider_tilt_score": float(scores_dict.get(ticker, 0.0))
             })
-    long_term_allocation.append({"ticker": "CASH", "weight": cash_allocation})
+    long_term_allocation.append({"ticker": "CASH", "weight": cash_allocation, "insider_tilt_score": 0.0})
 
     res = {
         "date": datetime.now().strftime("%Y-%m-%d"),

@@ -123,6 +123,11 @@ except ValueError:
     CONGRESS_LOOKBACK_DAYS = 90
 HEDGE_MODE = os.getenv("HEDGE_MODE", "none")  # 'none', 'beta_neutral', 'pair_trade'
 
+try:
+    LONGTERM_TILT_STRENGTH = float(os.getenv("LONGTERM_TILT_STRENGTH", "0.15"))
+except ValueError:
+    LONGTERM_TILT_STRENGTH = 0.15
+
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
 
