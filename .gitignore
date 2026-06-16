@@ -12,8 +12,8 @@ backend/venv/
 frontend/node_modules/
 
 # Local database & data
-backend/data/trading_system.db
 backend/data/*.db
+!backend/data/trading_system.db
 
 # Caches
 pybroker_cache/
