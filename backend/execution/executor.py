@@ -14,6 +14,10 @@ from app.core.config import (
     ALPACA_BASE_URL,
     TICKER_UNIVERSE,
     HEDGE_MODE,
+    EXECUTION_STRATEGY,
+    SWING_POSITION_PCT,
+    SWING_HORIZON_DAYS,
+    LONGTERM_GRID_ENABLED,
 )
 from app.database import (
     SessionLocal, init_db, ExecutedTrade, RecentPrice,
@@ -555,6 +559,136 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data, mode="real"):
         sim_date = datetime.now().strftime("%Y-%m-%d")
     execute_long_term_grid_trades(db, api, suggestions_data, sim_date)
 
+def close_aged_swing_positions(api, db, mode="real", horizon_days=None):
+    """Closes swing positions held past their intended horizon that haven't hit a bracket.
+
+    The validated strategy exits at the triple-barrier OR at the horizon; Alpaca brackets only cover the
+    stop/take-profit, so this provides the time-based leg. Identifies swing entries as filled BUY orders
+    carrying a stop+take-profit, and closes any whose age exceeds ~horizon trading days."""
+    horizon_days = horizon_days or SWING_HORIZON_DAYS
+    max_cal_days = int(horizon_days * 1.5) + 1   # ~trading days → calendar days, with a small buffer
+    try:
+        open_positions = {p.symbol: p for p in api.list_positions()}
+    except Exception as e:
+        print(f"Could not list positions for horizon exit: {e}")
+        return
+    if not open_positions:
+        return
+
+    now = datetime.now()
+    for ticker, pos in open_positions.items():
+        entry = db.query(VirtualOrder).filter(
+            VirtualOrder.ticker == ticker, VirtualOrder.mode == mode, VirtualOrder.side == "buy",
+            (VirtualOrder.stop_loss.isnot(None) | VirtualOrder.take_profit.isnot(None))
+        ).order_by(VirtualOrder.created_at.desc()).first()
+        if not entry or not entry.created_at:
+            continue
+        try:
+            opened = datetime.fromisoformat(entry.created_at.split("T")[0] if "T" in entry.created_at else entry.created_at.split(" ")[0])
+        except ValueError:
+            continue
+        age = (now - opened).days
+        if age >= max_cal_days:
+            print(f"Swing horizon exit: {ticker} held {age}d (≥ ~{horizon_days} trading days). Closing.")
+            try:
+                api.close_position(ticker)   # cancels the bracket OCO and flattens
+                db.add(VirtualOrder(id=f"swing-horizon-{ticker}-{int(time.time())}", mode=mode, ticker=ticker,
+                                    qty=float(pos.qty), side="sell", type="market", status="submitted",
+                                    created_at=now.isoformat()))
+                db.commit()
+            except Exception as e:
+                print(f"Failed horizon exit for {ticker}: {e}")
+                db.rollback()
+
+
+def execute_swing_paper_trades(api, db, suggestions_data, mode="real"):
+    """Places swing (multi-day) bracket trades on Alpaca paper from `swing_suggestions`.
+
+    Sizing is a FIXED fraction of equity (SWING_POSITION_PCT), matching the capital-aware portfolio
+    simulation that validated the edge — deliberately NOT Kelly, whose input would be the model's
+    low ranking-prob and would zero most positions. Entries are bracket orders (stop + take-profit);
+    the time-based horizon exit is handled separately by close_aged_swing_positions()."""
+    print("--- Executing Swing (Multi-Day) Paper Trades via Alpaca API ---")
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    swing_sugs = suggestions_data.get("swing_suggestions", [])
+    buys = [s for s in swing_sugs if s.get("action") == "BUY"]
+    if not buys:
+        print("No swing BUY signals today.")
+        return
+
+    account = api.get_account()
+    portfolio_equity = float(account.equity)
+    buying_power = float(account.buying_power)
+    print(f"Alpaca Account Equity: ${portfolio_equity:.2f} | Buying Power: ${buying_power:.2f} | swing BUYs: {len(buys)}")
+
+    open_positions = api.list_positions()
+    active_tickers = [p.symbol for p in open_positions]
+    positions_db = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
+
+    for sug in buys:
+        ticker = sug["ticker"]
+        close_price = sug["close"]
+        stop_loss = sug.get("stop_loss")
+        take_profit = sug.get("take_profit")
+
+        if ticker in positions_db and positions_db[ticker].policy == "lock":
+            print(f"{ticker} is locked. Skipping.")
+            continue
+        if ticker in active_tickers:
+            print(f"Already holding {ticker}. Skipping.")
+            continue
+        if not stop_loss or not take_profit or close_price <= 0:
+            print(f"{ticker} missing bracket levels. Skipping.")
+            continue
+
+        # Recompute brackets off the LIVE entry price, not the (possibly stale) stored close. The model
+        # gives bracket WIDTHS as percentages; anchoring them to a stale close can put the stop above the
+        # live price and get the order rejected. Falls back to the stored close if no live quote.
+        sl_pct = 1.0 - (stop_loss / close_price)
+        tp_pct = (take_profit / close_price) - 1.0
+        try:
+            entry_price = float(api.get_latest_trade(ticker).price)
+        except Exception:
+            entry_price = close_price
+        if entry_price <= 0:
+            entry_price = close_price
+        stop_price = round(entry_price * (1.0 - sl_pct), 2)
+        target_price = round(entry_price * (1.0 + tp_pct), 2)
+
+        trade_value = min(portfolio_equity * SWING_POSITION_PCT, buying_power)
+        shares = int(trade_value / entry_price)
+        if shares < 1 or trade_value < 100.0:
+            print(f"Skipping {ticker}: position too small (${trade_value:.0f}).")
+            continue
+
+        stop_loss, take_profit = stop_price, target_price
+        print(f"Submitting swing bracket order for {ticker}: {shares} sh @ ~${entry_price:.2f} "
+              f"(stop ${stop_loss:.2f}, target ${take_profit:.2f}, conf {sug['confidence']*100:.0f}%)...")
+        try:
+            order = api.submit_order(
+                symbol=ticker, qty=shares, side="buy", type="market", time_in_force="gtc",
+                order_class="bracket",
+                take_profit=dict(limit_price=round(take_profit, 2)),
+                stop_loss=dict(stop_price=round(stop_loss, 2)),
+            )
+            db.add(ExecutedTrade(ticker=ticker, date=date_str, action="BUY", price=entry_price,
+                                 shares=float(shares), value=float(shares * entry_price), status="filled"))
+            if not db.query(VirtualOrder).filter(VirtualOrder.id == order.id).first():
+                db.add(VirtualOrder(id=order.id, mode=mode, ticker=ticker, qty=float(shares), side="buy",
+                                    type="market", status="submitted",
+                                    stop_loss=float(stop_loss), take_profit=float(take_profit),
+                                    created_at=datetime.now().isoformat()))
+            db.commit()
+            buying_power -= shares * entry_price
+            print(f"  Order submitted. ID: {order.id}")
+        except Exception as e:
+            print(f"Failed to submit swing order for {ticker}: {e}")
+            db.rollback()
+
+    print("Swing paper executions complete.\n")
+
+
 def get_long_term_available_shares(db, ticker, current_date_str):
     """
     Finds shares that have been held for more than 1 year (365 days)
@@ -713,7 +847,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date):
                             qty=n_shares,
                             side='buy',
                             type='market',
-                            time_in_force='gtc'
+                            time_in_force='day'   # Alpaca requires DAY for fractional-share quantities
                         )
                         existing = db.query(VirtualOrder).filter(VirtualOrder.id == lt_order.id).first()
                         if not existing:
@@ -749,7 +883,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date):
                             qty=m_shares,
                             side='sell',
                             type='market',
-                            time_in_force='gtc'
+                            time_in_force='day'   # Alpaca requires DAY for fractional-share quantities
                         )
                         existing = db.query(VirtualOrder).filter(VirtualOrder.id == lt_order.id).first()
                         if not existing:
@@ -794,8 +928,20 @@ def run_execution():
             print("Retrieving daily trade recommendations...")
             suggestions_data = get_daily_suggestions(date=None, hedge_mode=HEDGE_MODE, db=db)
 
-            # 4. Run execution
-            execute_alpaca_live_paper_trade(api, db, suggestions_data)
+            # 4. Run execution. Swing (multi-day) is the default validated strategy; the legacy hourly
+            #    short-term model is opt-in (EXECUTION_STRATEGY=short_term) since it's net-negative.
+            if EXECUTION_STRATEGY == "swing":
+                close_aged_swing_positions(api, db)
+                execute_swing_paper_trades(api, db, suggestions_data)
+            else:
+                execute_alpaca_live_paper_trade(api, db, suggestions_data)
+
+            # In swing mode the long-term MPT grid is opt-in (LONGTERM_GRID_ENABLED), since swing alone
+            # targets ~100% of equity. The legacy short-term path runs the grid itself, as before.
+            if EXECUTION_STRATEGY == "swing" and LONGTERM_GRID_ENABLED:
+                from app.main import get_sim_date
+                execute_long_term_grid_trades(db, api, suggestions_data,
+                                              get_sim_date() or datetime.now().strftime("%Y-%m-%d"))
 
             # 5. Final sync to capture immediate fills
             print("Running final synchronization post-trade...")

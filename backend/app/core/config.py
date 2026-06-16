@@ -149,6 +149,16 @@ SWING_STOP_MAX = float(os.getenv("SWING_STOP_MAX", "0.05"))
 # Cap concurrent BUYs to the highest-conviction names, matching the ≤10 open positions the portfolio
 # simulation used to validate the edge. Lower-ranked above-threshold candidates are demoted to HOLD.
 SWING_TOP_N = int(os.getenv("SWING_TOP_N", "10"))
+# Fixed fraction of equity per swing position. The portfolio sim that validated the edge used fixed 10%
+# allocations (NOT Kelly) — the model's win-prob is a ranking score, not a calibrated Kelly input, so
+# Kelly sizing would zero most positions. Keep this in lock-step with that sim.
+SWING_POSITION_PCT = float(os.getenv("SWING_POSITION_PCT", "0.10"))
+# Which strategy actually places intraday bracket trades on the broker: 'swing' (validated edge) or
+# 'short_term' (legacy hourly model — net-negative in portfolio sim, kept only for comparison).
+EXECUTION_STRATEGY = os.getenv("EXECUTION_STRATEGY", "swing").lower()
+# Whether to ALSO run the long-term MPT grid/tranche rebalancer alongside swing. Off by default: swing
+# alone targets ~100% of equity, so enabling both would deploy the long-term book on margin.
+LONGTERM_GRID_ENABLED = os.getenv("LONGTERM_GRID_ENABLED", "False").lower() in ("true", "1", "yes")
 
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
