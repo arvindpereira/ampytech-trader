@@ -58,7 +58,7 @@ install:
 	cd frontend && npm install
 	@echo "✅ Install complete."
 
-bootstrap: fetch train
+bootstrap: popular-tickers add-ticker fetch train
 	@echo "✅ Bootstrap complete. Run 'make serve' to start the app."
 
 # ----------------------------------------------------------------------------
