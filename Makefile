@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt backtest \
+.PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval backtest \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -7,6 +7,7 @@ DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
 HORIZON ?= 21
+SWING_HORIZON ?= 5
 STRENGTH ?= 0.10
 NEWS_START ?= 2024-01-01
 LLM_MODEL ?= gemma4:e4b
@@ -36,6 +37,7 @@ help:
 	@echo "  make calibrate         - Calibrate the served-model BUY threshold (-> threshold.json)"
 	@echo "  make longterm-eval     - Test insider buying at the daily 1-3 month horizon [HORIZON=21]"
 	@echo "  make longterm-tilt     - A/B backtest the insider-buy MPT tilt [STRENGTH=0.10]"
+	@echo "  make swing-eval        - Swing model walk-forward + portfolio sim, WITH vs WITHOUT LLM news [SWING_HORIZON=5]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -121,6 +123,12 @@ news-llm:
 	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START)
+
+swing-eval:
+	@echo "========================================================================"
+	@echo "🪁 Swing walk-forward + portfolio sim — WITH vs WITHOUT LLM news [SWING_HORIZON=$(SWING_HORIZON)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py swing-eval --horizon $(SWING_HORIZON) --splits $(SPLITS)
 
 longterm-tilt:
 	@echo "========================================================================"
