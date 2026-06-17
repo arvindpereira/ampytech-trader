@@ -1252,6 +1252,69 @@ def trigger_reconciliation(db=Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+_price_summary_cache = {"data": None, "timestamp": None}
+
+@app.get("/api/prices/summary")
+def get_price_summary(db=Depends(get_db)):
+    """Per-ticker current price + 1D/1W/1M/1Y % change for the active universe.
+
+    Current price is the live Alpaca trade when available (one batched call), else the latest stored
+    daily close. Timeframe changes are measured off the stored daily closes. Cached for 60s."""
+    global _price_summary_cache
+    now = datetime.now()
+    if (_price_summary_cache["data"] is not None and _price_summary_cache["timestamp"]
+            and now - _price_summary_cache["timestamp"] < timedelta(seconds=60)):
+        return _price_summary_cache["data"]
+
+    db_tickers = db.query(UniverseTicker).all()
+    universe = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)
+
+    start = (now - timedelta(days=420)).strftime("%Y-%m-%d")
+    rows = db.query(DailyPrice.ticker, DailyPrice.date, DailyPrice.close).filter(
+        DailyPrice.date >= start, DailyPrice.ticker.in_(universe)).all()
+    from collections import defaultdict
+    series = defaultdict(list)
+    for tk, d, c in rows:
+        series[tk].append((d, c))
+
+    # Live prices in one batched Alpaca call; degrade gracefully to the latest daily close.
+    live = {}
+    try:
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api()
+        trades = api.get_latest_trades(universe)
+        for tk, tr in trades.items():
+            live[tk] = float(tr.price)
+    except Exception as e:
+        print(f"Live price fetch unavailable, using daily closes: {e}")
+
+    def pct(cur, base):
+        return round((cur / base - 1.0) * 100.0, 2) if base else None
+
+    out = []
+    for tk in universe:
+        s = sorted(series.get(tk, []), key=lambda x: x[0])
+        closes = [c for _, c in s if c]
+        if not closes:
+            continue
+        is_live = tk in live
+        cur = live.get(tk, closes[-1])
+        o = 0 if is_live else 1   # when live, closes[-1] is the prior session; else cur == closes[-1]
+
+        def base(k):
+            idx = k + o
+            return closes[-idx] if len(closes) >= idx else closes[0]
+
+        out.append({
+            "ticker": tk, "price": round(cur, 2), "is_live": is_live,
+            "d1": pct(cur, base(1)), "w1": pct(cur, base(5)),
+            "m1": pct(cur, base(21)), "y1": pct(cur, base(252)),
+        })
+    out.sort(key=lambda x: x["ticker"])
+    res = {"prices": out, "as_of": now.strftime("%Y-%m-%d %H:%M")}
+    _price_summary_cache = {"data": res, "timestamp": now}
+    return res
+
 # In-memory cache for screener results to keep response quick
 _volatile_screener_cache = {
     "data": None,

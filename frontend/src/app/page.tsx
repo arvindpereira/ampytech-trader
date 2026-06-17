@@ -146,9 +146,10 @@ export default function Home() {
 
   // Sentiment Transparency & Premium uploader states
   const [sentimentList, setSentimentList] = useState<any[]>([]);
-  const [selectedSentTicker, setSelectedSentTicker] = useState<string>('TSLA');
   const [sentSources, setSentSources] = useState<any[]>([]);
   const [loadingSources, setLoadingSources] = useState<boolean>(false);
+  const [priceSummary, setPriceSummary] = useState<any[]>([]);
+  const [expandedTicker, setExpandedTicker] = useState<string>('');
   const [premiumForm, setPremiumForm] = useState({
     ticker: 'AAPL',
     title: '',
@@ -205,7 +206,7 @@ export default function Home() {
           setPremiumStatus(`Analyzed! Score: ${data.score >= 0 ? '+' : ''}${data.score.toFixed(2)}`);
           setPremiumForm({ ticker: 'AAPL', title: '', text: '', url: '' });
           fetchData();
-          fetchSources(selectedSentTicker);
+          if (expandedTicker) fetchSources(expandedTicker);
         } else {
           setPremiumStatus('Failed to upload article.');
         }
@@ -278,6 +279,13 @@ export default function Home() {
         setSentimentList(sentData.sentiment || []);
       }
 
+      // 7. Fetch per-ticker price summary (live price + 1D/1W/1M/1Y changes)
+      const priceRes = await fetch(`http://localhost:8008/api/prices/summary`);
+      if (priceRes.ok) {
+        const priceData = await priceRes.json();
+        setPriceSummary(priceData.prices || []);
+      }
+
     } catch (err) {
       console.warn("FastAPI backend is offline.");
       setBackendOnline(false);
@@ -290,6 +298,7 @@ export default function Home() {
         setVirtualPositions([]);
         setPerfCurve([]);
         setSentimentList([]);
+        setPriceSummary([]);
       }
     } finally {
       setLoading(false);
@@ -297,10 +306,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (selectedSentTicker) {
-      fetchSources(selectedSentTicker);
+    if (expandedTicker) {
+      fetchSources(expandedTicker);
     }
-  }, [selectedSentTicker, backendOnline, appMode]);
+  }, [expandedTicker, backendOnline, appMode]);
 
   const loadMockData = () => {
     setDate(new Date().toISOString().split('T')[0]);
@@ -961,18 +970,159 @@ export default function Home() {
 
             {/* Right Column */}
             <aside>
-              {/* Sentiment feeds */}
+              {/* Watchlist: live prices + click-to-expand news/sentiment */}
               <div className="glass-card">
+                <h2>
+                  <Activity size={20} color="var(--color-buy)" />
+                  Watchlist &mdash; Prices &amp; News
+                </h2>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Live price with 1D / 1W / 1M / 1Y change. Click any ticker to expand the latest news &amp; sentiment articles behind it.
+                </p>
+
+                {(() => {
+                  // Average sentiment score per ticker (for the inline chip)
+                  const sentMap: any = {};
+                  sentimentList.forEach(item => {
+                    const t = item.ticker;
+                    if (!sentMap[t]) sentMap[t] = { total: 0, count: 0 };
+                    sentMap[t].total += item.sentiment_score;
+                    sentMap[t].count += 1;
+                  });
+
+                  if (priceSummary.length === 0) {
+                    return (
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        {appMode === 'real'
+                          ? "No price data loaded yet. Run 'make fetch' to ingest market data."
+                          : "No price data loaded. Start the backend or run simulated fetching."
+                        }
+                      </p>
+                    );
+                  }
+
+                  const renderChg = (label: string, v: number | null) => (
+                    <div style={{ flex: 1, textAlign: 'center' }}>
+                      <div style={{ fontSize: '9px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</div>
+                      <div className={v == null ? '' : v > 0 ? 'text-green' : v < 0 ? 'text-red' : ''} style={{ fontSize: '12px', fontWeight: 600 }}>
+                        {v == null ? '–' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`}
+                      </div>
+                    </div>
+                  );
+
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '620px', overflowY: 'auto', paddingRight: '4px' }}>
+                      {priceSummary.map((p: any, idx: number) => {
+                        const isOpen = expandedTicker === p.ticker;
+                        const sm = sentMap[p.ticker];
+                        const avg = sm ? sm.total / sm.count : null;
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              borderRadius: '8px',
+                              border: isOpen ? '1px solid var(--color-buy)' : '1px solid var(--border-glass)',
+                              background: isOpen ? 'rgba(0, 242, 254, 0.06)' : 'rgba(255,255,255,0.02)',
+                              transition: 'var(--transition-smooth)'
+                            }}
+                          >
+                            <div
+                              onClick={() => setExpandedTicker(isOpen ? '' : p.ticker)}
+                              style={{ padding: '10px 12px', cursor: 'pointer' }}
+                              className="sentiment-list-item"
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '14px' }}>{p.ticker}</span>
+                                  {p.is_live && (
+                                    <span title="Live price" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-buy)', display: 'inline-block' }} />
+                                  )}
+                                  {avg != null && (
+                                    <span className={avg >= 0.05 ? 'text-green' : avg <= -0.05 ? 'text-red' : ''} style={{ fontSize: '10px', fontWeight: 600 }}>
+                                      sent {avg > 0 ? '+' : ''}{avg.toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
+                                <span style={{ fontWeight: 600, fontSize: '14px' }}>${p.price.toFixed(2)}</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '4px' }}>
+                                {renderChg('1D', p.d1)}
+                                {renderChg('1W', p.w1)}
+                                {renderChg('1M', p.m1)}
+                                {renderChg('1Y', p.y1)}
+                              </div>
+                            </div>
+                            {isOpen && (
+                              <div style={{ borderTop: '1px solid var(--border-glass)', padding: '10px 12px' }}>
+                                {loadingSources ? (
+                                  <div style={{ display: 'flex', justifyContent: 'center', padding: '12px' }}>
+                                    <RefreshCw size={18} className="animate-spin" color="var(--color-accent)" />
+                                  </div>
+                                ) : sentSources.length === 0 ? (
+                                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '8px 0' }}>
+                                    {appMode === 'real'
+                                      ? `No news/sentiment articles found for ${p.ticker} in the database.`
+                                      : `No active sources logged for ${p.ticker} today.`
+                                    }
+                                  </p>
+                                ) : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
+                                    {sentSources.map((src: any, sidx: number) => (
+                                      <div
+                                        key={sidx}
+                                        style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px' }}
+                                      >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px', marginBottom: '6px' }}>
+                                          <span style={{
+                                            fontSize: '10px', padding: '2px 6px', borderRadius: '4px',
+                                            background: src.source === 'premium' ? 'rgba(245, 158, 11, 0.15)' : src.source === 'reddit' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                                            color: src.source === 'premium' ? '#F59E0B' : src.source === 'reddit' ? '#A78BFA' : '#3B82F6',
+                                            fontWeight: 600, textTransform: 'uppercase'
+                                          }}>
+                                            {src.source}
+                                          </span>
+                                          <span className={src.score >= 0.05 ? 'text-green' : src.score <= -0.05 ? 'text-red' : ''} style={{ fontSize: '12px', fontWeight: 600 }}>
+                                            {src.score > 0 ? '+' : ''}{src.score.toFixed(2)}
+                                          </span>
+                                        </div>
+                                        <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '4px', lineHeight: '1.3' }}>
+                                          {src.title}
+                                        </div>
+                                        {src.text && (
+                                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', whiteSpace: 'pre-wrap', maxHeight: '60px', overflowY: 'auto' }}>
+                                            {src.text}
+                                          </div>
+                                        )}
+                                        {src.url && (
+                                          <a href={src.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: 'var(--color-buy)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                            Verify Source Link &rarr;
+                                          </a>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Social Sentiment Index (moved below): ranking by social/news mention volume */}
+              <div className="glass-card" style={{ marginTop: '24px' }}>
                 <h2>
                   <Zap size={20} color="var(--color-buy)" />
                   Social Sentiment Index
                 </h2>
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  Select an active ticker below to verify individual article/Reddit sentiment scores:
+                  Tickers ranked by mention volume with their average sentiment. Click one to expand its news above.
                 </p>
 
                 {(() => {
-                  // Compute ticker averages
                   const summaryMap: any = {};
                   sentimentList.forEach(item => {
                     const t = item.ticker;
@@ -1003,22 +1153,18 @@ export default function Home() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {list.map((item: any, idx: number) => {
                         const avg = item.totalScore / item.count;
-                        const isSelected = selectedSentTicker === item.ticker;
                         return (
                           <div
                             key={idx}
-                            onClick={() => {
-                              setSelectedSentTicker(item.ticker);
-                              fetchSources(item.ticker);
-                            }}
+                            onClick={() => setExpandedTicker(item.ticker)}
                             style={{
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'center',
                               padding: '12px',
                               borderRadius: '8px',
-                              background: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(255,255,255,0.02)',
-                              border: isSelected ? '1px solid var(--color-buy)' : '1px solid var(--border-glass)',
+                              background: 'rgba(255,255,255,0.02)',
+                              border: '1px solid var(--border-glass)',
                               cursor: 'pointer',
                               transition: 'var(--transition-smooth)'
                             }}
@@ -1059,91 +1205,6 @@ export default function Home() {
                     </div>
                   );
                 })()}
-              </div>
-
-              {/* Sentiment Inspector Card */}
-              <div className="glass-card" style={{ marginTop: '24px' }}>
-                <h2>
-                  <ShieldAlert size={20} color="var(--color-accent)" />
-                  Sentiment Source Inspector
-                </h2>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Ticker: <span style={{ color: 'var(--color-buy)' }}>{selectedSentTicker}</span>
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                    Active Feed Log
-                  </span>
-                </div>
-
-                {loadingSources ? (
-                  <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
-                    <RefreshCw size={20} className="animate-spin" color="var(--color-accent)" />
-                  </div>
-                ) : sentSources.length === 0 ? (
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>
-                    {appMode === 'real'
-                      ? `No real sentiment articles or Reddit logs found for ${selectedSentTicker} in the database.`
-                      : `No active sentiment sources logged for ${selectedSentTicker} today.`
-                    }
-                  </p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '320px', overflowY: 'auto', paddingRight: '4px' }}>
-                    {sentSources.map((src: any, idx: number) => (
-                      <div
-                        key={idx}
-                        style={{
-                          background: 'rgba(0,0,0,0.2)',
-                          border: '1px solid var(--border-glass)',
-                          borderRadius: '8px',
-                          padding: '10px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px', marginBottom: '6px' }}>
-                          <span style={{
-                            fontSize: '10px',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            background: src.source === 'premium' ? 'rgba(245, 158, 11, 0.15)' : src.source === 'reddit' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-                            color: src.source === 'premium' ? '#F59E0B' : src.source === 'reddit' ? '#A78BFA' : '#3B82F6',
-                            fontWeight: 600,
-                            textTransform: 'uppercase'
-                          }}>
-                            {src.source}
-                          </span>
-                          <span className={src.score >= 0.05 ? 'text-green' : src.score <= -0.05 ? 'text-red' : ''} style={{ fontSize: '12px', fontWeight: 600 }}>
-                            {src.score > 0 ? '+' : ''}{src.score.toFixed(2)}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '4px', lineHeight: '1.3' }}>
-                          {src.title}
-                        </div>
-                        {src.text && (
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', whiteSpace: 'pre-wrap', maxHeight: '60px', overflowY: 'auto' }}>
-                            {src.text}
-                          </div>
-                        )}
-                        {src.url && (
-                          <a
-                            href={src.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              fontSize: '11px',
-                              color: 'var(--color-buy)',
-                              textDecoration: 'none',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                          >
-                            Verify Source Link &rarr;
-                          </a>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
 
               {/* Premium Article Ingestion Card */}
