@@ -60,9 +60,10 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
                    start_date=None, end_date=None, oos_start=None, progress_cb=None):
     """Returns {series, metrics, window, caveats, mode}.
 
-    Default (no dates) = walk-forward model evaluation. If start_date/end_date are given it's a STRESS
-    window: the long-term MPT engine + benchmarks are evaluated over that historical span (swing is not
-    evaluated historically — its LLM news only exists from 2024)."""
+    Default (no dates) = walk-forward model evaluation (use `oos_start` to choose where the swing OOS
+    test begins, e.g. 2022-01-01 to include the 2022 bear). If start_date/end_date are given it's a
+    STRESS window: the long-term MPT engine + benchmarks are evaluated over that fixed historical span;
+    swing is shown via walk-forward + oos_start instead, not in a fixed window."""
     def report(p, note):
         if progress_cb:
             progress_cb(int(p), note)
@@ -80,7 +81,17 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
         if curve:
             raw["swing"] = _curve_to_daily(curve)
     elif "swing" in strategies and windowed:
-        caveats.append("Swing isn't shown over historical windows — its LLM-scored news only exists from 2024.")
+        from app.database import NewsLLMScore
+        from sqlalchemy import func as _func
+        _db = SessionLocal()
+        try:
+            earliest_news = _db.query(_func.min(NewsLLMScore.date)).scalar()
+        finally:
+            _db.close()
+        caveats.append(
+            "Swing isn't run for a fixed historical window here. To test swing over a past period (e.g. "
+            "the 2022 bear), switch to Walk-forward mode and set \"OOS test starts\" to that date — that "
+            f"keeps it look-ahead-free. Swing's LLM-scored news covers {earliest_news or 'recent dates'} onward.")
 
     ref_start = start_date if windowed else (raw["swing"].index[0] if "swing" in raw and len(raw["swing"]) else "2023-06-16")
 
