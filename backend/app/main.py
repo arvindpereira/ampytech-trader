@@ -118,6 +118,18 @@ def get_jobs():
     return {"jobs": _jobs_snapshot()}
 
 _EVAL_RESULTS = {}
+_SUGGEST_RESULTS = {}
+
+def _run_suggest_job(jid, oos_start):
+    try:
+        from ml_engine.strategy_suggester import suggest_strategies
+        res = suggest_strategies(oos_start=oos_start,
+                                 progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        _SUGGEST_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
 
 def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start):
     try:
@@ -1193,6 +1205,26 @@ def get_evaluation_result(job_id: str):
     """Poll an evaluation job: returns the curves+metrics when done, else the running progress."""
     if job_id in _EVAL_RESULTS:
         return {"status": "done", "result": _EVAL_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.post("/api/strategy/suggest")
+def start_strategy_suggest(oos_start: str = "2022-01-01"):
+    """Kick off the per-ticker strategy suggester (swing vs longterm vs hold) as a background job."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "suggest" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("suggest", "Suggesting strategies")
+    threading.Thread(target=_run_suggest_job, args=(jid, oos_start), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/strategy/suggest/result")
+def get_strategy_suggest_result(job_id: str):
+    """Poll the strategy-suggester job: per-ticker recommendations when done, else running progress."""
+    if job_id in _SUGGEST_RESULTS:
+        return {"status": "done", "result": _SUGGEST_RESULTS[job_id]}
     j = [x for x in _jobs_snapshot() if x["id"] == job_id]
     if j:
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}

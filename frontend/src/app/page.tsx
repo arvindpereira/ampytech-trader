@@ -137,6 +137,9 @@ export default function Home() {
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [strategyConfig, setStrategyConfig] = useState<any>(null);
   const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string }>({ swing: '', longterm: '' });
+  const [suggestRunning, setSuggestRunning] = useState<boolean>(false);
+  const [suggestProgress, setSuggestProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
+  const [suggestData, setSuggestData] = useState<any>(null);
   const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
@@ -261,6 +264,45 @@ export default function Home() {
       fetchStrategyConfig();
       fetchData();
     } catch (err) { console.error(err); }
+  };
+
+  const handleSuggestStrategies = async () => {
+    setSuggestRunning(true);
+    setSuggestData(null);
+    setSuggestProgress({ pct: 0, stage: 'Starting…' });
+    try {
+      const res = await fetch(`http://localhost:8008/api/strategy/suggest?oos_start=2022-01-01`, { method: 'POST' });
+      const { job_id } = await res.json();
+      const poll = async () => {
+        try {
+          const r = await fetch(`http://localhost:8008/api/strategy/suggest/result?job_id=${job_id}`);
+          const d = await r.json();
+          if (d.status === 'done') { setSuggestData(d.result); setSuggestRunning(false); }
+          else if (d.status === 'error' || d.status === 'unknown') { setSuggestProgress({ pct: 0, stage: 'Failed: ' + (d.error || 'job lost') }); setSuggestRunning(false); }
+          else { setSuggestProgress({ pct: d.progress || 0, stage: d.stage || 'Running…' }); setTimeout(poll, 2000); }
+        } catch (err) { setSuggestRunning(false); }
+      };
+      poll();
+    } catch (err) { console.error(err); setSuggestRunning(false); }
+  };
+
+  const suggestMap: Record<string, any> = {};
+  if (suggestData?.suggestions) suggestData.suggestions.forEach((s: any) => { suggestMap[s.ticker] = s; });
+
+  const handleAcceptAllSuggestions = async () => {
+    if (!suggestData?.suggestions) return;
+    const cur = strategyConfig?.assignments || {};
+    const changes = suggestData.suggestions.filter((s: any) => (cur[s.ticker] || 'swing') !== s.recommended);
+    if (changes.length && !confirm(`Apply ${changes.length} strategy change(s) to your tickers?`)) return;
+    setActionBusy(true);
+    try {
+      for (const s of changes) {
+        await fetch(`http://localhost:8008/api/strategy/ticker`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: s.ticker, strategy: s.recommended }),
+        });
+      }
+      fetchStrategyConfig(); fetchData();
+    } catch (err) { console.error(err); } finally { setActionBusy(false); }
   };
 
   const handleSaveBuckets = async () => {
@@ -1935,6 +1977,44 @@ export default function Home() {
                     </>
                   );
                 })()}
+
+                {/* Per-stock strategy suggester */}
+                <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <button onClick={handleSuggestStrategies} disabled={suggestRunning}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,242,254,0.1)', border: '1px solid var(--color-buy)', borderRadius: '8px', color: 'var(--color-buy)', padding: '8px 16px', cursor: suggestRunning ? 'default' : 'pointer', fontWeight: 600, fontSize: '13px', opacity: suggestRunning ? 0.6 : 1 }}>
+                      {suggestRunning ? <RefreshCw size={14} className="animate-spin" /> : <Sliders size={14} />}
+                      {suggestRunning ? 'Analyzing…' : 'Suggest per-stock strategies'}
+                    </button>
+                    {suggestData?.counts && (
+                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        Suggested: <span style={{ color: 'var(--color-buy)' }}>{suggestData.counts.swing} swing</span>, <span style={{ color: 'var(--color-accent)' }}>{suggestData.counts.longterm} long-term</span>, {suggestData.counts.hold} hold
+                      </span>
+                    )}
+                    {suggestData?.suggestions && (
+                      <button onClick={handleAcceptAllSuggestions} disabled={actionBusy}
+                        style={{ background: 'var(--color-accent)', border: 'none', borderRadius: '8px', color: 'white', padding: '8px 14px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}>
+                        Accept all
+                      </button>
+                    )}
+                  </div>
+                  {suggestRunning && (
+                    <div style={{ marginTop: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                        <span style={{ color: 'var(--color-buy)' }}>{suggestProgress.stage}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{suggestProgress.pct}%</span>
+                      </div>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                        <div style={{ width: `${suggestProgress.pct}%`, height: '100%', background: 'var(--color-buy)', transition: 'width 0.4s' }} />
+                      </div>
+                    </div>
+                  )}
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '10px', lineHeight: '1.5' }}>
+                    Evidence-driven (out-of-sample incl. the 2022 bear): recommends swing only where a ticker shows a real
+                    news-driven edge, else long-term MPT, else hold. Suggestions appear in the Strategy column below; review
+                    before accepting. Conservative by design and based on a single-regime, survivorship-biased history.
+                  </p>
+                </div>
               </div>
 
               {/* Holdings policy table */}
@@ -2131,6 +2211,22 @@ export default function Home() {
                                       <option key={val} value={val}>{label}</option>
                                     ))}
                                   </select>
+                                  {(() => {
+                                    const sg = suggestMap[h.ticker];
+                                    if (!sg) return null;
+                                    const cur = (strategyConfig?.assignments?.[h.ticker]) || h.strategy || 'swing';
+                                    if (sg.recommended === cur) return null;
+                                    const cc = sg.confidence === 'high' ? 'var(--color-buy)' : sg.confidence === 'low' ? 'var(--text-secondary)' : 'var(--color-gold)';
+                                    return (
+                                      <div
+                                        onClick={() => handleSetTickerStrategy(h.ticker, sg.recommended)}
+                                        title={sg.rationale}
+                                        style={{ marginTop: '4px', fontSize: '10px', color: cc, cursor: 'pointer', textDecoration: 'underline dotted' }}
+                                      >
+                                        ▸ suggests {sg.recommended} ({sg.confidence})
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                                 <td>
                                   {h.monitored ? (

@@ -189,16 +189,12 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
     print("\nVerdict: LLM news helps iff WITH beats WITHOUT on portfolio Sharpe / return.\n")
 
 
-def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None):
-    """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics).
+def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None):
+    """Walk-forward → the pooled out-of-sample signal frame, shared by the backtest and the suggester.
 
-    `oos_start` (YYYY-MM-DD), when given, fixes where out-of-sample testing begins (the first fold trains
-    only on data before it) — e.g. '2022-01-01' to put the 2022 bear in the OOS window. Otherwise the
-    first fold starts after `warmup_frac` of the data.
-
-    Trains XGBoost on each expanding past fold, predicts the held-out window, picks the threshold via the
-    nested inner split, and feeds the pooled OOS signals through the capital-aware portfolio simulator.
-    Returns the same {date, portfolio_value, cash} curve + metrics the live strategy was validated on."""
+    Returns (oos_df, prices_df, equities) where oos_df has [date, ticker, close, atr_14, target_win,
+    trade_ret, prob, selected_threshold] — every held-out prediction. `oos_start` (YYYY-MM-DD) fixes
+    where OOS testing begins (first fold trains only before it); else it starts after `warmup_frac`."""
     full, equities, prices_df, first_llm_date = load_swing_data(horizon)
     df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
@@ -208,7 +204,7 @@ def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None,
         df = df[df["date"] >= first_llm_date]
     df = df.sort_values("dt").reset_index(drop=True)
     if len(df) < 1000:
-        return [], {}
+        return None, prices_df, equities
 
     first_edge = (pd.to_datetime(oos_start) if oos_start
                   else df["dt"].min() + (df["dt"].max() - df["dt"].min()) * warmup_frac)
@@ -233,8 +229,15 @@ def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None,
         if progress_cb:
             progress_cb((i + 1) / n_splits)
     if not frames:
+        return None, prices_df, equities
+    return pd.concat(frames).sort_values("date"), prices_df, equities
+
+
+def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None):
+    """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics)."""
+    oos, prices_df, _ = swing_oos_frame(horizon, n_splits, warmup_frac, oos_start, progress_cb)
+    if oos is None or oos.empty:
         return [], {}
-    oos = pd.concat(frames).sort_values("date")
     curve, metrics = simulate_portfolio_chronological(oos, prices_df, horizon=horizon,
                                                       stop_max=SWING_STOP_MAX, stop_min=SWING_STOP_MIN,
                                                       atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT)
