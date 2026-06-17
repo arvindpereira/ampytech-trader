@@ -35,6 +35,18 @@ def daily_data_fetch_job():
     except Exception as e:
         print(f"Error during Daily Data Ingestion: {e}")
 
+def intraday_news_scoring_job():
+    """Scores fresh headlines through the trading day so the swing model isn't waiting until the next
+    morning. Cheap + resumable: only the last 2 days are queried and already-scored ids are skipped.
+    Needs local Ollama running."""
+    print(f"\n[{datetime.now()}] Triggering Intraday LLM News Scoring Job...")
+    try:
+        start = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+        score_news_llm(start=start)
+        print("Intraday LLM News Scoring completed.")
+    except Exception as e:
+        print(f"Error during Intraday LLM News Scoring: {e}")
+
 def daily_trade_inference_job():
     print(f"\n[{datetime.now()}] Triggering Daily Trade Inference Job...")
     # Daily inference is run dynamically in executor.py, but we log the status here
@@ -121,6 +133,15 @@ def main():
         id="weekly_retrain",
         name="Retrain models on rolling window"
     )
+
+    # 5. Intraday LLM news scoring — hourly during market hours so swing signals use same-day news
+    if SWING_ENABLED:
+        scheduler.add_job(
+            intraday_news_scoring_job,
+            trigger=CronTrigger(day_of_week="mon-fri", hour="10-16", minute=0, timezone=market_tz),
+            id="intraday_news_scoring",
+            name="Intraday LLM news scoring (hourly, market hours)"
+        )
 
     print("Starting APScheduler Background Worker Daemon (Blocking Mode)...")
     print("Scheduled jobs:")

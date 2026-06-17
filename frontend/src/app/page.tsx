@@ -150,6 +150,7 @@ export default function Home() {
   const [loadingSources, setLoadingSources] = useState<boolean>(false);
   const [priceSummary, setPriceSummary] = useState<any[]>([]);
   const [expandedTicker, setExpandedTicker] = useState<string>('');
+  const [llmNews, setLlmNews] = useState<any[]>([]);
   const [premiumForm, setPremiumForm] = useState({
     ticker: 'AAPL',
     title: '',
@@ -180,6 +181,15 @@ export default function Home() {
       }
     } finally {
       setLoadingSources(false);
+    }
+  };
+
+  const fetchLlmNews = async (ticker: string) => {
+    try {
+      const res = await fetch(`http://localhost:8008/api/news/llm?ticker=${ticker}&limit=40`);
+      setLlmNews(res.ok ? ((await res.json()).articles || []) : []);
+    } catch (err) {
+      setLlmNews([]);
     }
   };
 
@@ -308,6 +318,7 @@ export default function Home() {
   useEffect(() => {
     if (expandedTicker) {
       fetchSources(expandedTicker);
+      fetchLlmNews(expandedTicker);
     }
   }, [expandedTicker, backendOnline, appMode]);
 
@@ -1054,6 +1065,35 @@ export default function Home() {
                             </div>
                             {isOpen && (
                               <div style={{ borderTop: '1px solid var(--border-glass)', padding: '10px 12px' }}>
+                                {/* LLM-scored swing news — the signal that actually drives swing trades */}
+                                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-buy)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                                  LLM Swing-News &middot; latest first
+                                </div>
+                                {llmNews.length === 0 ? (
+                                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', padding: '0 0 10px' }}>
+                                    No LLM-scored headlines yet for {p.ticker}.
+                                  </p>
+                                ) : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto', paddingRight: '4px', marginBottom: '14px' }}>
+                                    {llmNews.map((n: any, nidx: number) => (
+                                      <div key={nidx} style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '9px 10px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{(n.published_utc || n.date || '').slice(0, 16).replace('T', ' ')}</span>
+                                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                            <span className={n.score > 0 ? 'text-green' : n.score < 0 ? 'text-red' : ''} style={{ fontSize: '11px', fontWeight: 700 }}>
+                                              {n.score > 0 ? '+' : ''}{n.score.toFixed(2)}
+                                            </span>
+                                            <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>rel {n.relevance.toFixed(2)}</span>
+                                          </div>
+                                        </div>
+                                        <div style={{ fontSize: '12.5px', fontWeight: 500, lineHeight: '1.3' }}>{n.title}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
+                                  Social / news sentiment feed
+                                </div>
                                 {loadingSources ? (
                                   <div style={{ display: 'flex', justifyContent: 'center', padding: '12px' }}>
                                     <RefreshCw size={18} className="animate-spin" color="var(--color-accent)" />

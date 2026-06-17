@@ -1252,6 +1252,23 @@ def trigger_reconciliation(db=Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/news/llm")
+def get_llm_news(ticker: Optional[str] = None, limit: int = 50, db=Depends(get_db)):
+    """The LLM-scored news headlines that drive the swing model, latest first.
+
+    Optional `ticker` filter; otherwise the whole universe interleaved by recency. Each item carries the
+    raw directional score (-1..1), the relevance (0..1, how materially the headline is about the ticker),
+    and the publish time so the scoring can be spot-checked for quality."""
+    q = db.query(NewsLLMScore)
+    if ticker:
+        q = q.filter(NewsLLMScore.ticker == ticker.upper().strip())
+    rows = q.order_by(NewsLLMScore.published_utc.desc()).limit(min(max(limit, 1), 200)).all()
+    return {"articles": [{
+        "ticker": r.ticker, "title": r.title, "score": r.llm_score, "relevance": r.llm_relevance,
+        "weighted": round((r.llm_score or 0.0) * (r.llm_relevance or 0.0), 3),
+        "published_utc": r.published_utc, "date": r.date, "model": r.model,
+    } for r in rows]}
+
 _price_summary_cache = {"data": None, "timestamp": None}
 
 @app.get("/api/prices/summary")
