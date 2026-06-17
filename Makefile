@@ -1,5 +1,5 @@
 .PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
-        db-backup db-backup-list db-restore \
+        db-backup db-backup-list db-restore db-restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -36,6 +36,7 @@ help:
 	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
 	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
+	@echo "  make db-restore-commit - Restore the newest DB backup matching the current git commit"
 	@echo ""
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
@@ -142,6 +143,9 @@ db-backup-list:
 
 db-restore:
 	cd backend && $(VENV_PY) scripts/db_backup.py --restore $(RESTORE)
+
+db-restore-commit:
+	cd backend && $(VENV_PY) scripts/db_backup.py --restore-commit
 
 swing-eval:
 	@echo "========================================================================"
