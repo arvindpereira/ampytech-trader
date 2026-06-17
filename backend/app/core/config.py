@@ -133,7 +133,7 @@ except ValueError:
 # Local LLM (Ollama) for scoring news headlines into per-ticker directional sentiment for the SWING model.
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:e4b")   # local, fast, JSON-clean (qwen3.5 emits empty under json mode)
-NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2023-01-01")  # how far back to score headlines
+NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2021-01-01")  # how far back to score headlines (~5y, dense from 2021)
 
 # --- Swing (multi-day) strategy ---------------------------------------------------------------
 # The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
