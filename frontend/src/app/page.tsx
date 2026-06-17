@@ -151,6 +151,7 @@ export default function Home() {
   const [priceSummary, setPriceSummary] = useState<any[]>([]);
   const [expandedTicker, setExpandedTicker] = useState<string>('');
   const [llmNews, setLlmNews] = useState<any[]>([]);
+  const [health, setHealth] = useState<any>(null);
   const [premiumForm, setPremiumForm] = useState({
     ticker: 'AAPL',
     title: '',
@@ -181,6 +182,15 @@ export default function Home() {
       }
     } finally {
       setLoadingSources(false);
+    }
+  };
+
+  const fetchHealth = async () => {
+    try {
+      const res = await fetch(`http://localhost:8008/api/health`);
+      setHealth(res.ok ? await res.json() : null);
+    } catch (err) {
+      setHealth(null);
     }
   };
 
@@ -412,6 +422,14 @@ export default function Home() {
     fetchData();
   }, [perfMode, appMode, hedgeMode]);
 
+  // Poll service health (30s) and refresh signals/prices (90s) so the dashboard stays current.
+  useEffect(() => {
+    fetchHealth();
+    const h = setInterval(fetchHealth, 30000);
+    const d = setInterval(() => fetchData(), 90000);
+    return () => { clearInterval(h); clearInterval(d); };
+  }, [perfMode, appMode, hedgeMode]);
+
   // Universe Editor Handlers
   const handleAddTicker = async () => {
     if (!newUniverseTicker) return;
@@ -601,6 +619,37 @@ export default function Home() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          {/* Service health indicators */}
+          {health && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {([
+                ['scheduler', 'Scheduler'],
+                ['ollama', 'Ollama'],
+                ['alpaca', 'Alpaca'],
+                ['news_llm', 'News'],
+                ['database', 'DB'],
+              ] as const).map(([key, label]) => {
+                const s = health.services?.[key];
+                const st = s?.status || 'down';
+                const color = st === 'up' ? '#10B981' : st === 'stale' ? '#F59E0B' : '#EF4444';
+                return (
+                  <div
+                    key={key}
+                    title={`${label}: ${st}${s?.detail ? ' — ' + s.detail : ''}`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '5px',
+                      padding: '4px 8px', borderRadius: '999px',
+                      background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', cursor: 'default'
+                    }}
+                  >
+                    <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Mode Switcher Toggle */}
           <div style={{
             display: 'flex',

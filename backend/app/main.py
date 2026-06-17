@@ -1269,6 +1269,73 @@ def get_llm_news(ticker: Optional[str] = None, limit: int = 50, db=Depends(get_d
         "published_utc": r.published_utc, "date": r.date, "model": r.model,
     } for r in rows]}
 
+SCHEDULER_HEARTBEAT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "scheduler_heartbeat.txt")
+
+_health_cache = {"data": None, "timestamp": None}
+
+@app.get("/api/health")
+def get_health(db=Depends(get_db)):
+    """Health/status of the moving parts: API, DB, Ollama (LLM), Alpaca broker, the scheduler daemon,
+    and LLM-news freshness. Each service reports up / stale / down + a short human detail. Cached 12s."""
+    import time as _time
+    import requests as _requests
+    global _health_cache
+    now = datetime.now()
+    if (_health_cache["data"] and _health_cache["timestamp"]
+            and now - _health_cache["timestamp"] < timedelta(seconds=12)):
+        return _health_cache["data"]
+
+    from app.core.config import OLLAMA_URL, LLM_MODEL, EXECUTION_STRATEGY
+    svc = {"api": {"status": "up", "detail": "serving"}}
+
+    try:
+        db.query(UniverseTicker).first()
+        svc["database"] = {"status": "up", "detail": "connected"}
+    except Exception as e:
+        svc["database"] = {"status": "down", "detail": str(e)[:100]}
+
+    try:
+        r = _requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+        names = [m.get("name", "") for m in r.json().get("models", [])] if r.status_code == 200 else []
+        has_model = any(LLM_MODEL.split(":")[0] in n for n in names)
+        svc["ollama"] = {"status": "up" if r.status_code == 200 else "down",
+                         "detail": (f"{LLM_MODEL} ready" if has_model else f"{len(names)} models")}
+    except Exception:
+        svc["ollama"] = {"status": "down", "detail": "unreachable"}
+
+    try:
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api()
+        clock = api.get_clock()
+        acct = api.get_account()
+        svc["alpaca"] = {"status": "up", "market_open": bool(clock.is_open),
+                         "detail": f"{'market open' if clock.is_open else 'market closed'} · ${float(acct.equity):,.0f}"}
+    except Exception as e:
+        svc["alpaca"] = {"status": "down", "detail": str(e)[:100]}
+
+    try:
+        if os.path.exists(SCHEDULER_HEARTBEAT_FILE):
+            age = _time.time() - os.path.getmtime(SCHEDULER_HEARTBEAT_FILE)
+            svc["scheduler"] = {"status": "up" if age < 150 else "stale",
+                                "detail": (f"{int(age)}s ago" if age < 3600 else f"{int(age/3600)}h ago")}
+        else:
+            svc["scheduler"] = {"status": "down", "detail": "not running"}
+    except Exception:
+        svc["scheduler"] = {"status": "down", "detail": "unknown"}
+
+    try:
+        latest = db.query(NewsLLMScore).order_by(NewsLLMScore.published_utc.desc()).first()
+        cnt = db.query(NewsLLMScore).count()
+        svc["news_llm"] = {"status": "up" if latest else "down", "count": cnt,
+                           "detail": ((latest.published_utc or "")[:16].replace("T", " ") if latest else "none")}
+    except Exception:
+        svc["news_llm"] = {"status": "down", "detail": "unknown"}
+
+    res = {"services": svc, "execution_strategy": EXECUTION_STRATEGY, "as_of": now.strftime("%H:%M:%S")}
+    _health_cache = {"data": res, "timestamp": now}
+    return res
+
 _price_summary_cache = {"data": None, "timestamp": None}
 
 @app.get("/api/prices/summary")

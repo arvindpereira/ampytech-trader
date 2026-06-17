@@ -5,6 +5,18 @@ import time
 from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+
+HEARTBEAT_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "data", "scheduler_heartbeat.txt")
+
+def _write_heartbeat():
+    try:
+        os.makedirs(os.path.dirname(HEARTBEAT_FILE), exist_ok=True)
+        with open(HEARTBEAT_FILE, "w") as f:
+            f.write(datetime.now().isoformat())
+    except Exception as e:
+        print(f"Heartbeat write failed: {e}")
 
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,9 +55,25 @@ def intraday_news_scoring_job():
     try:
         start = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
         score_news_llm(start=start)
+        # Re-run the swing signals off the fresh news so the served/UI signals are immediately current.
+        try:
+            from app.main import get_daily_suggestions, clear_suggestions_cache
+            from app.database import SessionLocal
+            clear_suggestions_cache()
+            db = SessionLocal()
+            try:
+                get_daily_suggestions(date=None, db=db)
+            finally:
+                db.close()
+            print("Swing signals re-run on fresh news.")
+        except Exception as e:
+            print(f"Signal re-run after scoring failed: {e}")
         print("Intraday LLM News Scoring completed.")
     except Exception as e:
         print(f"Error during Intraday LLM News Scoring: {e}")
+
+def heartbeat_job():
+    _write_heartbeat()
 
 def daily_trade_inference_job():
     print(f"\n[{datetime.now()}] Triggering Daily Trade Inference Job...")
@@ -142,6 +170,11 @@ def main():
             id="intraday_news_scoring",
             name="Intraday LLM news scoring (hourly, market hours)"
         )
+
+    # 6. Liveness heartbeat (every minute) so /api/health can report the daemon as up.
+    scheduler.add_job(heartbeat_job, trigger=IntervalTrigger(seconds=60),
+                      id="heartbeat", name="Scheduler liveness heartbeat")
+    _write_heartbeat()
 
     print("Starting APScheduler Background Worker Daemon (Blocking Mode)...")
     print("Scheduled jobs:")
