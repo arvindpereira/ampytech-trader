@@ -119,6 +119,7 @@ def get_jobs():
 
 _EVAL_RESULTS = {}
 _SUGGEST_RESULTS = {}
+_VALIDATE_RESULTS = {}
 
 def _run_suggest_job(jid, oos_start):
     try:
@@ -126,6 +127,17 @@ def _run_suggest_job(jid, oos_start):
         res = suggest_strategies(oos_start=oos_start,
                                  progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
         _SUGGEST_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
+def _run_validate_job(jid, oos_start):
+    try:
+        from ml_engine.strategy_suggester import validate_assignments
+        res = validate_assignments(oos_start=oos_start,
+                                   progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        _VALIDATE_RESULTS[jid] = res
         _job_update(jid, progress=100, stage="Complete", status="done")
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -1225,6 +1237,26 @@ def get_strategy_suggest_result(job_id: str):
     """Poll the strategy-suggester job: per-ticker recommendations when done, else running progress."""
     if job_id in _SUGGEST_RESULTS:
         return {"status": "done", "result": _SUGGEST_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.post("/api/strategy/validate")
+def start_strategy_validate(oos_start: str = "2022-01-01"):
+    """Backtest current vs suggested per-ticker assignments (blended OOS) to see if the suggestions help."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "validate" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("validate", "Validating suggestions")
+    threading.Thread(target=_run_validate_job, args=(jid, oos_start), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/strategy/validate/result")
+def get_strategy_validate_result(job_id: str):
+    """Poll the validation job: scheme comparison + verdict when done, else running progress."""
+    if job_id in _VALIDATE_RESULTS:
+        return {"status": "done", "result": _VALIDATE_RESULTS[job_id]}
     j = [x for x in _jobs_snapshot() if x["id"] == job_id]
     if j:
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}

@@ -28,17 +28,20 @@ def _zscore(s):
     return (s - s.mean()) / (sd + 1e-9) if sd > 0 else s * 0.0
 
 
-def suggest_strategies(horizon=5, n_splits=5, oos_start="2022-01-01", progress_cb=None):
+def suggest_strategies(horizon=5, n_splits=5, oos_start="2022-01-01", progress_cb=None, precomputed=None):
     def report(p, note):
         if progress_cb:
             progress_cb(int(p), note)
 
     from ml_engine.swing_alpha import swing_oos_frame, load_llm_news_daily, NON_EQUITY
 
-    report(8, "Swing walk-forward (per-ticker OOS signals)…")
-    oos, prices_df, equities = swing_oos_frame(
-        horizon=horizon, n_splits=n_splits, oos_start=oos_start,
-        progress_cb=lambda f: report(8 + int(f * 52), "Swing walk-forward (per-ticker OOS signals)…"))
+    if precomputed is not None:
+        oos, prices_df, equities = precomputed
+    else:
+        report(8, "Swing walk-forward (per-ticker OOS signals)…")
+        oos, prices_df, equities = swing_oos_frame(
+            horizon=horizon, n_splits=n_splits, oos_start=oos_start,
+            progress_cb=lambda f: report(8 + int(f * 52), "Swing walk-forward (per-ticker OOS signals)…"))
     if oos is None or oos.empty or prices_df is None or prices_df.empty:
         report(100, "No data")
         return {"suggestions": [], "oos_start": oos_start, "note": "Not enough scored data to evaluate."}
@@ -152,3 +155,98 @@ def suggest_strategies(horizon=5, n_splits=5, oos_start="2022-01-01", progress_c
     report(100, "Complete")
     return {"suggestions": out, "oos_start": oos_start,
             "counts": {k: sum(1 for o in out if o["recommended"] == k) for k in ("swing", "longterm", "hold")}}
+
+
+def _blended_curve(oos, prices_df, swing_tickers, lt_tickers, swing_w, lt_w, oos_start, horizon):
+    """Blended OOS $-curve for one assignment: swing sleeve restricted to `swing_tickers` + long-term
+    sleeve restricted to `lt_tickers`, combined by bucket weights (remainder = cash @ 0%)."""
+    import pandas as pd
+    from ml_engine.models import simulate_portfolio_chronological
+    from ml_engine.longterm_alpha import backtest_longterm_curve
+    from ml_engine.evaluate import _curve_to_daily
+    from ml_engine.swing_alpha import SWING_STOP_MAX, SWING_STOP_MIN, SWING_ATR_STOP_MULT, SWING_TP_MULT
+
+    sw = pd.Series(dtype=float)
+    sig = oos[oos["ticker"].isin(swing_tickers)]
+    if not sig.empty and swing_w > 0:
+        c, _ = simulate_portfolio_chronological(sig, prices_df, horizon=horizon, stop_max=SWING_STOP_MAX,
+                                                stop_min=SWING_STOP_MIN, atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT)
+        sw = _curve_to_daily(c)
+    lt = pd.Series(dtype=float)
+    if lt_tickers and lt_w > 0:
+        c2, _ = backtest_longterm_curve(start_date=oos_start, allowed_tickers=set(lt_tickers))
+        lt = _curve_to_daily(c2)
+
+    idx = sorted(set(sw.index) | set(lt.index))
+    if not idx:
+        return pd.Series(dtype=float)
+    sw = sw.reindex(idx).ffill()
+    lt = lt.reindex(idx).ffill()
+    sw_ret = sw.pct_change().fillna(0.0) if len(sw.dropna()) else pd.Series(0.0, index=idx)
+    lt_ret = lt.pct_change().fillna(0.0) if len(lt.dropna()) else pd.Series(0.0, index=idx)
+    blended_ret = swing_w * sw_ret + lt_w * lt_ret
+    return (1.0 + blended_ret).cumprod() * 100000.0
+
+
+def validate_assignments(horizon=5, n_splits=5, oos_start="2022-01-01", progress_cb=None):
+    """Self-validation: does following the suggestions beat the current assignment out-of-sample?
+
+    Trains swing ONCE, derives suggestions from it, then backtests the blended book under three schemes
+    — current (live buckets), suggested (live buckets), and suggested @ a MPT-leaning 30/60 split — and
+    reports each scheme's blended metrics + a verdict."""
+    def report(p, note):
+        if progress_cb:
+            progress_cb(int(p), note)
+
+    from ml_engine.swing_alpha import swing_oos_frame, NON_EQUITY
+    from ml_engine.evaluate import _metrics
+    from app.main import get_strategy_assignments, get_strategy_buckets
+    from app.database import SessionLocal
+
+    report(5, "Swing walk-forward (shared training)…")
+    oos, prices_df, equities = swing_oos_frame(
+        horizon=horizon, n_splits=n_splits, oos_start=oos_start,
+        progress_cb=lambda f: report(5 + int(f * 45), "Swing walk-forward (shared training)…"))
+    if oos is None or oos.empty or prices_df is None or prices_df.empty:
+        report(100, "No data")
+        return {"schemes": {}, "note": "Not enough scored data to validate."}
+
+    report(55, "Deriving suggestions…")
+    sug = suggest_strategies(horizon=horizon, n_splits=n_splits, oos_start=oos_start,
+                             precomputed=(oos, prices_df, equities))
+    rec = {s["ticker"]: s["recommended"] for s in sug["suggestions"]}
+
+    db = SessionLocal()
+    cur = get_strategy_assignments(db)
+    buckets = get_strategy_buckets(db)
+    db.close()
+    sw_w, lt_w = float(buckets.get("swing", 0.0)), float(buckets.get("longterm", 0.0))
+    eq = [t for t in equities if t not in NON_EQUITY]
+
+    def split(assign):
+        return ([t for t in eq if assign.get(t, "swing") == "swing"],
+                [t for t in eq if assign.get(t, "swing") == "longterm"])
+
+    scheme_defs = [
+        ("current", {t: cur.get(t, "swing") for t in eq}, sw_w, lt_w),
+        ("suggested", {t: rec.get(t, cur.get(t, "swing")) for t in eq}, sw_w, lt_w),
+        ("suggested @ 30/60", {t: rec.get(t, cur.get(t, "swing")) for t in eq}, 0.30, 0.60),
+    ]
+    report(68, "Blended backtests…")
+    results = {}
+    for i, (name, assign, w_s, w_l) in enumerate(scheme_defs):
+        sw_tk, lt_tk = split(assign)
+        curve = _blended_curve(oos, prices_df, set(sw_tk), set(lt_tk), w_s, w_l, oos_start, horizon)
+        results[name] = {"metrics": _metrics(curve), "n_swing": len(sw_tk), "n_longterm": len(lt_tk),
+                         "buckets": {"swing": round(w_s, 2), "longterm": round(w_l, 2)}}
+        report(68 + int((i + 1) / len(scheme_defs) * 28), "Blended backtests…")
+
+    cm, sm = results["current"]["metrics"], results["suggested"]["metrics"]
+    better_sharpe = sm["sharpe_ratio"] > cm["sharpe_ratio"]
+    not_worse_dd = sm["max_drawdown"] >= cm["max_drawdown"] - 0.01
+    verdict = ("Suggested beats current (higher Sharpe, no worse drawdown)." if (better_sharpe and not_worse_dd)
+               else "No clear improvement at your current buckets — see the 30/60 variant.")
+    n_changes = sum(1 for t in eq if cur.get(t, "swing") != rec.get(t, cur.get(t, "swing")))
+    report(100, "Complete")
+    return {"schemes": results, "live_buckets": {"swing": sw_w, "longterm": lt_w},
+            "oos_start": oos_start, "verdict": verdict, "n_changes": n_changes}

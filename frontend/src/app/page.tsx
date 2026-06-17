@@ -140,6 +140,9 @@ export default function Home() {
   const [suggestRunning, setSuggestRunning] = useState<boolean>(false);
   const [suggestProgress, setSuggestProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [suggestData, setSuggestData] = useState<any>(null);
+  const [validateRunning, setValidateRunning] = useState<boolean>(false);
+  const [validateProgress, setValidateProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
+  const [validateData, setValidateData] = useState<any>(null);
   const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
@@ -288,6 +291,26 @@ export default function Home() {
 
   const suggestMap: Record<string, any> = {};
   if (suggestData?.suggestions) suggestData.suggestions.forEach((s: any) => { suggestMap[s.ticker] = s; });
+
+  const handleValidateSuggestions = async () => {
+    setValidateRunning(true);
+    setValidateData(null);
+    setValidateProgress({ pct: 0, stage: 'Starting…' });
+    try {
+      const res = await fetch(`http://localhost:8008/api/strategy/validate?oos_start=2022-01-01`, { method: 'POST' });
+      const { job_id } = await res.json();
+      const poll = async () => {
+        try {
+          const r = await fetch(`http://localhost:8008/api/strategy/validate/result?job_id=${job_id}`);
+          const d = await r.json();
+          if (d.status === 'done') { setValidateData(d.result); setValidateRunning(false); }
+          else if (d.status === 'error' || d.status === 'unknown') { setValidateProgress({ pct: 0, stage: 'Failed: ' + (d.error || 'job lost') }); setValidateRunning(false); }
+          else { setValidateProgress({ pct: d.progress || 0, stage: d.stage || 'Running…' }); setTimeout(poll, 2000); }
+        } catch (err) { setValidateRunning(false); }
+      };
+      poll();
+    } catch (err) { console.error(err); setValidateRunning(false); }
+  };
 
   const handleAcceptAllSuggestions = async () => {
     if (!suggestData?.suggestions) return;
@@ -1997,7 +2020,47 @@ export default function Home() {
                         Accept all
                       </button>
                     )}
+                    <button onClick={handleValidateSuggestions} disabled={validateRunning}
+                      style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 14px', cursor: validateRunning ? 'default' : 'pointer', fontWeight: 600, fontSize: '13px', opacity: validateRunning ? 0.6 : 1 }}>
+                      {validateRunning ? 'Validating…' : 'Validate vs current'}
+                    </button>
                   </div>
+                  {validateRunning && (
+                    <div style={{ marginTop: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                        <span style={{ color: 'var(--color-buy)' }}>{validateProgress.stage}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{validateProgress.pct}%</span>
+                      </div>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                        <div style={{ width: `${validateProgress.pct}%`, height: '100%', background: 'var(--color-buy)', transition: 'width 0.4s' }} />
+                      </div>
+                    </div>
+                  )}
+                  {validateData?.schemes && (
+                    <div style={{ marginTop: '14px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '14px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                        Validation (blended OOS, 2022 bear included) — {validateData.n_changes} assignment change(s)
+                      </div>
+                      <div style={{ fontSize: '12px', color: validateData.verdict?.startsWith('Suggested beats') ? 'var(--color-buy)' : 'var(--color-gold)', marginBottom: '10px' }}>
+                        {validateData.verdict}
+                      </div>
+                      <table className="trade-table" style={{ fontSize: '12px' }}>
+                        <thead><tr><th>Scheme</th><th>Buckets</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>swing/lt</th></tr></thead>
+                        <tbody>
+                          {Object.entries(validateData.schemes).map(([name, r]: any) => (
+                            <tr key={name}>
+                              <td style={{ fontWeight: name === 'suggested' ? 700 : 400 }}>{name}</td>
+                              <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}</td>
+                              <td className={r.metrics.total_return >= 0 ? 'text-green' : 'text-red'}>{r.metrics.total_return >= 0 ? '+' : ''}{(r.metrics.total_return * 100).toFixed(1)}%</td>
+                              <td>{r.metrics.sharpe_ratio.toFixed(2)}</td>
+                              <td className="text-red">{(r.metrics.max_drawdown * 100).toFixed(1)}%</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                   {suggestRunning && (
                     <div style={{ marginTop: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
