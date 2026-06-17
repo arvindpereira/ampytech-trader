@@ -48,6 +48,13 @@ if not DATA_STORAGE_DIR:
 os.makedirs(DATA_STORAGE_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_STORAGE_DIR, "trading_system.db")
 
+# --- Google Drive backup (so the DB can leave Git LFS without losing data) ----------------------
+# OAuth "Desktop app" client (Google Cloud Console → APIs & Services → Credentials, with the Drive API
+# enabled). First `make db-backup` opens a browser to consent; the token is cached in data/gdrive_token.json.
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "1v694--8X1YkvPp-3oRQ4no8hN0xmWCdY")
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+
 # Data Collection Resolution & Range
 #
 # Two clean, never-mixed datasets:

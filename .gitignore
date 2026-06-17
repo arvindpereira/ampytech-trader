@@ -46,3 +46,6 @@ backend/data/premium_news/archive/
 # TS build info
 *.tsbuildinfo
 frontend/tsconfig.tsbuildinfo
+
+# Google Drive OAuth token (do not commit)
+backend/data/gdrive_token.json

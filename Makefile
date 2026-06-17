@@ -1,4 +1,5 @@
 .PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+        db-backup db-backup-list db-restore \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -12,6 +13,8 @@ STRENGTH ?= 0.10
 NEWS_START ?= 2024-01-01
 LLM_MODEL ?= gemma4:e4b
 TICKER   ?=
+BACKUP_KEEP ?= 10
+RESTORE  ?=
 VENV_PY := venv/bin/python3
 
 # Default target: print help
@@ -30,6 +33,9 @@ help:
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
 	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2024-01-01]"
+	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
+	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
+	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
 	@echo ""
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
@@ -124,6 +130,18 @@ news-llm:
 	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START)
+
+db-backup:
+	@echo "========================================================================"
+	@echo "☁️  Backing up the trading DB to Google Drive (keeps newest $(BACKUP_KEEP))..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) scripts/db_backup.py --keep $(BACKUP_KEEP)
+
+db-backup-list:
+	cd backend && $(VENV_PY) scripts/db_backup.py --list
+
+db-restore:
+	cd backend && $(VENV_PY) scripts/db_backup.py --restore $(RESTORE)
 
 swing-eval:
 	@echo "========================================================================"
