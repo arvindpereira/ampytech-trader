@@ -298,19 +298,50 @@ def backfill_ticker(ticker, progress_cb=None):
         db.close()
 
     # 2) Hourly recent bars (Massive, ~5y window)
-    report(60, "Fetching hourly bars (Massive)…")
+    report(30, "Fetching hourly bars (Massive)…")
     hourly_start = end_date - timedelta(days=HOURLY_LOOKBACK_DAYS)
     hourly_bars = fetch_massive_hourly(ticker, hourly_start, end_date)
     db = SessionLocal()
     hourly_added = 0
     try:
-        report(85, "Storing hourly bars + indicators…")
+        report(45, "Storing hourly bars + indicators…")
         hourly_added, _ = _write_bars(db, RecentPrice, ticker, hourly_bars, daily=False)
     finally:
         db.close()
 
-    report(100, f"Done — {daily_added} daily, {hourly_added} hourly bars")
-    return {"daily": daily_added, "hourly": hourly_added}
+    # 3) LLM-score the ticker's news (the slow part — thousands of headlines via Ollama).
+    news_scored = 0
+    try:
+        from app.core.config import SWING_ENABLED, NEWS_LLM_START, OLLAMA_URL
+        import requests as _rq
+        ollama_up = False
+        try:
+            ollama_up = _rq.get(f"{OLLAMA_URL}/api/tags", timeout=3).status_code == 200
+        except Exception:
+            ollama_up = False
+        if SWING_ENABLED and ollama_up:
+            report(50, "Scoring news headlines with the LLM…")
+            from data_ingestion.news_llm import fetch_and_score
+            before = _count_news(ticker)
+            fetch_and_score(start=NEWS_LLM_START, tickers=[ticker],
+                            progress_cb=lambda f, note: report(50 + int(f * 49), note))
+            news_scored = _count_news(ticker) - before
+        elif not ollama_up:
+            report(95, "Skipped news scoring (Ollama offline)")
+    except Exception as e:
+        print(f"News scoring failed for {ticker}: {e}")
+
+    report(100, f"Done — {daily_added} daily, {hourly_added} hourly, {news_scored} news scored")
+    return {"daily": daily_added, "hourly": hourly_added, "news": news_scored}
+
+
+def _count_news(ticker):
+    from app.database import NewsLLMScore
+    db = SessionLocal()
+    try:
+        return db.query(NewsLLMScore).filter(NewsLLMScore.ticker == ticker).count()
+    finally:
+        db.close()
 
 
 def _get_active_universe(db):

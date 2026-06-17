@@ -81,8 +81,11 @@ def _fetch_news(ticker, start, end, headers, max_pages=80):
     return out
 
 
-def fetch_and_score(start=None, end=None, tickers=None, model=None):
-    """Fetches + LLM-scores news per ticker, upserting into news_llm_scores (skips already-scored ids)."""
+def fetch_and_score(start=None, end=None, tickers=None, model=None, progress_cb=None):
+    """Fetches + LLM-scores news per ticker, upserting into news_llm_scores (skips already-scored ids).
+
+    `progress_cb(fraction, note)` (optional) is called as batches complete (fraction 0..1 over all
+    tickers/batches) so a UI can show a progress bar during long backfills."""
     start = start or NEWS_LLM_START
     end = end or datetime.now().strftime("%Y-%m-%d")
     model = model or LLM_MODEL
@@ -100,15 +103,18 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None):
     print(f"LLM news scoring ({model}) for {len(tickers)} tickers, {start}→{end}...")
 
     grand = 0
-    for ticker in tickers:
+    for ti, ticker in enumerate(tickers):
         arts = _fetch_news(ticker, start, end, headers)
         if not arts:
             print(f"  {ticker}: no headlines.")
+            if progress_cb:
+                progress_cb((ti + 1) / len(tickers), f"{ticker}: no headlines")
             continue
         existing = {r[0] for r in db.query(NewsLLMScore.article_id).filter(NewsLLMScore.ticker == ticker).all()}
         todo = [a for a in arts if a[0] not in existing]
         scored = 0
-        for k in range(0, len(todo), BATCH):
+        n_batches = max(1, (len(todo) + BATCH - 1) // BATCH)
+        for bi, k in enumerate(range(0, len(todo), BATCH)):
             chunk = todo[k:k + BATCH]
             results = _ollama_score(ticker, [t for _, _, t in chunk], model=model)
             for (aid, pub, title), (s, rel) in zip(chunk, results):
@@ -117,6 +123,9 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None):
                                     llm_relevance=rel, model=model))
                 scored += 1
             db.commit()
+            if progress_cb:
+                frac = (ti + (bi + 1) / n_batches) / len(tickers)
+                progress_cb(frac, f"{ticker}: scored {scored}/{len(todo)} new headlines")
         grand += scored
         print(f"  {ticker}: {len(arts)} headlines ({len(todo)} new) → scored {scored}.")
     db.close()

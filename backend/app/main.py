@@ -1104,6 +1104,20 @@ def add_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
     return {"status": "added", "ticker": ticker, "job_id": jid}
 
+@app.post("/api/universe/backfill")
+def backfill_universe_ticker(req: TickerRequest, db=Depends(get_db)):
+    """(Re)run the data + news backfill for an already-monitored ticker (e.g. to pull news that wasn't
+    scored when it was first added). Starts a background job with a progress bar."""
+    ticker = req.ticker.upper().strip()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker required")
+    if not db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first():
+        db.add(UniverseTicker(ticker=ticker))
+        db.commit()
+    jid = _job_new("backfill", f"Backfilling {ticker}")
+    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+    return {"status": "started", "ticker": ticker, "job_id": jid}
+
 @app.post("/api/universe/remove")
 def remove_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     """Stop monitoring a ticker (remove from the universe). Intended for tickers with no open position."""
