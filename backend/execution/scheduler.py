@@ -68,6 +68,20 @@ def intraday_news_scoring_job():
             print("Swing signals re-run on fresh news.")
         except Exception as e:
             print(f"Signal re-run after scoring failed: {e}")
+
+        # Re-execute the swing book off the fresh signals (only while the market is open).
+        from app.core.config import INTRADAY_EXECUTION_ENABLED, EXECUTION_STRATEGY
+        if INTRADAY_EXECUTION_ENABLED and EXECUTION_STRATEGY == "swing":
+            try:
+                from execution.executor import get_alpaca_api, run_execution
+                api = get_alpaca_api()
+                if api and api.get_clock().is_open:
+                    print("Market open — running intraday swing re-execution...")
+                    run_execution()
+                else:
+                    print("Market closed — skipping intraday execution.")
+            except Exception as e:
+                print(f"Intraday re-execution failed: {e}")
         print("Intraday LLM News Scoring completed.")
     except Exception as e:
         print(f"Error during Intraday LLM News Scoring: {e}")
@@ -168,7 +182,7 @@ def main():
             intraday_news_scoring_job,
             trigger=CronTrigger(day_of_week="mon-fri", hour="10-16", minute=0, timezone=market_tz),
             id="intraday_news_scoring",
-            name="Intraday LLM news scoring (hourly, market hours)"
+            name="Intraday LLM news scoring + swing re-execution (hourly, market hours)"
         )
 
     # 6. Liveness heartbeat (every minute) so /api/health can report the daemon as up.

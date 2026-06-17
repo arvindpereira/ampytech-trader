@@ -159,6 +159,10 @@ EXECUTION_STRATEGY = os.getenv("EXECUTION_STRATEGY", "swing").lower()
 # Whether to ALSO run the long-term MPT grid/tranche rebalancer alongside swing. Off by default: swing
 # alone targets ~100% of equity, so enabling both would deploy the long-term book on margin.
 LONGTERM_GRID_ENABLED = os.getenv("LONGTERM_GRID_ENABLED", "False").lower() in ("true", "1", "yes")
+# Re-execute swing trades intraday (hourly, market hours) right after each fresh-news signal re-run —
+# replacing exited slots and running horizon exits without waiting for the next 09:45 cycle. Only acts
+# while the market is open; with ~100% deployed it mostly fills slots freed by bracket/horizon exits.
+INTRADAY_EXECUTION_ENABLED = os.getenv("INTRADAY_EXECUTION_ENABLED", "True").lower() in ("true", "1", "yes")
 
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
