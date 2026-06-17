@@ -117,6 +117,19 @@ def get_jobs():
     """Active + recently-finished background jobs (ticker backfills, retraining) for UI progress bars."""
     return {"jobs": _jobs_snapshot()}
 
+_EVAL_RESULTS = {}
+
+def _run_eval_job(jid, strategies, horizon, splits, allocation):
+    try:
+        from ml_engine.evaluate import run_evaluation
+        res = run_evaluation(strategies, horizon=horizon, splits=splits, allocation=allocation,
+                             progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        _EVAL_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
 def get_latest_data(db, end_date=None, mode="real"):
     """Utility to load recent prices and indicators for inference."""
     if end_date:
@@ -1145,6 +1158,40 @@ def set_ticker_strategy(req: TickerStrategyRequest, db=Depends(get_db)):
     db.commit()
     clear_suggestions_cache()
     return {"status": "success", "ticker": ticker, "strategy": strat}
+
+class EvaluateRequest(BaseModel):
+    strategies: List[str] = ["swing", "longterm"]
+    horizon: int = 5
+    splits: int = 4
+    use_allocation: bool = True
+
+@app.post("/api/evaluate")
+def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
+    """Kick off a look-ahead-free backtest of the chosen strategies (+ benchmarks) as a background job."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "evaluate" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    allocation = None
+    if req.use_allocation:
+        buckets = get_strategy_buckets(db)
+        assignments = get_strategy_assignments(db)
+        lt_tickers = [t for t, s in assignments.items() if s == "longterm"]
+        allocation = {"swing": buckets.get("swing", 0.0), "longterm": buckets.get("longterm", 0.0),
+                      "longterm_tickers": lt_tickers or None}
+    jid = _job_new("evaluate", "Evaluating strategies")
+    threading.Thread(target=_run_eval_job, args=(jid, req.strategies, req.horizon, req.splits, allocation),
+                     daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/evaluate/result")
+def get_evaluation_result(job_id: str):
+    """Poll an evaluation job: returns the curves+metrics when done, else the running progress."""
+    if job_id in _EVAL_RESULTS:
+        return {"status": "done", "result": _EVAL_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
 
 class TickerRequest(BaseModel):
     ticker: str

@@ -137,6 +137,12 @@ export default function Home() {
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [strategyConfig, setStrategyConfig] = useState<any>(null);
   const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string }>({ swing: '', longterm: '' });
+  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
+  const [evalSplits, setEvalSplits] = useState<number>(4);
+  const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
+  const [evalRunning, setEvalRunning] = useState<boolean>(false);
+  const [evalProgress, setEvalProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
+  const [evalResult, setEvalResult] = useState<any>(null);
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
     quantity: 0,
@@ -266,6 +272,40 @@ export default function Home() {
       if (!res.ok) { const e = await res.json(); alert(e.detail || 'Failed'); }
       else fetchStrategyConfig();
     } catch (err) { console.error(err); } finally { setActionBusy(false); }
+  };
+
+  const EVAL_SERIES: { key: string; name: string; color: string }[] = [
+    { key: 'swing', name: 'Swing + News', color: '#00F2FE' },
+    { key: 'longterm', name: 'Long-term (MPT)', color: '#10B981' },
+    { key: 'blended', name: 'Blended (your allocation)', color: '#F59E0B' },
+    { key: 'spy', name: 'S&P 500', color: '#94A3B8' },
+    { key: 'qqq', name: 'QQQ', color: '#A78BFA' },
+    { key: 'brk', name: 'Berkshire (BRK-B)', color: '#FB923C' },
+  ];
+
+  const handleRunEval = async () => {
+    const strategies = (Object.entries(evalStrategies) as [string, boolean][]).filter(([, v]) => v).map(([k]) => k);
+    if (strategies.length === 0) return;
+    setEvalRunning(true);
+    setEvalResult(null);
+    setEvalProgress({ pct: 0, stage: 'Starting…' });
+    try {
+      const res = await fetch(`http://localhost:8008/api/evaluate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc }),
+      });
+      const { job_id } = await res.json();
+      const poll = async () => {
+        try {
+          const r = await fetch(`http://localhost:8008/api/evaluate/result?job_id=${job_id}`);
+          const d = await r.json();
+          if (d.status === 'done') { setEvalResult(d.result); setEvalRunning(false); }
+          else if (d.status === 'error' || d.status === 'unknown') { setEvalProgress({ pct: 0, stage: 'Failed: ' + (d.error || 'job lost') }); setEvalRunning(false); }
+          else { setEvalProgress({ pct: d.progress || 0, stage: d.stage || 'Running…' }); setTimeout(poll, 1500); }
+        } catch (err) { setEvalRunning(false); }
+      };
+      poll();
+    } catch (err) { console.error(err); setEvalRunning(false); }
   };
 
   const handleAddStock = async () => {
@@ -893,7 +933,7 @@ export default function Home() {
             className={`toggle-btn ${activeTab === 'virtual_perf' ? 'active' : ''}`}
             onClick={() => setActiveTab('virtual_perf')}
           >
-            Virtual Broker Performance
+            Model Evaluation
           </button>
           <button
             className={`toggle-btn ${activeTab === 'editor' ? 'active' : ''}`}
@@ -1610,168 +1650,137 @@ export default function Home() {
 
         {/* Tab 2: Virtual Broker Performance */}
         {activeTab === 'virtual_perf' && (
-          <>
-            {/* Left Column */}
-            <section style={{ gridColumn: 'span 2' }}>
-              {/* Performance Curve controls */}
-              <div className="glass-card" style={{ marginBottom: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
-                  <div>
-                    <h2>
-                      <TrendingUp size={20} color="var(--color-buy)" />
-                      Virtual Broker Performance Tracker ($100K Principal)
-                    </h2>
-                    <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                      Compare your virtual portfolio's return curve against multiple major market indices and Berkshire Hathaway.
-                    </p>
-                  </div>
-
-                  {/* Replay/Live Toggle */}
-                  <div className="toggle-group" style={{ margin: 0 }}>
-                    <button
-                      className={`toggle-btn ${perfMode === 'live' ? 'active' : ''}`}
-                      onClick={() => setPerfMode('live')}
-                    >
-                      Forward Live Simulation
-                    </button>
-                    <button
-                      className={`toggle-btn ${perfMode === 'replay' ? 'active' : ''}`}
-                      onClick={() => setPerfMode('replay')}
-                    >
-                      Historical Replay Backtest
-                    </button>
+          <section style={{ gridColumn: '1 / -1' }}>
+            {/* Evaluation controls */}
+            <div className="glass-card" style={{ marginBottom: '24px' }}>
+              <h2>
+                <Activity size={20} color="var(--color-buy)" />
+                Strategy Backtest &amp; Evaluation
+              </h2>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '18px', maxWidth: '900px' }}>
+                Walk-forward, look-ahead-free backtests (the models only ever see data available up to each date) of your
+                strategies, plotted as growth of $100,000 vs the S&amp;P 500, Nasdaq 100, and Berkshire Hathaway. Enable
+                &ldquo;use my allocation&rdquo; to also chart a blended curve weighted by your current capital buckets.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', alignItems: 'flex-end' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Strategies</label>
+                  <div style={{ display: 'flex', gap: '14px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                      <input type="checkbox" checked={evalStrategies.swing} onChange={(e) => setEvalStrategies({ ...evalStrategies, swing: e.target.checked })} /> Swing + News
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                      <input type="checkbox" checked={evalStrategies.longterm} onChange={(e) => setEvalStrategies({ ...evalStrategies, longterm: e.target.checked })} /> Long-term (MPT)
+                    </label>
                   </div>
                 </div>
-
-                {/* Benchmark Legend Visibility selectors */}
-                <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', padding: '10px 16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border-glass)', marginBottom: '20px', fontSize: '13px' }}>
-                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>Benchmark Filters:</span>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={showSpy} onChange={(e) => setShowSpy(e.target.checked)} />
-                    <span style={{ color: '#9CA3AF', textDecoration: showSpy ? 'none' : 'line-through' }}>S&P 500 (SPY)</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={showQqq} onChange={(e) => setShowQqq(e.target.checked)} />
-                    <span style={{ color: '#A78BFA', textDecoration: showQqq ? 'none' : 'line-through' }}>Nasdaq 100 (QQQ)</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={showBrk} onChange={(e) => setShowBrk(e.target.checked)} />
-                    <span style={{ color: '#F59E0B', textDecoration: showBrk ? 'none' : 'line-through' }}>Berkshire Hathaway (BRK-B)</span>
-                  </label>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Walk-forward folds</label>
+                  <select value={evalSplits} onChange={(e) => setEvalSplits(parseInt(e.target.value))}
+                    style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '8px 12px', fontSize: '13px', cursor: 'pointer' }}>
+                    {[3, 4, 5, 6].map(n => <option key={n} value={n}>{n} folds</option>)}
+                  </select>
                 </div>
-
-                {/* Key performance metrics row */}
-                <div className="metrics-row" style={{ margin: '0 0 20px 0' }}>
-                  <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Equity Balance</div>
-                    <div style={{ fontSize: '20px', fontWeight: 700 }}>${accountEquity.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                  </div>
-                  <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Virtual Cash</div>
-                    <div style={{ fontSize: '20px', fontWeight: 700 }}>${accountCash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                  </div>
-                  <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Total Return</div>
-                    <div style={{ fontSize: '20px', fontWeight: 700, color: metrics.total_return >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>
-                      {(metrics.total_return * 100).toFixed(2)}%
-                    </div>
-                  </div>
-                  <div style={{ background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px' }}>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Max Drawdown</div>
-                    <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--color-sell)' }}>{(metrics.max_drawdown * 100).toFixed(2)}%</div>
-                  </div>
-                </div>
-
-                {/* Chart */}
-                <div style={{ width: '100%', height: 400 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={perfCurve} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
-                      <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={11} tickLine={false} />
-                      <YAxis
-                        stroke="var(--text-secondary)"
-                        fontSize={11}
-                        domain={['dataMin - 5000', 'dataMax + 5000']}
-                        tickFormatter={(val) => `$${(val/1000).toFixed(0)}k`}
-                        tickLine={false}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: 'rgba(16, 20, 38, 0.95)',
-                          border: '1px solid var(--border-glass)',
-                          borderRadius: '8px',
-                          color: 'var(--text-primary)'
-                        }}
-                        formatter={(val: any) => [`$${parseFloat(val).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`]}
-                      />
-                      <Legend />
-                      <Line type="monotone" dataKey="portfolio" name="Strategy Portfolio" stroke="var(--color-buy)" strokeWidth={2.5} dot={false} activeDot={{ r: 6 }} />
-                      {showSpy && <Line type="monotone" dataKey="spy" name="S&P 500 (SPY)" stroke="#9CA3AF" strokeDasharray="3 3" strokeWidth={1.5} dot={false} />}
-                      {showQqq && <Line type="monotone" dataKey="qqq" name="Nasdaq 100 (QQQ)" stroke="#A78BFA" strokeDasharray="3 3" strokeWidth={1.5} dot={false} />}
-                      {showBrk && <Line type="monotone" dataKey="brk" name="Berkshire Hathaway (BRK-B)" stroke="#F59E0B" strokeDasharray="3 3" strokeWidth={1.5} dot={false} />}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                  <input type="checkbox" checked={evalUseAlloc} onChange={(e) => setEvalUseAlloc(e.target.checked)} /> Use my current allocation (blended curve)
+                </label>
+                <button onClick={handleRunEval} disabled={evalRunning}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--color-buy)', border: 'none', borderRadius: '8px', color: '#06121f', padding: '10px 22px', fontWeight: 700, fontSize: '14px', cursor: evalRunning ? 'default' : 'pointer', opacity: evalRunning ? 0.6 : 1 }}>
+                  {evalRunning ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
+                  {evalRunning ? 'Running…' : 'Run Evaluation'}
+                </button>
               </div>
+              {(evalRunning || (evalProgress.stage && evalProgress.stage.startsWith('Failed'))) && (
+                <div style={{ marginTop: '18px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+                    <span style={{ color: evalProgress.stage.startsWith('Failed') ? 'var(--color-sell)' : 'var(--color-buy)' }}>{evalProgress.stage}</span>
+                    {evalRunning && <span style={{ color: 'var(--text-secondary)' }}>{evalProgress.pct}%</span>}
+                  </div>
+                  {evalRunning && (
+                    <>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                        <div style={{ width: `${evalProgress.pct}%`, height: '100%', background: 'var(--color-buy)', transition: 'width 0.4s' }} />
+                      </div>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px' }}>Training models across folds — this can take a couple of minutes.</p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
 
-              {/* Active Open Positions Table */}
-              <div className="glass-card">
-                <h2>
-                  <Layers size={20} color="var(--color-accent)" />
-                  Active Virtual Broker Positions
-                </h2>
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="trade-table">
-                    <thead>
-                      <tr>
-                        <th>Symbol</th>
-                        <th>Quantity</th>
-                        <th>Avg Entry Price</th>
-                        <th>Current Price</th>
-                        <th>Cost Basis</th>
-                        <th>Market Value</th>
-                        <th>Unrealized P&L</th>
-                        <th>% Return</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {virtualPositions.length === 0 ? (
+            {evalResult && evalResult.series && evalResult.series.length > 0 && (
+              <>
+                <div className="glass-card" style={{ marginBottom: '24px' }}>
+                  <h2>
+                    <TrendingUp size={20} color="var(--color-buy)" />
+                    Growth of $100,000{evalResult.window && evalResult.window.length ? ` · ${evalResult.window[0]} → ${evalResult.window[1]}` : ''}
+                  </h2>
+                  <div style={{ width: '100%', height: 430 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={evalResult.series} margin={{ top: 10, right: 16, left: 10, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
+                        <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={11} tickLine={false} minTickGap={50} tickFormatter={(d) => String(d).slice(0, 7)} />
+                        <YAxis stroke="var(--text-secondary)" fontSize={11} tickLine={false} domain={['dataMin - 5000', 'dataMax + 5000']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip contentStyle={{ background: 'rgba(16,20,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)' }}
+                          formatter={(v: any) => `$${parseFloat(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
+                        <Legend />
+                        {EVAL_SERIES.filter(s => evalResult.metrics[s.key]).map(s => (
+                          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color}
+                            strokeWidth={['spy', 'qqq', 'brk'].includes(s.key) ? 1.5 : 2.6}
+                            strokeDasharray={['spy', 'qqq', 'brk'].includes(s.key) ? '4 3' : undefined}
+                            dot={false} connectNulls />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="glass-card">
+                  <h2>
+                    <Award size={20} color="var(--color-gold)" />
+                    Performance Metrics
+                  </h2>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="trade-table">
+                      <thead>
                         <tr>
-                          <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                            {appMode === 'real'
-                              ? "No active positions found in your real virtual broker account. Configure holdings or run execution scheduler."
-                              : "No active positions. Add holdings or run simulations."
-                            }
-                          </td>
+                          <th>Series</th>
+                          <th>Total Return</th>
+                          <th>CAGR</th>
+                          <th>Sharpe</th>
+                          <th>Max Drawdown</th>
+                          <th>Final Value</th>
                         </tr>
-                      ) : (
-                        virtualPositions.map((pos, idx) => {
-                          const pnl = parseFloat(pos.unrealized_pl);
-                          const pnlPct = parseFloat(pos.unrealized_plpc) * 100;
+                      </thead>
+                      <tbody>
+                        {EVAL_SERIES.filter(s => evalResult.metrics[s.key]).map(s => {
+                          const m = evalResult.metrics[s.key];
                           return (
-                            <tr key={idx}>
-                              <td style={{ fontWeight: 600 }}>{pos.symbol}</td>
-                              <td>{parseFloat(pos.qty).toFixed(2)}</td>
-                              <td>${parseFloat(pos.avg_entry_price).toFixed(2)}</td>
-                              <td>${parseFloat(pos.current_price).toFixed(2)}</td>
-                              <td>${parseFloat(pos.cost_basis).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
-                              <td>${parseFloat(pos.market_value).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
-                              <td className={pnl >= 0 ? 'text-green' : 'text-red'}>
-                                {pnl >= 0 ? '+' : ''}${pnl.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                            <tr key={s.key}>
+                              <td style={{ fontWeight: 600 }}>
+                                <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: s.color, marginRight: '8px' }} />
+                                {s.name}
                               </td>
-                              <td className={pnl >= 0 ? 'text-green' : 'text-red'} style={{ fontWeight: 500 }}>
-                                {pnl >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
-                              </td>
+                              <td className={m.total_return >= 0 ? 'text-green' : 'text-red'}>{m.total_return >= 0 ? '+' : ''}{(m.total_return * 100).toFixed(1)}%</td>
+                              <td className={m.cagr >= 0 ? 'text-green' : 'text-red'}>{m.cagr >= 0 ? '+' : ''}{(m.cagr * 100).toFixed(1)}%</td>
+                              <td>{m.sharpe_ratio.toFixed(2)}</td>
+                              <td className="text-red">{(m.max_drawdown * 100).toFixed(1)}%</td>
+                              <td>${m.final_value.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                             </tr>
                           );
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '14px' }}>
+                    Out-of-sample: each point uses only information available at that date — expanding-window walk-forward for
+                    Swing (point-in-time news features), trailing-only covariance for the MPT book. Benchmarks are buy-and-hold
+                    over the same window.
+                  </p>
                 </div>
-              </div>
-            </section>
-          </>
+              </>
+            )}
+          </section>
         )}
 
         {/* Tab 3: Universe & Portfolio Editor */}

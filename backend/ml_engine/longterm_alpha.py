@@ -157,6 +157,57 @@ def _portfolio_metrics(curve, dates):
     return total, cagr, sharpe, dd.min()
 
 
+def backtest_longterm_curve(start_date="2023-06-16", window=252, allowed_tickers=None, progress_cb=None):
+    """Look-ahead-free long-term MPT backtest → (dated equity_curve, metrics).
+
+    Monthly-rebalanced max-Sharpe (regime-aware) weights using ONLY trailing returns for the covariance,
+    held between rebalances. `allowed_tickers` restricts the investable set (e.g. the user's longterm
+    bucket). Returns a {date, portfolio_value} curve starting at $100k."""
+    from ml_engine.models import PortfolioOptimizer
+    df, equities = load_daily_features()
+    if allowed_tickers:
+        equities = [t for t in equities if t in allowed_tickers]
+    if len(equities) < 2:
+        return [], {}
+    df["dt"] = pd.to_datetime(df["date"], format="mixed")
+    df = df.sort_values(["ticker", "dt"]).reset_index(drop=True)
+    df["ret"] = df.groupby("ticker")["close"].pct_change()
+    eq = df[df["ticker"].isin(equities)].copy()
+    ret_p = eq.pivot_table(index="date", columns="ticker", values="ret")
+
+    all_dates = sorted(ret_p.index)
+    seen, rebal = set(), set()
+    for d in all_dates:
+        if d[:7] not in seen:
+            seen.add(d[:7]); rebal.add(d)
+    sim_dates = [d for d in all_dates if d >= start_date]
+    if not sim_dates:
+        return [], {}
+
+    port, weights, curve = 100000.0, {}, []
+    for i, d in enumerate(sim_dates):
+        row = ret_p.loc[d]
+        dr = sum(w * (row[t] if (t in row and pd.notna(row[t])) else 0.0) for t, w in weights.items())
+        port *= (1.0 + dr)
+        curve.append({"date": d, "portfolio_value": port})
+        if d in rebal:
+            hist = ret_p[ret_p.index < d].tail(window).dropna(axis=1, how="any")
+            cols = list(hist.columns)
+            if len(hist) > 100 and len(cols) >= 2:
+                weights = PortfolioOptimizer.calculate_optimal_weights(hist, "growth", expected_return_tilt=None)
+        if progress_cb and i % 20 == 0:
+            progress_cb(i / len(sim_dates))
+
+    vals = [c["portfolio_value"] for c in curve]
+    s = pd.Series(vals)
+    rets = s.pct_change().dropna()
+    sharpe = (rets.mean() / (rets.std() + 1e-9)) * np.sqrt(252) if len(rets) > 2 else 0.0
+    dd = ((s - s.cummax()) / s.cummax()).min()
+    metrics = {"total_return": vals[-1] / 100000.0 - 1.0, "sharpe_ratio": float(sharpe),
+               "max_drawdown": float(dd), "final_value": vals[-1]}
+    return curve, metrics
+
+
 def backtest_longterm_tilt(tilt_strength=0.05, start_date="2022-01-01", window=252):
     """A/B backtest: monthly-rebalanced MPT portfolio WITH vs WITHOUT an insider-score tilt on expected
     returns, over the insider-active window. Also reports equal-weight and SPY benchmarks."""

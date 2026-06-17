@@ -187,6 +187,51 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
     print("\nVerdict: LLM news helps iff WITH beats WITHOUT on portfolio Sharpe / return.\n")
 
 
+def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, progress_cb=None):
+    """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics).
+
+    Trains XGBoost on each expanding past fold, predicts the held-out window, picks the threshold via the
+    nested inner split, and feeds the pooled OOS signals through the capital-aware portfolio simulator.
+    Returns the same {date, portfolio_value, cash} curve + metrics the live strategy was validated on."""
+    full, equities, prices_df, first_llm_date = load_swing_data(horizon)
+    df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
+    df["dt"] = pd.to_datetime(df["date"], format="mixed")
+    feat_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
+    df = df.dropna(subset=feat_all)
+    if first_llm_date:
+        df = df[df["date"] >= first_llm_date]
+    df = df.sort_values("dt").reset_index(drop=True)
+    if len(df) < 1000:
+        return [], {}
+
+    edges = pd.date_range(df["dt"].min() + (df["dt"].max() - df["dt"].min()) * warmup_frac,
+                          df["dt"].max(), periods=n_splits + 1)
+    frames = []
+    for i in range(n_splits):
+        lo, hi = edges[i], edges[i + 1]
+        tr = df[df["dt"] < lo]
+        te = df[(df["dt"] >= lo) & (df["dt"] < hi)]
+        if len(tr) < 500 or len(te) < 100:
+            continue
+        w = np.exp(-((tr["dt"].max() - tr["dt"]).dt.days) / (5.0 * 365.25))
+        m = xgb.XGBClassifier(n_estimators=120, max_depth=4, learning_rate=0.05,
+                              subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
+        m.fit(tr[feat_all], tr["target_win"], sample_weight=w)
+        p = m.predict_proba(te[feat_all])[:, 1]
+        thr = find_optimal_threshold(tr, feat_all, target_col="target_win", fallback_default=0.2)
+        f = te[["date", "ticker", "close", "atr_14", "target_win", "trade_ret"]].copy()
+        f["prob"] = p
+        f["selected_threshold"] = thr
+        frames.append(f)
+        if progress_cb:
+            progress_cb((i + 1) / n_splits)
+    if not frames:
+        return [], {}
+    oos = pd.concat(frames).sort_values("date")
+    curve, metrics = simulate_portfolio_chronological(oos, prices_df, horizon=horizon)
+    return curve, metrics
+
+
 def train_and_save(horizon=None):
     """Trains the production swing model on ALL available data (LLM-active window) and persists it.
 
