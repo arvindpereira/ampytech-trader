@@ -18,6 +18,8 @@ from app.core.config import (
     SWING_POSITION_PCT,
     SWING_HORIZON_DAYS,
     LONGTERM_GRID_ENABLED,
+    REGIME_OVERLAY_ENABLED,
+    REGIME_SWING_FACTORS,
 )
 from app.database import (
     SessionLocal, init_db, ExecutedTrade, RecentPrice,
@@ -966,10 +968,18 @@ def run_execution():
                 strat = assignments.get(p.symbol, "swing")
                 deployed[strat] = deployed.get(strat, 0.0) + float(p.market_value)
 
-            swing_budget = max(0.0, buckets.get("swing", 0.0) * equity - deployed.get("swing", 0.0))
+            # Regime overlay: shrink swing's effective capital in defensive regimes (freed → cash).
+            regime = suggestions_data.get("regime", "growth")
+            swing_factor = REGIME_SWING_FACTORS.get(regime, 1.0) if REGIME_OVERLAY_ENABLED else 1.0
+            swing_w_eff = buckets.get("swing", 0.0) * swing_factor
+            if swing_factor < 1.0:
+                print(f"Regime overlay: {regime} → swing weight {buckets.get('swing',0):.2f} × {swing_factor} "
+                      f"= {swing_w_eff:.2f} (freed capital held as cash)")
+
+            swing_budget = max(0.0, swing_w_eff * equity - deployed.get("swing", 0.0))
             longterm_frac = buckets.get("longterm", 0.0)
-            print(f"Buckets: swing {buckets.get('swing',0)*100:.0f}% (avail ${swing_budget:.0f}), "
-                  f"longterm {longterm_frac*100:.0f}% | assigned swing={len(swing_set)} longterm={len(longterm_set)}")
+            print(f"Buckets: swing {buckets.get('swing',0)*100:.0f}%→{swing_w_eff*100:.0f}% (avail ${swing_budget:.0f}), "
+                  f"longterm {longterm_frac*100:.0f}% | regime {regime} | assigned swing={len(swing_set)} longterm={len(longterm_set)}")
 
             # Swing bucket: horizon exits (swing-assigned only), then budget-capped entries.
             close_aged_swing_positions(api, db, allowed_tickers=swing_set if swing_set else None)

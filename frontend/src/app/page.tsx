@@ -1962,6 +1962,22 @@ export default function Home() {
                 <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                   Set the max % of equity each strategy may deploy. The bot trades within these limits and never exceeds them (it won&rsquo;t force-sell to rebalance down). Per-stock strategy is chosen in the table below.
                 </p>
+                {strategyConfig?.overlay_active && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.45' }}>
+                    <ShieldAlert size={16} color="var(--color-gold)" style={{ flexShrink: 0 }} />
+                    <span>
+                      <strong style={{ color: 'var(--color-gold)' }}>Regime overlay active — {strategyConfig.regime}.</strong> Swing
+                      is auto-scaled to {Math.round((strategyConfig.swing_factor || 0) * 100)}% of its bucket
+                      (effective {Math.round((strategyConfig.effective_swing || 0) * 100)}% of equity); the freed capital is held
+                      as cash. This guards against swing&rsquo;s tendency to amplify bear drawdowns and lifts automatically when the regime turns to growth.
+                    </span>
+                  </div>
+                )}
+                {strategyConfig && !strategyConfig.overlay_active && strategyConfig.regime && (
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+                    Regime: <strong style={{ color: 'var(--color-buy)' }}>{strategyConfig.regime}</strong> — swing at full bucket weight (overlay inactive).
+                  </div>
+                )}
                 {(() => {
                   const s = parseFloat(bucketEdit.swing) || 0;
                   const l = parseFloat(bucketEdit.longterm) || 0;

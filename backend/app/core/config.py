@@ -164,6 +164,16 @@ LONGTERM_GRID_ENABLED = os.getenv("LONGTERM_GRID_ENABLED", "False").lower() in (
 # while the market is open; with ~100% deployed it mostly fills slots freed by bracket/horizon exits.
 INTRADAY_EXECUTION_ENABLED = os.getenv("INTRADAY_EXECUTION_ENABLED", "True").lower() in ("true", "1", "yes")
 
+# Regime-aware overlay: swing was shown to AMPLIFY bear drawdowns (−25% in 2022 vs −20% S&P), so when
+# the HMM regime turns defensive, shrink the swing bucket's effective capital (freed capital becomes
+# cash — we don't force-sell, consistent with the soft-cap policy). Long-term MPT is left at its bucket.
+REGIME_OVERLAY_ENABLED = os.getenv("REGIME_OVERLAY_ENABLED", "True").lower() in ("true", "1", "yes")
+REGIME_SWING_FACTORS = {
+    "crisis": float(os.getenv("REGIME_SWING_CRISIS", "0.25")),       # crisis → swing capital ×0.25
+    "transition": float(os.getenv("REGIME_SWING_TRANSITION", "0.6")),  # transition → ×0.6
+    "growth": 1.0,
+}
+
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")
 

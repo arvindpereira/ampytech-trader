@@ -81,9 +81,12 @@ out-of-sample. Wire this as a one-click comparison in the Model Evaluation tab.
 ## Phasing
 
 - **v1 — static per-ticker suggestions** (signals 1–4, rubric, UX, validation). Conservative defaults.
-- **v2 — regime-aware overlay.** Since swing fails in bears, down-weight/disable swing-assigned names
-  when the HMM regime is `crisis` (or volatility is high), routing that capital to MPT/cash. This
-  directly addresses swing's documented failure mode rather than relying on a static label.
+- **v2 — regime-aware overlay. ✅ SHIPPED.** Since swing fails in bears, the executor now shrinks the
+  swing bucket's *effective* capital by a regime factor (`REGIME_SWING_FACTORS`: crisis ×0.25,
+  transition ×0.6, growth ×1.0) when the HMM regime turns defensive; the freed capital is held as cash
+  (no force-selling — consistent with the soft-cap policy), and it lifts automatically as the regime
+  recovers. Surfaced in the Portfolio allocation card ("Regime overlay active") and in
+  `/api/strategy/config` (`regime`, `swing_factor`, `effective_swing`). Toggle with `REGIME_OVERLAY_ENABLED`.
 - **v3 — periodic auto-refresh** (weekly, alongside retrain) with change-alerts, never auto-applying
   without the user opting in.
 

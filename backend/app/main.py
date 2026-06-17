@@ -226,6 +226,40 @@ def get_daily_data(db, end_date=None, lookback_days=600):
     return prices_df, macro_df
 
 
+_regime_cache = {"regime": None, "ts": None}
+
+def compute_current_regime(db):
+    """Current HMM market regime ('growth'|'transition'|'crisis') on daily SPY + macro. Cached 5 min."""
+    import time as _t
+    now = _t.time()
+    if _regime_cache["regime"] and _regime_cache["ts"] and now - _regime_cache["ts"] < 300:
+        return _regime_cache["regime"]
+    try:
+        hmm_path = os.path.join(SAVED_MODELS_DIR, "hmm_model.pkl")
+        meta_path = os.path.join(SAVED_MODELS_DIR, "hmm_metadata.pkl")
+        if not (os.path.exists(hmm_path) and os.path.exists(meta_path)):
+            return "growth"
+        with open(hmm_path, "rb") as f:
+            hmm = pickle.load(f)
+        with open(meta_path, "rb") as f:
+            sm = pickle.load(f)["state_mapping"]
+        dp, dm = get_daily_data(db)
+        spy = dp[dp["ticker"] == "SPY"].sort_values("date").copy() if not dp.empty else pd.DataFrame()
+        if spy.empty:
+            return "growth"
+        feats = build_features_for_df(spy, sentiment_df=None, macro_df=dm)
+        cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
+        last = feats[cols].tail(1)
+        if last.isna().any().any():
+            return "growth"
+        regime = sm.get(hmm.predict(last.values)[0], "growth")
+        _regime_cache.update(regime=regime, ts=now)
+        return regime
+    except Exception as e:
+        print(f"Regime detection failed: {e}")
+        return "growth"
+
+
 _suggestions_cache = {}
 
 def clear_suggestions_cache():
@@ -1133,13 +1167,21 @@ def update_universe(req: UniverseRequest, db=Depends(get_db)):
 
 @app.get("/api/strategy/config")
 def get_strategy_config(db=Depends(get_db)):
-    """Bucket capital allocations + per-ticker strategy assignments (for the portfolio strategy UI)."""
+    """Bucket capital allocations + per-ticker strategy assignments + the live regime overlay."""
+    from app.core.config import REGIME_OVERLAY_ENABLED, REGIME_SWING_FACTORS
     buckets = get_strategy_buckets(db)
+    regime = compute_current_regime(db) if REGIME_OVERLAY_ENABLED else "growth"
+    factor = REGIME_SWING_FACTORS.get(regime, 1.0) if REGIME_OVERLAY_ENABLED else 1.0
     return {
         "buckets": buckets,
         "cash": round(max(0.0, 1.0 - sum(buckets.values())), 4),
         "assignments": get_strategy_assignments(db),
         "strategies": STRATEGY_KEYS,
+        "regime": regime,
+        "overlay_enabled": REGIME_OVERLAY_ENABLED,
+        "swing_factor": factor,
+        "effective_swing": round(buckets.get("swing", 0.0) * factor, 4),
+        "overlay_active": factor < 1.0,
     }
 
 class BucketsRequest(BaseModel):
