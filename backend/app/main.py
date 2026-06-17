@@ -1269,6 +1269,85 @@ def get_llm_news(ticker: Optional[str] = None, limit: int = 50, db=Depends(get_d
         "published_utc": r.published_utc, "date": r.date, "model": r.model,
     } for r in rows]}
 
+@app.get("/api/portfolio")
+def get_portfolio(mode: str = "real", db=Depends(get_db)):
+    """Current state of every held asset: shares, cost basis, live price, market value, and unrealized
+    P&L ($ and %), plus account totals (cost, value, P&L, cash, equity).
+
+    In real mode the broker (Alpaca) is the source of truth — its live positions + account are read on
+    each call, so the UI refresh button recalculates against the latest prices and reflects ALL open
+    positions (not the periodically-synced local table). The local trade policy is merged in by ticker.
+    Falls back to the local VirtualPosition records + stored closes when the broker is unavailable
+    (or in simulated mode)."""
+    pos_mode = "real" if mode == "real" else "replay"
+    local = {p.ticker: p for p in db.query(VirtualPosition).filter(
+        VirtualPosition.mode == pos_mode, VirtualPosition.quantity > 0).all()}
+
+    holdings, total_cost, total_value = [], 0.0, 0.0
+    source, cash = "local", None
+
+    if mode == "real":
+        try:
+            from execution.executor import get_alpaca_api
+            api = get_alpaca_api()
+            broker_positions = api.list_positions()
+            for p in broker_positions:
+                cost = float(p.cost_basis)
+                value = float(p.market_value)
+                total_cost += cost
+                total_value += value
+                holdings.append({
+                    "ticker": p.symbol, "shares": round(float(p.qty), 4),
+                    "entry_price": round(float(p.avg_entry_price), 2),
+                    "current_price": round(float(p.current_price), 2),
+                    "cost_basis": round(cost, 2), "market_value": round(value, 2),
+                    "unrealized_pl": round(float(p.unrealized_pl), 2),
+                    "unrealized_pl_pct": round(float(p.unrealized_plpc) * 100.0, 2),
+                    "policy": local[p.symbol].policy if p.symbol in local else "rebalance",
+                    "is_live": True, "purchase_date": local[p.symbol].purchase_date if p.symbol in local else None,
+                })
+            cash = float(api.get_account().cash)
+            source = "broker"
+        except Exception as e:
+            print(f"Portfolio: broker unavailable, falling back to local records: {e}")
+
+    if source != "broker":
+        def latest_close(tk):
+            rec = db.query(RecentPrice).filter(RecentPrice.ticker == tk).order_by(RecentPrice.date.desc()).first()
+            if not rec:
+                rec = db.query(DailyPrice).filter(DailyPrice.ticker == tk).order_by(DailyPrice.date.desc()).first()
+            return rec.close if rec else None
+        for p in local.values():
+            cur = latest_close(p.ticker) or p.entry_price
+            cost = p.quantity * p.entry_price
+            value = p.quantity * cur
+            total_cost += cost
+            total_value += value
+            holdings.append({
+                "ticker": p.ticker, "shares": round(p.quantity, 4), "entry_price": round(p.entry_price, 2),
+                "current_price": round(cur, 2), "cost_basis": round(cost, 2), "market_value": round(value, 2),
+                "unrealized_pl": round(value - cost, 2),
+                "unrealized_pl_pct": round(((value - cost) / cost * 100.0) if cost else 0.0, 2),
+                "policy": p.policy, "is_live": False, "purchase_date": p.purchase_date,
+            })
+
+    holdings.sort(key=lambda x: -x["market_value"])
+    if cash is None:
+        acc = db.query(VirtualAccount).filter(VirtualAccount.id == (2 if mode == "real" else 1)).first()
+        cash = float(acc.cash) if acc and acc.cash is not None else 0.0
+    total_pl = total_value - total_cost
+    return {
+        "holdings": holdings,
+        "totals": {
+            "cost_basis": round(total_cost, 2), "market_value": round(total_value, 2),
+            "unrealized_pl": round(total_pl, 2),
+            "unrealized_pl_pct": round((total_pl / total_cost * 100.0) if total_cost else 0.0, 2),
+            "cash": round(cash, 2), "equity": round(total_value + cash, 2),
+        },
+        "source": source,
+        "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
 SCHEDULER_HEARTBEAT_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "scheduler_heartbeat.txt")
 

@@ -127,6 +127,8 @@ export default function Home() {
   const [newUniverseTicker, setNewUniverseTicker] = useState<string>('');
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [portfolio, setPortfolio] = useState<any>(null);
+  const [refreshingPortfolio, setRefreshingPortfolio] = useState<boolean>(false);
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
     quantity: 0,
@@ -191,6 +193,18 @@ export default function Home() {
       setHealth(res.ok ? await res.json() : null);
     } catch (err) {
       setHealth(null);
+    }
+  };
+
+  const fetchPortfolio = async () => {
+    setRefreshingPortfolio(true);
+    try {
+      const res = await fetch(`http://localhost:8008/api/portfolio?mode=${appMode}`);
+      setPortfolio(res.ok ? await res.json() : null);
+    } catch (err) {
+      setPortfolio(null);
+    } finally {
+      setRefreshingPortfolio(false);
     }
   };
 
@@ -306,6 +320,12 @@ export default function Home() {
         setPriceSummary(priceData.prices || []);
       }
 
+      // 8. Fetch portfolio (holdings enriched with live value + P&L)
+      const portRes = await fetch(`http://localhost:8008/api/portfolio?mode=${appMode}`);
+      if (portRes.ok) {
+        setPortfolio(await portRes.json());
+      }
+
     } catch (err) {
       console.warn("FastAPI backend is offline.");
       setBackendOnline(false);
@@ -319,6 +339,7 @@ export default function Home() {
         setPerfCurve([]);
         setSentimentList([]);
         setPriceSummary([]);
+        setPortfolio(null);
       }
     } finally {
       setLoading(false);
@@ -1681,10 +1702,50 @@ export default function Home() {
 
               {/* Holdings policy table */}
               <div className="glass-card">
-                <h2>
-                  <Sliders size={20} color="var(--color-accent)" />
-                  Portfolio Asset Policies
-                </h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                  <h2 style={{ margin: 0 }}>
+                    <Sliders size={20} color="var(--color-accent)" />
+                    My Portfolio &amp; Holdings
+                  </h2>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {portfolio?.as_of && (
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        {portfolio.source === 'broker' ? 'Live · Alpaca' : 'Stored prices'} · {portfolio.as_of.slice(11)}
+                      </span>
+                    )}
+                    <button
+                      onClick={fetchPortfolio}
+                      disabled={refreshingPortfolio}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        background: 'rgba(0, 242, 254, 0.1)', border: '1px solid var(--color-buy)',
+                        borderRadius: '8px', color: 'var(--color-buy)', padding: '7px 14px',
+                        cursor: refreshingPortfolio ? 'default' : 'pointer', fontWeight: 600, fontSize: '13px'
+                      }}
+                    >
+                      <RefreshCw size={14} className={refreshingPortfolio ? 'animate-spin' : ''} />
+                      Refresh Prices
+                    </button>
+                  </div>
+                </div>
+
+                {/* Portfolio summary */}
+                {portfolio?.totals && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '18px' }}>
+                    {([
+                      ['Market Value', `$${portfolio.totals.market_value.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
+                      ['Cost Basis', `$${portfolio.totals.cost_basis.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
+                      ['Unrealized P&L', `${portfolio.totals.unrealized_pl >= 0 ? '+' : ''}$${portfolio.totals.unrealized_pl.toLocaleString(undefined, {maximumFractionDigits: 0})} (${portfolio.totals.unrealized_pl_pct >= 0 ? '+' : ''}${portfolio.totals.unrealized_pl_pct.toFixed(2)}%)`, portfolio.totals.unrealized_pl],
+                      ['Cash', `$${portfolio.totals.cash.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
+                      ['Total Equity', `$${portfolio.totals.equity.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
+                    ] as [string, string, number | null][]).map(([label, val, pl], i) => (
+                      <div key={i} style={{ flex: '1 1 130px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px 14px' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>{label}</div>
+                        <div className={pl == null ? '' : pl > 0 ? 'text-green' : pl < 0 ? 'text-red' : ''} style={{ fontSize: '16px', fontWeight: 700 }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Form to add a position */}
                 <form onSubmit={handleSaveHolding} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', background: 'rgba(0,0,0,0.15)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
@@ -1755,75 +1816,81 @@ export default function Home() {
                   </div>
                 </form>
 
-                {/* Table listing holdings */}
+                {/* Table listing holdings with live value + P&L */}
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="trade-table">
-                    <thead>
-                      <tr>
-                        <th>Asset</th>
-                        <th>Shares</th>
-                        <th>Avg Cost</th>
-                        <th>Total Cost</th>
-                        <th>Execution Policy</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {holdings.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                            {appMode === 'real'
-                              ? "No real portfolio holdings configured. Please add your active investments using the form above."
-                              : "No holdings loaded. Add your assets using the form above."
-                            }
-                          </td>
-                        </tr>
-                      ) : (
-                        holdings.map((h, idx) => (
-                          <tr key={idx}>
-                            <td style={{ fontWeight: 600 }}>{h.ticker}</td>
-                            <td>{h.quantity.toFixed(2)}</td>
-                            <td>${h.entry_price.toFixed(2)}</td>
-                            <td>${(h.quantity * h.entry_price).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
-                            <td>
-                              <select
-                                value={h.policy}
-                                onChange={(e) => handleUpdatePolicy(h.ticker, h.quantity, h.entry_price, e.target.value as any)}
-                                style={{
-                                  background: 'rgba(0,0,0,0.3)',
-                                  border: '1px solid var(--border-glass)',
-                                  borderRadius: '6px',
-                                  color: 'var(--text-primary)',
-                                  padding: '4px 8px',
-                                  fontSize: '12px',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                <option value="rebalance">Rebalance</option>
-                                <option value="lock">Lock (Do not trade)</option>
-                                <option value="liquidate">Liquidate</option>
-                              </select>
-                            </td>
-                            <td>
-                              <button
-                                onClick={() => handleDeleteHolding(h.ticker)}
-                                style={{
-                                  background: 'transparent',
-                                  border: 'none',
-                                  color: 'var(--text-secondary)',
-                                  cursor: 'pointer',
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-sell)'}
-                                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </td>
+                  {(() => {
+                    const rows = (portfolio?.holdings && portfolio.holdings.length > 0)
+                      ? portfolio.holdings
+                      : holdings.map((h: any) => ({
+                          ticker: h.ticker, shares: h.quantity, entry_price: h.entry_price,
+                          current_price: h.entry_price, market_value: h.quantity * h.entry_price,
+                          unrealized_pl: 0, unrealized_pl_pct: 0, policy: h.policy
+                        }));
+                    return (
+                      <table className="trade-table">
+                        <thead>
+                          <tr>
+                            <th>Asset</th>
+                            <th>Shares</th>
+                            <th>Avg Cost</th>
+                            <th>Cur Price</th>
+                            <th>Mkt Value</th>
+                            <th>Unrealized P&amp;L</th>
+                            <th>Policy</th>
+                            <th>Actions</th>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {rows.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                {appMode === 'real'
+                                  ? "No open positions. Trades placed by the bot appear here automatically; you can also add an existing investment using the form above."
+                                  : "No holdings loaded. Add your assets using the form above."
+                                }
+                              </td>
+                            </tr>
+                          ) : (
+                            rows.map((h: any, idx: number) => (
+                              <tr key={idx}>
+                                <td style={{ fontWeight: 600 }}>{h.ticker}</td>
+                                <td>{h.shares.toFixed(2)}</td>
+                                <td>${h.entry_price.toFixed(2)}</td>
+                                <td>${h.current_price.toFixed(2)}</td>
+                                <td>${h.market_value.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                                <td className={h.unrealized_pl > 0 ? 'text-green' : h.unrealized_pl < 0 ? 'text-red' : ''} style={{ fontWeight: 600 }}>
+                                  {h.unrealized_pl < 0 ? '-' : '+'}${Math.abs(h.unrealized_pl).toLocaleString(undefined, {maximumFractionDigits: 0})}
+                                  <span style={{ fontSize: '11px', marginLeft: '4px' }}>({h.unrealized_pl_pct >= 0 ? '+' : ''}{h.unrealized_pl_pct.toFixed(2)}%)</span>
+                                </td>
+                                <td>
+                                  <select
+                                    value={h.policy}
+                                    onChange={(e) => handleUpdatePolicy(h.ticker, h.shares, h.entry_price, e.target.value as any)}
+                                    style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-primary)', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                  >
+                                    <option value="rebalance">Rebalance</option>
+                                    <option value="lock">Lock</option>
+                                    <option value="liquidate">Liquidate</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <button
+                                    onClick={() => handleDeleteHolding(h.ticker)}
+                                    title="Remove local record (does not sell on the broker)"
+                                    style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                                    onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-sell)'}
+                                    onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    );
+                  })()}
                 </div>
               </div>
             </section>
