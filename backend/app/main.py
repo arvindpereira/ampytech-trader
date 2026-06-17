@@ -1722,10 +1722,14 @@ def get_health(db=Depends(get_db)):
         svc["scheduler"] = {"status": "down", "detail": "unknown"}
 
     try:
+        from sqlalchemy import func as _func
         latest = db.query(NewsLLMScore).order_by(NewsLLMScore.published_utc.desc()).first()
         cnt = db.query(NewsLLMScore).count()
+        earliest = db.query(_func.min(NewsLLMScore.date)).scalar()
+        latest_d = (latest.published_utc or "")[:10] if latest else "none"
         svc["news_llm"] = {"status": "up" if latest else "down", "count": cnt,
-                           "detail": ((latest.published_utc or "")[:16].replace("T", " ") if latest else "none")}
+                           "earliest": earliest, "latest": latest_d,
+                           "detail": (f"{earliest} → {latest_d} · {cnt:,} scored" if latest else "none")}
     except Exception:
         svc["news_llm"] = {"status": "down", "detail": "unknown"}
 
