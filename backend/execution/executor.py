@@ -716,18 +716,19 @@ def get_long_term_available_shares(db, ticker, current_date_str):
         return 0.0
     total_owned = pos.quantity
 
-    buys = db.query(VirtualOrder).filter(
-        VirtualOrder.ticker == ticker,
-        VirtualOrder.side == "buy",
-        VirtualOrder.status == "filled"
-    ).all()
-
     def get_order_date(o):
         if o.sim_date:
             return datetime.strptime(o.sim_date.split(" ")[0].split("T")[0], "%Y-%m-%d").date()
         if "T" in o.created_at:
             return datetime.strptime(o.created_at.split("T")[0], "%Y-%m-%d").date()
         return datetime.strptime(o.created_at.split(" ")[0], "%Y-%m-%d").date()
+
+    buys = db.query(VirtualOrder).filter(
+        VirtualOrder.ticker == ticker,
+        VirtualOrder.side == "buy",
+        VirtualOrder.status == "filled"
+    ).all()
+    buys = [b for b in buys if get_order_date(b) <= current_date]
 
     sorted_buys = sorted(buys, key=get_order_date)
     total_buy_orders_qty = sum(b.qty for b in sorted_buys)
@@ -761,6 +762,7 @@ def get_long_term_available_shares(db, ticker, current_date_str):
         VirtualOrder.side == "sell",
         VirtualOrder.status == "filled"
     ).all()
+    sells = [s for s in sells if get_order_date(s) <= current_date]
 
     sorted_sells = sorted(sells, key=get_order_date)
     total_sell_qty = sum(s.qty for s in sorted_sells)

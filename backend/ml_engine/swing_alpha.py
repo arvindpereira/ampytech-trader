@@ -171,7 +171,9 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
         except ValueError:
             auc = float("nan")
         _, metrics = simulate_portfolio_chronological(oos, prices_df, initial_capital=100000.0,
-                                                      max_allocation=0.10, fee_pct=0.0005, horizon=horizon)
+                                                      max_allocation=0.10, fee_pct=0.0005, horizon=horizon,
+                                                      stop_max=SWING_STOP_MAX, stop_min=SWING_STOP_MIN,
+                                                      atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT)
         out[key] = (auc, metrics)
     for name, idx in (("Pooled AUC", None), ("Total Return", "total_return"),
                       ("Sharpe", "sharpe_ratio"), ("Max Drawdown", "max_drawdown"),
@@ -228,7 +230,9 @@ def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, progress_cb=Non
     if not frames:
         return [], {}
     oos = pd.concat(frames).sort_values("date")
-    curve, metrics = simulate_portfolio_chronological(oos, prices_df, horizon=horizon)
+    curve, metrics = simulate_portfolio_chronological(oos, prices_df, horizon=horizon,
+                                                      stop_max=SWING_STOP_MAX, stop_min=SWING_STOP_MIN,
+                                                      atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT)
     return curve, metrics
 
 

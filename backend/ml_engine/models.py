@@ -458,11 +458,16 @@ def find_optimal_threshold(tr_fold, feature_cols, target_col="target_win", fallb
         return float(fallback_default)
 
 
-def precalculate_exits(oos_df, prices_df, horizon=14):
+def precalculate_exits(oos_df, prices_df, horizon=14, stop_max=None, stop_min=None, atr_mult=None, tp_mult=None):
     """
     Pre-calculates the exit date and exit price for every row in oos_df
     based on the triple barrier method. Optimized with dictionary index lookups.
     """
+    stop_max = SHORT_TERM_STOP_MAX if stop_max is None else stop_max
+    stop_min = SHORT_TERM_STOP_MIN if stop_min is None else stop_min
+    atr_mult = SHORT_TERM_ATR_STOP_MULT if atr_mult is None else atr_mult
+    tp_mult = SHORT_TERM_TP_MULT if tp_mult is None else tp_mult
+
     price_groups = {}
     date_to_idx_groups = {}
     for ticker, grp in prices_df.groupby("ticker"):
@@ -501,8 +506,8 @@ def precalculate_exits(oos_df, prices_df, horizon=14):
         if np.isnan(atr) or atr <= 0.0:
             atr = entry_close * 0.01
 
-        sl_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / entry_close))
-        tp_pct = sl_pct * SHORT_TERM_TP_MULT
+        sl_pct = min(stop_max, max(stop_min, (atr_mult * atr) / entry_close))
+        tp_pct = sl_pct * tp_mult
         stop_price = entry_close * (1.0 - sl_pct)
         target_price = entry_close * (1.0 + tp_pct)
 
@@ -556,7 +561,8 @@ def precalculate_exits(oos_df, prices_df, horizon=14):
     return oos_df_copy
 
 
-def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0, max_allocation=0.10, fee_pct=0.0005, horizon=14):
+def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0, max_allocation=0.10, fee_pct=0.0005, horizon=14,
+                                     stop_max=None, stop_min=None, atr_mult=None, tp_mult=None):
     """
     Chronological portfolio simulator enforcing capital limits, max allocation,
     no overlaps, exits, and fees.
@@ -568,7 +574,8 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
     unique_dates = sorted(oos_df["date"].unique())
 
     # 2. Pre-calculate exit dates and prices
-    oos_df = precalculate_exits(oos_df, prices_df, horizon=horizon)
+    oos_df = precalculate_exits(oos_df, prices_df, horizon=horizon,
+                                stop_max=stop_max, stop_min=stop_min, atr_mult=atr_mult, tp_mult=tp_mult)
 
     # Group signals by date
     signals_by_date = {}
