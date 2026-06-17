@@ -143,6 +143,8 @@ export default function Home() {
   const [evalRunning, setEvalRunning] = useState<boolean>(false);
   const [evalProgress, setEvalProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [evalResult, setEvalResult] = useState<any>(null);
+  const [evalWindow, setEvalWindow] = useState<string>('none');
+  const [evalCustom, setEvalCustom] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
     quantity: 0,
@@ -274,6 +276,15 @@ export default function Home() {
     } catch (err) { console.error(err); } finally { setActionBusy(false); }
   };
 
+  const STRESS_PRESETS: Record<string, { label: string; start: string | null; end: string | null }> = {
+    none: { label: 'Walk-forward (model eval)', start: null, end: null },
+    '2022': { label: '2022 Bear Market', start: '2022-01-03', end: '2022-12-30' },
+    covid: { label: '2020 COVID Crash', start: '2020-02-19', end: '2020-04-30' },
+    gfc: { label: '2008 Financial Crisis', start: '2007-10-09', end: '2009-03-09' },
+    dotcom: { label: 'Dot-Com Bust', start: '2000-03-24', end: '2002-10-09' },
+    custom: { label: 'Custom range…', start: '', end: '' },
+  };
+
   const EVAL_SERIES: { key: string; name: string; color: string }[] = [
     { key: 'swing', name: 'Swing + News', color: '#00F2FE' },
     { key: 'longterm', name: 'Long-term (MPT)', color: '#10B981' },
@@ -286,13 +297,16 @@ export default function Home() {
   const handleRunEval = async () => {
     const strategies = (Object.entries(evalStrategies) as [string, boolean][]).filter(([, v]) => v).map(([k]) => k);
     if (strategies.length === 0) return;
+    let start: string | null = null, end: string | null = null;
+    if (evalWindow === 'custom') { start = evalCustom.start || null; end = evalCustom.end || null; }
+    else if (evalWindow !== 'none') { start = STRESS_PRESETS[evalWindow].start; end = STRESS_PRESETS[evalWindow].end; }
     setEvalRunning(true);
     setEvalResult(null);
     setEvalProgress({ pct: 0, stage: 'Starting…' });
     try {
       const res = await fetch(`http://localhost:8008/api/evaluate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc }),
+        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end }),
       });
       const { job_id } = await res.json();
       const poll = async () => {
@@ -1681,6 +1695,27 @@ export default function Home() {
                     {[3, 4, 5, 6].map(n => <option key={n} value={n}>{n} folds</option>)}
                   </select>
                 </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Period / stress window</label>
+                  <select value={evalWindow} onChange={(e) => setEvalWindow(e.target.value)}
+                    style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '8px 12px', fontSize: '13px', cursor: 'pointer' }}>
+                    {Object.entries(STRESS_PRESETS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+                  </select>
+                </div>
+                {evalWindow === 'custom' && (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px' }}>From</label>
+                      <input type="date" value={evalCustom.start} onChange={(e) => setEvalCustom({ ...evalCustom, start: e.target.value })}
+                        style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '7px 10px', fontSize: '13px' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px' }}>To</label>
+                      <input type="date" value={evalCustom.end} onChange={(e) => setEvalCustom({ ...evalCustom, end: e.target.value })}
+                        style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '7px 10px', fontSize: '13px' }} />
+                    </div>
+                  </div>
+                )}
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
                   <input type="checkbox" checked={evalUseAlloc} onChange={(e) => setEvalUseAlloc(e.target.checked)} /> Use my current allocation (blended curve)
                 </label>
@@ -1708,12 +1743,23 @@ export default function Home() {
               )}
             </div>
 
+            {evalResult && evalResult.caveats && evalResult.caveats.length > 0 && (
+              <div className="glass-card" style={{ marginBottom: '24px', border: '1px solid rgba(245, 158, 11, 0.3)', background: 'rgba(245, 158, 11, 0.06)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-gold)', fontWeight: 600, marginBottom: '8px' }}>
+                  <ShieldAlert size={18} /> Read with care
+                </div>
+                <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                  {evalResult.caveats.map((c: string, i: number) => <li key={i}>{c}</li>)}
+                </ul>
+              </div>
+            )}
+
             {evalResult && evalResult.series && evalResult.series.length > 0 && (
               <>
                 <div className="glass-card" style={{ marginBottom: '24px' }}>
                   <h2>
                     <TrendingUp size={20} color="var(--color-buy)" />
-                    Growth of $100,000{evalResult.window && evalResult.window.length ? ` · ${evalResult.window[0]} → ${evalResult.window[1]}` : ''}
+                    {evalResult.mode === 'stress' ? 'Stress window · ' : ''}Growth of $100,000{evalResult.window && evalResult.window.length ? ` · ${evalResult.window[0]} → ${evalResult.window[1]}` : ''}
                   </h2>
                   <div style={{ width: '100%', height: 430 }}>
                     <ResponsiveContainer width="100%" height="100%">

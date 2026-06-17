@@ -56,25 +56,33 @@ def _benchmark_series(db, ticker, dates):
     return s
 
 
-def run_evaluation(strategies, horizon=5, splits=4, allocation=None, progress_cb=None):
-    """Returns {series: [{date, swing, longterm, blended, spy, qqq, brk}], metrics: {...}, window: [...]}."""
+def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
+                   start_date=None, end_date=None, progress_cb=None):
+    """Returns {series, metrics, window, caveats, mode}.
+
+    Default (no dates) = walk-forward model evaluation. If start_date/end_date are given it's a STRESS
+    window: the long-term MPT engine + benchmarks are evaluated over that historical span (swing is not
+    evaluated historically — its LLM news only exists from 2024)."""
     def report(p, note):
         if progress_cb:
             progress_cb(int(p), note)
 
-    raw = {}   # name -> daily $ series
+    windowed = bool(start_date)
+    raw = {}
     metrics = {}
+    caveats = []
 
-    if "swing" in strategies:
+    if "swing" in strategies and not windowed:
         report(5, "Swing walk-forward (training folds)…")
         from ml_engine.swing_alpha import backtest_swing_curve
         curve, _ = backtest_swing_curve(horizon=horizon, n_splits=splits,
                                         progress_cb=lambda f: report(5 + int(f * 45), "Swing walk-forward (training folds)…"))
         if curve:
             raw["swing"] = _curve_to_daily(curve)
+    elif "swing" in strategies and windowed:
+        caveats.append("Swing isn't shown over historical windows — its LLM-scored news only exists from 2024.")
 
-    # The reference window is the swing OOS window when available (else the long-term default).
-    ref_start = raw["swing"].index[0] if "swing" in raw and len(raw["swing"]) else "2023-06-16"
+    ref_start = start_date if windowed else (raw["swing"].index[0] if "swing" in raw and len(raw["swing"]) else "2023-06-16")
 
     if "longterm" in strategies:
         report(55, "Long-term MPT backtest…")
@@ -82,34 +90,45 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None, progress_cb
         lt_allowed = allocation.get("longterm_tickers") if allocation else None
         curve, _ = backtest_longterm_curve(start_date=ref_start, allowed_tickers=lt_allowed,
                                            progress_cb=lambda f: report(55 + int(f * 25), "Long-term MPT backtest…"))
+        if windowed and end_date:
+            curve = [c for c in curve if c["date"] <= end_date]
         if curve:
             raw["longterm"] = _curve_to_daily(curve)
 
-    if not raw:
-        report(100, "No data")
-        return {"series": [], "metrics": {}, "window": []}
-
-    # Common daily date index across all strategy curves, forward-filled.
-    all_dates = sorted(set().union(*[set(s.index) for s in raw.values()]))
-    for k in list(raw.keys()):
-        raw[k] = raw[k].reindex(all_dates).ffill()
-        # renormalize each strategy to $100k at the window start for fair comparison
-        first = raw[k].dropna().iloc[0] if len(raw[k].dropna()) else 0
-        if first:
-            raw[k] = raw[k] / first * 100000.0
-
-    # Blend by the current capital allocation (cash earns 0%).
-    if allocation and "swing" in raw:
-        sw = allocation.get("swing", 0.0)
-        lt = allocation.get("longterm", 0.0)
-        swing_ret = raw["swing"].pct_change().fillna(0.0)
-        lt_ret = raw["longterm"].pct_change().fillna(0.0) if "longterm" in raw else pd.Series(0.0, index=all_dates)
-        blended_ret = sw * swing_ret + lt * lt_ret  # remainder is cash @ 0%
-        raw["blended"] = (1.0 + blended_ret).cumprod() * 100000.0
-
-    report(85, "Loading benchmarks (SPY / QQQ / BRK-B)…")
+    # Date index: from the strategy curves, else (windowed w/ no strategy) from SPY over the window.
     db = SessionLocal()
     try:
+        if raw:
+            all_dates = sorted(set().union(*[set(s.index) for s in raw.values()]))
+            if windowed:
+                all_dates = [d for d in all_dates if (not start_date or d >= start_date) and (not end_date or d <= end_date)]
+        elif windowed:
+            rows_spy = db.query(DailyPrice.date).filter(
+                DailyPrice.ticker == "SPY", DailyPrice.date >= start_date,
+                DailyPrice.date <= (end_date or "2100")).order_by(DailyPrice.date).all()
+            all_dates = sorted({d[0][:10] for d in rows_spy})
+        else:
+            report(100, "No data")
+            return {"series": [], "metrics": {}, "window": [], "caveats": caveats, "mode": "walkforward"}
+
+        if not all_dates:
+            report(100, "No data in window")
+            return {"series": [], "metrics": {}, "window": [], "caveats": caveats + ["No data in the selected window."], "mode": "stress"}
+
+        for k in list(raw.keys()):
+            raw[k] = raw[k].reindex(all_dates).ffill()
+            first = raw[k].dropna().iloc[0] if len(raw[k].dropna()) else 0
+            if first:
+                raw[k] = raw[k] / first * 100000.0
+
+        if allocation and "swing" in raw:
+            sw = allocation.get("swing", 0.0)
+            lt = allocation.get("longterm", 0.0)
+            swing_ret = raw["swing"].pct_change().fillna(0.0)
+            lt_ret = raw["longterm"].pct_change().fillna(0.0) if "longterm" in raw else pd.Series(0.0, index=all_dates)
+            raw["blended"] = (1.0 + (sw * swing_ret + lt * lt_ret)).cumprod() * 100000.0
+
+        report(85, "Loading benchmarks (SPY / QQQ / BRK-B)…")
         for sym, key in BENCHMARKS:
             raw[key] = _benchmark_series(db, sym, all_dates)
     finally:
@@ -117,6 +136,13 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None, progress_cb
 
     for k, s in raw.items():
         metrics[k] = _metrics(s)
+
+    if windowed and start_date < "2020-01-01":
+        caveats.append("Pre-2020 results are inflated by SURVIVORSHIP BIAS — the universe is today's surviving "
+                       "winners, so a real portfolio back then wouldn't have known to hold them.")
+    if windowed:
+        caveats.append("Long-term MPT uses only trailing returns for its covariance (look-ahead-free); "
+                       "benchmarks are buy-and-hold over the window.")
 
     report(95, "Assembling curves…")
     rows = []
@@ -128,4 +154,5 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None, progress_cb
         rows.append(row)
 
     report(100, "Complete")
-    return {"series": rows, "metrics": metrics, "window": [all_dates[0], all_dates[-1]]}
+    return {"series": rows, "metrics": metrics, "window": [all_dates[0], all_dates[-1]],
+            "caveats": caveats, "mode": "stress" if windowed else "walkforward"}
