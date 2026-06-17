@@ -135,6 +135,8 @@ export default function Home() {
   const [addStockOpen, setAddStockOpen] = useState<boolean>(false);
   const [addStockTicker, setAddStockTicker] = useState<string>('');
   const [actionBusy, setActionBusy] = useState<boolean>(false);
+  const [strategyConfig, setStrategyConfig] = useState<any>(null);
+  const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string }>({ swing: '', longterm: '' });
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
     quantity: 0,
@@ -223,6 +225,47 @@ export default function Home() {
       if (jr.ok) setJobs((await jr.json()).jobs || []);
       if (tr.ok) setTrainStatus(await tr.json());
     } catch (err) { /* backend offline */ }
+  };
+
+  const STRATEGY_OPTIONS: [string, string][] = [
+    ['swing', 'Swing + News'],
+    ['longterm', 'Long-term (MPT)'],
+    ['hold', 'Hold (no trades)'],
+  ];
+
+  const fetchStrategyConfig = async () => {
+    try {
+      const res = await fetch(`http://localhost:8008/api/strategy/config`);
+      if (res.ok) {
+        const d = await res.json();
+        setStrategyConfig(d);
+        setBucketEdit({ swing: String(Math.round((d.buckets.swing || 0) * 100)), longterm: String(Math.round((d.buckets.longterm || 0) * 100)) });
+      }
+    } catch (err) { /* offline */ }
+  };
+
+  const handleSetTickerStrategy = async (ticker: string, strategy: string) => {
+    try {
+      await fetch(`http://localhost:8008/api/strategy/ticker`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker, strategy }),
+      });
+      fetchStrategyConfig();
+      fetchData();
+    } catch (err) { console.error(err); }
+  };
+
+  const handleSaveBuckets = async () => {
+    const s = (parseFloat(bucketEdit.swing) || 0) / 100;
+    const l = (parseFloat(bucketEdit.longterm) || 0) / 100;
+    if (s + l > 1.0001) { alert('Buckets cannot exceed 100% of equity.'); return; }
+    setActionBusy(true);
+    try {
+      const res = await fetch(`http://localhost:8008/api/strategy/buckets`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ swing: s, longterm: l }),
+      });
+      if (!res.ok) { const e = await res.json(); alert(e.detail || 'Failed'); }
+      else fetchStrategyConfig();
+    } catch (err) { console.error(err); } finally { setActionBusy(false); }
   };
 
   const handleAddStock = async () => {
@@ -395,6 +438,9 @@ export default function Home() {
       if (portRes.ok) {
         setPortfolio(await portRes.json());
       }
+
+      // 9. Fetch strategy assignments + bucket allocations
+      fetchStrategyConfig();
 
     } catch (err) {
       console.warn("FastAPI backend is offline.");
@@ -1777,6 +1823,55 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Strategy capital allocation buckets */}
+              <div className="glass-card" style={{ marginBottom: '24px' }}>
+                <h2>
+                  <Sliders size={20} color="var(--color-gold)" />
+                  Strategy Capital Allocation
+                </h2>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Set the max % of equity each strategy may deploy. The bot trades within these limits and never exceeds them (it won&rsquo;t force-sell to rebalance down). Per-stock strategy is chosen in the table below.
+                </p>
+                {(() => {
+                  const s = parseFloat(bucketEdit.swing) || 0;
+                  const l = parseFloat(bucketEdit.longterm) || 0;
+                  const cash = Math.max(0, 100 - s - l);
+                  const over = s + l > 100;
+                  const field = (label: string, key: 'swing' | 'longterm', color: string) => (
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: 'block', fontSize: '12px', color, marginBottom: '6px', fontWeight: 600 }}>{label}</label>
+                      <div style={{ position: 'relative' }}>
+                        <input type="number" min="0" max="100" value={bucketEdit[key]}
+                          onChange={(e) => setBucketEdit({ ...bucketEdit, [key]: e.target.value })}
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '9px 26px 9px 12px', fontSize: '14px' }} />
+                        <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '13px' }}>%</span>
+                      </div>
+                    </div>
+                  );
+                  return (
+                    <>
+                      <div style={{ display: 'flex', gap: '12px', marginBottom: '14px' }}>
+                        {field('Swing + News', 'swing', 'var(--color-buy)')}
+                        {field('Long-term (MPT)', 'longterm', 'var(--color-accent)')}
+                        <div style={{ flex: 1 }}>
+                          <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: 600 }}>Cash (rest)</label>
+                          <div style={{ padding: '9px 12px', fontSize: '14px', fontWeight: 600, color: over ? 'var(--color-sell)' : 'var(--text-primary)' }}>{over ? '—' : `${cash}%`}</div>
+                        </div>
+                      </div>
+                      {/* stacked allocation bar */}
+                      <div style={{ display: 'flex', height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.06)', marginBottom: '14px' }}>
+                        <div style={{ width: `${Math.min(s, 100)}%`, background: 'var(--color-buy)' }} />
+                        <div style={{ width: `${Math.min(l, 100 - Math.min(s, 100))}%`, background: 'var(--color-accent)' }} />
+                      </div>
+                      <button onClick={handleSaveBuckets} disabled={actionBusy || over}
+                        style={{ background: over ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)', border: `1px solid ${over ? 'var(--color-sell)' : 'var(--color-gold)'}`, borderRadius: '8px', color: over ? 'var(--color-sell)' : 'var(--color-gold)', padding: '8px 18px', cursor: over ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '13px' }}>
+                        {over ? 'Exceeds 100%' : 'Save Allocation'}
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+
               {/* Holdings policy table */}
               <div className="glass-card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
@@ -1934,7 +2029,7 @@ export default function Home() {
                             <th>Cur Price</th>
                             <th>Mkt Value</th>
                             <th>Unrealized P&amp;L</th>
-                            <th>Policy</th>
+                            <th>Strategy</th>
                             <th>Actions</th>
                           </tr>
                         </thead>
@@ -1962,19 +2057,15 @@ export default function Home() {
                                   )}
                                 </td>
                                 <td>
-                                  {h.monitored ? (
-                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '3px 9px', borderRadius: '999px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)' }}>Monitoring</span>
-                                  ) : (
-                                    <select
-                                      value={h.policy}
-                                      onChange={(e) => handleUpdatePolicy(h.ticker, h.shares, h.entry_price, e.target.value as any)}
-                                      style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-primary)', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
-                                    >
-                                      <option value="rebalance">Rebalance</option>
-                                      <option value="lock">Lock</option>
-                                      <option value="liquidate">Liquidate (next run)</option>
-                                    </select>
-                                  )}
+                                  <select
+                                    value={(strategyConfig?.assignments?.[h.ticker]) || h.strategy || 'swing'}
+                                    onChange={(e) => handleSetTickerStrategy(h.ticker, e.target.value)}
+                                    style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-primary)', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                  >
+                                    {STRATEGY_OPTIONS.map(([val, label]) => (
+                                      <option key={val} value={val}>{label}</option>
+                                    ))}
+                                  </select>
                                 </td>
                                 <td>
                                   {h.monitored ? (

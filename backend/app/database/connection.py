@@ -97,6 +97,17 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for technical indicators on recent_prices: {em}")
 
+    # 5. Migrate universe_tickers: add per-ticker strategy column
+    try:
+        columns_uni = [c["name"] for c in inspector.get_columns("universe_tickers")]
+        if columns_uni and "strategy" not in columns_uni:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE universe_tickers ADD COLUMN strategy VARCHAR DEFAULT 'swing'"))
+                conn.commit()
+            print("Successfully added strategy column to universe_tickers table via auto-migration.")
+    except Exception as em:
+        print(f"Auto-migration check failed for strategy on universe_tickers: {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE

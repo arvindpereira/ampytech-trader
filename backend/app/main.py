@@ -21,8 +21,27 @@ from app.core.config import (
 from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    SentimentSourceLog, InsiderDisclosure, NewsLLMScore
+    SentimentSourceLog, InsiderDisclosure, NewsLLMScore, AppSetting
 )
+
+import json as _json
+STRATEGY_KEYS = ["swing", "longterm"]
+DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0}
+
+def get_strategy_buckets(db):
+    """Capital allocation per strategy bucket (fraction of equity). Defaults to all-swing."""
+    s = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
+    if s and s.value:
+        try:
+            v = _json.loads(s.value)
+            return {k: float(v.get(k, 0.0)) for k in STRATEGY_KEYS}
+        except Exception:
+            pass
+    return dict(DEFAULT_BUCKETS)
+
+def get_strategy_assignments(db):
+    """Map of ticker -> assigned strategy ('swing' | 'longterm' | 'hold')."""
+    return {t.ticker: (t.strategy or "swing") for t in db.query(UniverseTicker).all()}
 from ml_engine.features import build_features_for_df, build_all_features
 from ml_engine.models import PortfolioOptimizer
 
@@ -1074,6 +1093,59 @@ def update_universe(req: UniverseRequest, db=Depends(get_db)):
     clear_suggestions_cache()
     return {"status": "success", "tickers": req.tickers}
 
+@app.get("/api/strategy/config")
+def get_strategy_config(db=Depends(get_db)):
+    """Bucket capital allocations + per-ticker strategy assignments (for the portfolio strategy UI)."""
+    buckets = get_strategy_buckets(db)
+    return {
+        "buckets": buckets,
+        "cash": round(max(0.0, 1.0 - sum(buckets.values())), 4),
+        "assignments": get_strategy_assignments(db),
+        "strategies": STRATEGY_KEYS,
+    }
+
+class BucketsRequest(BaseModel):
+    swing: float
+    longterm: float
+
+@app.post("/api/strategy/buckets")
+def set_strategy_buckets(req: BucketsRequest, db=Depends(get_db)):
+    """Set the capital fraction per strategy bucket. Rejected if they sum to more than 100%."""
+    swing = max(0.0, float(req.swing))
+    longterm = max(0.0, float(req.longterm))
+    if swing + longterm > 1.0001:
+        raise HTTPException(status_code=400, detail="Bucket weights cannot exceed 100% of equity.")
+    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4)})
+    row = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
+    if row:
+        row.value = payload
+    else:
+        db.add(AppSetting(key="bucket_allocations", value=payload))
+    db.commit()
+    clear_suggestions_cache()
+    return {"status": "success", "buckets": {"swing": swing, "longterm": longterm}}
+
+class TickerStrategyRequest(BaseModel):
+    ticker: str
+    strategy: str
+
+@app.post("/api/strategy/ticker")
+def set_ticker_strategy(req: TickerStrategyRequest, db=Depends(get_db)):
+    """Assign which strategy manages a given ticker ('swing' | 'longterm' | 'hold')."""
+    ticker = req.ticker.upper().strip()
+    strat = req.strategy.strip().lower()
+    if strat not in ("swing", "longterm", "hold"):
+        raise HTTPException(status_code=400, detail="strategy must be swing, longterm, or hold")
+    row = db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first()
+    if not row:
+        row = UniverseTicker(ticker=ticker, strategy=strat)
+        db.add(row)
+    else:
+        row.strategy = strat
+    db.commit()
+    clear_suggestions_cache()
+    return {"status": "success", "ticker": ticker, "strategy": strat}
+
 class TickerRequest(BaseModel):
     ticker: str
 
@@ -1523,6 +1595,9 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
                 "policy": p.policy, "is_live": False, "purchase_date": p.purchase_date,
             })
 
+    assignments = get_strategy_assignments(db)
+    for h in holdings:
+        h["strategy"] = assignments.get(h["ticker"], "swing")
     holdings.sort(key=lambda x: -x["market_value"])
     if cash is None:
         acc = db.query(VirtualAccount).filter(VirtualAccount.id == (2 if mode == "real" else 1)).first()

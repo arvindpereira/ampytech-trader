@@ -107,6 +107,17 @@ class UniverseTicker(Base):
     __tablename__ = "universe_tickers"
 
     ticker = Column(String, primary_key=True)
+    # Which trading strategy manages this ticker: 'swing' (multi-day + news),
+    # 'longterm' (MPT/regime rebalancing), or 'hold' (monitor only, never trade).
+    strategy = Column(String, default="swing")
+
+
+class AppSetting(Base):
+    """Generic key/value settings store (e.g. strategy bucket capital allocations as JSON)."""
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String)
 
 
 class VirtualAccount(Base):
