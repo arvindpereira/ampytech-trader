@@ -129,6 +129,12 @@ export default function Home() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [portfolio, setPortfolio] = useState<any>(null);
   const [refreshingPortfolio, setRefreshingPortfolio] = useState<boolean>(false);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [trainStatus, setTrainStatus] = useState<any>(null);
+  const [liquidateModal, setLiquidateModal] = useState<any>(null);
+  const [addStockOpen, setAddStockOpen] = useState<boolean>(false);
+  const [addStockTicker, setAddStockTicker] = useState<string>('');
+  const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
     quantity: 0,
@@ -206,6 +212,70 @@ export default function Home() {
     } finally {
       setRefreshingPortfolio(false);
     }
+  };
+
+  const fetchJobsAndTraining = async () => {
+    try {
+      const [jr, tr] = await Promise.all([
+        fetch(`http://localhost:8008/api/jobs`),
+        fetch(`http://localhost:8008/api/train/status`),
+      ]);
+      if (jr.ok) setJobs((await jr.json()).jobs || []);
+      if (tr.ok) setTrainStatus(await tr.json());
+    } catch (err) { /* backend offline */ }
+  };
+
+  const handleAddStock = async () => {
+    const t = addStockTicker.toUpperCase().trim();
+    if (!t) return;
+    setActionBusy(true);
+    try {
+      await fetch(`http://localhost:8008/api/universe/add`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: t }),
+      });
+      setAddStockTicker('');
+      setAddStockOpen(false);
+      fetchJobsAndTraining();
+      fetchData();
+    } catch (err) { console.error(err); } finally { setActionBusy(false); }
+  };
+
+  const handleRemoveMonitored = async (ticker: string) => {
+    if (!confirm(`Stop monitoring ${ticker}? (It has no open position.)`)) return;
+    try {
+      await fetch(`http://localhost:8008/api/universe/remove`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker }),
+      });
+      fetchData();
+    } catch (err) { console.error(err); }
+  };
+
+  const handleLiquidate = async () => {
+    if (!liquidateModal) return;
+    const shares = parseFloat(liquidateModal.shares);
+    if (!shares || shares <= 0) return;
+    setActionBusy(true);
+    try {
+      const res = await fetch(`http://localhost:8008/api/positions/liquidate?mode=${appMode}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: liquidateModal.ticker, shares }),
+      });
+      if (!res.ok) {
+        const e = await res.json();
+        alert(`Liquidation failed: ${e.detail || 'unknown error'}`);
+      } else {
+        setLiquidateModal(null);
+        setTimeout(fetchData, 1200);
+      }
+    } catch (err) { console.error(err); } finally { setActionBusy(false); }
+  };
+
+  const handleRetrain = async () => {
+    setActionBusy(true);
+    try {
+      await fetch(`http://localhost:8008/api/train/start`, { method: 'POST' });
+      fetchJobsAndTraining();
+    } catch (err) { console.error(err); } finally { setActionBusy(false); }
   };
 
   const fetchLlmNews = async (ticker: string) => {
@@ -450,6 +520,13 @@ export default function Home() {
     const d = setInterval(() => fetchData(), 90000);
     return () => { clearInterval(h); clearInterval(d); };
   }, [perfMode, appMode, hedgeMode]);
+
+  // Poll background jobs + training status every 4s so progress bars stay live.
+  useEffect(() => {
+    fetchJobsAndTraining();
+    const j = setInterval(fetchJobsAndTraining, 4000);
+    return () => clearInterval(j);
+  }, []);
 
   // Universe Editor Handlers
   const handleAddTicker = async () => {
@@ -1714,6 +1791,17 @@ export default function Home() {
                       </span>
                     )}
                     <button
+                      onClick={() => { setAddStockOpen(true); setAddStockTicker(''); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        background: 'var(--color-accent)', border: 'none',
+                        borderRadius: '8px', color: 'white', padding: '7px 14px',
+                        cursor: 'pointer', fontWeight: 600, fontSize: '13px'
+                      }}
+                    >
+                      <Plus size={14} /> Add Stock
+                    </button>
+                    <button
                       onClick={fetchPortfolio}
                       disabled={refreshingPortfolio}
                       style={{
@@ -1819,13 +1907,23 @@ export default function Home() {
                 {/* Table listing holdings with live value + P&L */}
                 <div style={{ overflowX: 'auto' }}>
                   {(() => {
-                    const rows = (portfolio?.holdings && portfolio.holdings.length > 0)
-                      ? portfolio.holdings
+                    const heldRows = (portfolio?.holdings && portfolio.holdings.length > 0)
+                      ? portfolio.holdings.map((h: any) => ({ ...h, monitored: false }))
                       : holdings.map((h: any) => ({
                           ticker: h.ticker, shares: h.quantity, entry_price: h.entry_price,
                           current_price: h.entry_price, market_value: h.quantity * h.entry_price,
-                          unrealized_pl: 0, unrealized_pl_pct: 0, policy: h.policy
+                          unrealized_pl: 0, unrealized_pl_pct: 0, policy: h.policy, monitored: false
                         }));
+                    const heldSet = new Set(heldRows.map((h: any) => h.ticker));
+                    const priceMap: any = {};
+                    priceSummary.forEach((p: any) => { priceMap[p.ticker] = p.price; });
+                    const monitoredRows = universeTickers
+                      .filter((t: string) => !heldSet.has(t))
+                      .map((t: string) => ({
+                        ticker: t, shares: 0, entry_price: 0, current_price: priceMap[t] ?? 0,
+                        market_value: 0, unrealized_pl: 0, unrealized_pl_pct: 0, policy: 'rebalance', monitored: true
+                      }));
+                    const rows = [...heldRows, ...monitoredRows];
                     return (
                       <table className="trade-table">
                         <thead>
@@ -1844,45 +1942,64 @@ export default function Home() {
                           {rows.length === 0 ? (
                             <tr>
                               <td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                                {appMode === 'real'
-                                  ? "No open positions. Trades placed by the bot appear here automatically; you can also add an existing investment using the form above."
-                                  : "No holdings loaded. Add your assets using the form above."
-                                }
+                                No positions or monitored stocks yet. Use &ldquo;+ Add Stock&rdquo; to start monitoring a ticker.
                               </td>
                             </tr>
                           ) : (
                             rows.map((h: any, idx: number) => (
-                              <tr key={idx}>
+                              <tr key={idx} style={h.monitored ? { opacity: 0.72 } : undefined}>
                                 <td style={{ fontWeight: 600 }}>{h.ticker}</td>
-                                <td>{h.shares.toFixed(2)}</td>
-                                <td>${h.entry_price.toFixed(2)}</td>
-                                <td>${h.current_price.toFixed(2)}</td>
-                                <td>${h.market_value.toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
-                                <td className={h.unrealized_pl > 0 ? 'text-green' : h.unrealized_pl < 0 ? 'text-red' : ''} style={{ fontWeight: 600 }}>
-                                  {h.unrealized_pl < 0 ? '-' : '+'}${Math.abs(h.unrealized_pl).toLocaleString(undefined, {maximumFractionDigits: 0})}
-                                  <span style={{ fontSize: '11px', marginLeft: '4px' }}>({h.unrealized_pl_pct >= 0 ? '+' : ''}{h.unrealized_pl_pct.toFixed(2)}%)</span>
+                                <td>{h.monitored ? '0' : h.shares.toFixed(2)}</td>
+                                <td>{h.monitored ? '—' : `$${h.entry_price.toFixed(2)}`}</td>
+                                <td>{h.current_price > 0 ? `$${h.current_price.toFixed(2)}` : '—'}</td>
+                                <td>{h.monitored ? '—' : `$${h.market_value.toLocaleString(undefined, {maximumFractionDigits: 0})}`}</td>
+                                <td className={h.monitored ? '' : h.unrealized_pl > 0 ? 'text-green' : h.unrealized_pl < 0 ? 'text-red' : ''} style={{ fontWeight: 600 }}>
+                                  {h.monitored ? '—' : (
+                                    <>
+                                      {h.unrealized_pl < 0 ? '-' : '+'}${Math.abs(h.unrealized_pl).toLocaleString(undefined, {maximumFractionDigits: 0})}
+                                      <span style={{ fontSize: '11px', marginLeft: '4px' }}>({h.unrealized_pl_pct >= 0 ? '+' : ''}{h.unrealized_pl_pct.toFixed(2)}%)</span>
+                                    </>
+                                  )}
                                 </td>
                                 <td>
-                                  <select
-                                    value={h.policy}
-                                    onChange={(e) => handleUpdatePolicy(h.ticker, h.shares, h.entry_price, e.target.value as any)}
-                                    style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-primary)', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
-                                  >
-                                    <option value="rebalance">Rebalance</option>
-                                    <option value="lock">Lock</option>
-                                    <option value="liquidate">Liquidate</option>
-                                  </select>
+                                  {h.monitored ? (
+                                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '3px 9px', borderRadius: '999px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)' }}>Monitoring</span>
+                                  ) : (
+                                    <select
+                                      value={h.policy}
+                                      onChange={(e) => handleUpdatePolicy(h.ticker, h.shares, h.entry_price, e.target.value as any)}
+                                      style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-primary)', padding: '4px 8px', fontSize: '12px', cursor: 'pointer' }}
+                                    >
+                                      <option value="rebalance">Rebalance</option>
+                                      <option value="lock">Lock</option>
+                                      <option value="liquidate">Liquidate (next run)</option>
+                                    </select>
+                                  )}
                                 </td>
                                 <td>
-                                  <button
-                                    onClick={() => handleDeleteHolding(h.ticker)}
-                                    title="Remove local record (does not sell on the broker)"
-                                    style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                                    onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-sell)'}
-                                    onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
+                                  {h.monitored ? (
+                                    <button
+                                      onClick={() => handleRemoveMonitored(h.ticker)}
+                                      title="Stop monitoring this ticker"
+                                      style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-sell)'}
+                                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  ) : (
+                                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                      <button
+                                        onClick={() => setLiquidateModal({ ticker: h.ticker, held: h.shares, shares: String(h.shares) })}
+                                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--color-sell)', borderRadius: '6px', color: 'var(--color-sell)', padding: '4px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                      >
+                                        Liquidate
+                                      </button>
+                                      <span title="Held position — sell via Liquidate. The trash icon is enabled only once you hold 0 shares.">
+                                        <Trash2 size={16} style={{ color: 'rgba(255,255,255,0.18)', cursor: 'not-allowed' }} />
+                                      </span>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             ))
@@ -1897,6 +2014,78 @@ export default function Home() {
 
             {/* Right Column: Universe Editor & Simulation controls */}
             <aside>
+              {/* Model Training & Background Data Jobs */}
+              <div className="glass-card" style={{ marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                  <h2 style={{ margin: 0 }}>
+                    <Cpu size={20} color="var(--color-gold)" />
+                    Model Training
+                  </h2>
+                  <button
+                    onClick={handleRetrain}
+                    disabled={actionBusy || (trainStatus?.training && trainStatus.training.status === 'running')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      background: 'rgba(245,158,11,0.12)', border: '1px solid var(--color-gold)',
+                      borderRadius: '8px', color: 'var(--color-gold)', padding: '7px 14px',
+                      cursor: (trainStatus?.training && trainStatus.training.status === 'running') ? 'default' : 'pointer',
+                      fontWeight: 600, fontSize: '13px', opacity: (trainStatus?.training && trainStatus.training.status === 'running') ? 0.6 : 1
+                    }}
+                  >
+                    <RotateCcw size={14} className={(trainStatus?.training && trainStatus.training.status === 'running') ? 'animate-spin' : ''} />
+                    {(trainStatus?.training && trainStatus.training.status === 'running') ? 'Training…' : 'Retrain'}
+                  </button>
+                </div>
+
+                {trainStatus?.training && trainStatus.training.status === 'running' && (
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                      <span style={{ color: 'var(--color-gold)' }}>{trainStatus.training.stage}</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{trainStatus.training.progress}%</span>
+                    </div>
+                    <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ width: `${trainStatus.training.progress}%`, height: '100%', background: 'var(--color-gold)', transition: 'width 0.4s' }} />
+                    </div>
+                  </div>
+                )}
+                {trainStatus?.training && trainStatus.training.status === 'error' && (
+                  <div style={{ fontSize: '12px', color: 'var(--color-sell)', marginBottom: '14px' }}>
+                    Training failed: {trainStatus.training.error}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {([['swing', 'Swing model'], ['short_term', 'Short-term (XGBoost)'], ['regime_hmm', 'Regime (HMM)']] as const).map(([k, label]) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                      <span style={{ fontWeight: 500 }}>{trainStatus?.models?.[k]?.last_trained ? `trained ${trainStatus.models[k].last_trained}` : '—'}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {jobs.filter((j: any) => j.type === 'backfill').length > 0 && (
+                  <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-glass)', paddingTop: '14px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                      Data Backfill
+                    </div>
+                    {jobs.filter((j: any) => j.type === 'backfill').map((j: any) => (
+                      <div key={j.id} style={{ marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
+                          <span>{j.label}</span>
+                          <span style={{ color: j.status === 'error' ? 'var(--color-sell)' : j.status === 'done' ? 'var(--color-buy)' : 'var(--text-secondary)' }}>
+                            {j.status === 'error' ? 'failed' : `${j.progress}%`}
+                          </span>
+                        </div>
+                        <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                          <div style={{ width: `${j.progress}%`, height: '100%', background: j.status === 'error' ? 'var(--color-sell)' : 'var(--color-buy)', transition: 'width 0.4s' }} />
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px' }}>{j.error || j.stage}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Universe Ticker Checklist */}
               <div className="glass-card" style={{ marginBottom: '24px' }}>
                 <h2>
@@ -2098,6 +2287,71 @@ export default function Home() {
           </>
         )}
       </main>
+
+      {/* Liquidate position modal */}
+      {liquidateModal && (
+        <div
+          onClick={() => !actionBusy && setLiquidateModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '380px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <h2 style={{ marginTop: 0, marginBottom: '8px' }}>Liquidate {liquidateModal.ticker}</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+              You hold <strong style={{ color: 'var(--text-primary)' }}>{liquidateModal.held}</strong> shares. How many do you want to sell?
+            </p>
+            <input
+              type="number" min="0" max={liquidateModal.held} value={liquidateModal.shares}
+              onChange={(e) => setLiquidateModal({ ...liquidateModal, shares: e.target.value })}
+              autoFocus
+              style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '10px 12px', fontSize: '14px' }}
+            />
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+              <button onClick={() => setLiquidateModal({ ...liquidateModal, shares: String(liquidateModal.held) })}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-secondary)', padding: '5px 12px', fontSize: '12px', cursor: 'pointer' }}>Sell all</button>
+              <button onClick={() => setLiquidateModal({ ...liquidateModal, shares: String(Math.floor(liquidateModal.held / 2)) })}
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-secondary)', padding: '5px 12px', fontSize: '12px', cursor: 'pointer' }}>Half</button>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '22px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setLiquidateModal(null)} disabled={actionBusy}
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleLiquidate} disabled={actionBusy || !(parseFloat(liquidateModal.shares) > 0)}
+                style={{ background: 'var(--color-sell)', border: 'none', borderRadius: '8px', color: 'white', padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', opacity: actionBusy ? 0.6 : 1 }}>
+                {actionBusy ? 'Selling…' : `Sell ${liquidateModal.shares || 0} shares`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add stock to monitor modal */}
+      {addStockOpen && (
+        <div
+          onClick={() => !actionBusy && setAddStockOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '380px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <h2 style={{ marginTop: 0, marginBottom: '8px' }}>Add a Stock to Monitor</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+              It&rsquo;s added to your universe and its price history is backfilled in the background (watch the progress under Model Training).
+            </p>
+            <input
+              type="text" placeholder="e.g. TSLA" value={addStockTicker}
+              onChange={(e) => setAddStockTicker(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddStock(); }}
+              autoFocus
+              style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '10px 12px', fontSize: '14px' }}
+            />
+            <div style={{ display: 'flex', gap: '10px', marginTop: '22px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setAddStockOpen(false)} disabled={actionBusy}
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleAddStock} disabled={actionBusy || !addStockTicker.trim()}
+                style={{ background: 'var(--color-accent)', border: 'none', borderRadius: '8px', color: 'white', padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', opacity: (actionBusy || !addStockTicker.trim()) ? 0.6 : 1 }}>
+                {actionBusy ? 'Adding…' : 'Add & Backfill'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

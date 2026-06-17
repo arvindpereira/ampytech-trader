@@ -268,6 +268,51 @@ def _write_bars(db, Model, ticker, bars, daily=False):
     return len(new_records), updated
 
 
+def backfill_ticker(ticker, progress_cb=None):
+    """Fetch + store DAILY history and HOURLY recent bars for a single newly-added ticker.
+
+    `progress_cb(percent:int, stage:str)` is called as it advances so the UI can show a progress bar.
+    Reused by the background "add ticker" job. Safe to re-run (upserts)."""
+    ticker = ticker.upper().strip()
+    def report(p, s):
+        if progress_cb:
+            progress_cb(p, s)
+    report(5, f"Starting backfill for {ticker}")
+    init_db()
+    end_date = datetime.now()
+
+    if ticker in FICTIONAL_TICKERS:
+        report(100, "Synthetic ticker — nothing to fetch")
+        return {"daily": 0, "hourly": 0}
+
+    # 1) Daily history (Yahoo, full window)
+    report(15, "Fetching daily history (Yahoo)…")
+    daily_start = datetime.strptime(DAILY_HISTORY_START, "%Y-%m-%d")
+    daily_bars = fetch_yahoo_daily(ticker, daily_start, end_date)
+    db = SessionLocal()
+    daily_added = 0
+    try:
+        report(40, "Storing daily bars + indicators…")
+        daily_added, _ = _write_bars(db, DailyPrice, ticker, daily_bars, daily=True)
+    finally:
+        db.close()
+
+    # 2) Hourly recent bars (Massive, ~5y window)
+    report(60, "Fetching hourly bars (Massive)…")
+    hourly_start = end_date - timedelta(days=HOURLY_LOOKBACK_DAYS)
+    hourly_bars = fetch_massive_hourly(ticker, hourly_start, end_date)
+    db = SessionLocal()
+    hourly_added = 0
+    try:
+        report(85, "Storing hourly bars + indicators…")
+        hourly_added, _ = _write_bars(db, RecentPrice, ticker, hourly_bars, daily=False)
+    finally:
+        db.close()
+
+    report(100, f"Done — {daily_added} daily, {hourly_added} hourly bars")
+    return {"daily": daily_added, "hourly": hourly_added}
+
+
 def _get_active_universe(db):
     db_tickers = db.query(UniverseTicker).all()
     universe = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)

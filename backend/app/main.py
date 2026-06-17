@@ -46,9 +46,57 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVED_MODELS_DIR = os.path.join(BASE_DIR, "ml_engine", "saved_models")
 
+# ---------------------------------------------------------------------------
+# Background job registry (in-process) — drives the UI progress bars for ticker
+# backfills and model retraining. UI-triggered jobs run in this API process.
+# ---------------------------------------------------------------------------
+import threading
+import uuid as _uuid
+import time as _time
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+
+def _job_new(jtype, label):
+    jid = _uuid.uuid4().hex[:8]
+    with _JOBS_LOCK:
+        _JOBS[jid] = {"id": jid, "type": jtype, "label": label, "status": "running",
+                      "progress": 0, "stage": "queued", "error": None,
+                      "started_at": _time.time(), "finished_at": None}
+    return jid
+
+def _job_update(jid, progress=None, stage=None, status=None, error=None):
+    with _JOBS_LOCK:
+        j = _JOBS.get(jid)
+        if not j:
+            return
+        if progress is not None:
+            j["progress"] = int(progress)
+        if stage is not None:
+            j["stage"] = stage
+        if error is not None:
+            j["error"] = error
+        if status is not None:
+            j["status"] = status
+            if status in ("done", "error"):
+                j["finished_at"] = _time.time()
+
+def _jobs_snapshot():
+    """Active jobs + jobs finished in the last 60s; prune anything older."""
+    now = _time.time()
+    with _JOBS_LOCK:
+        for jid in [k for k, v in _JOBS.items()
+                    if v["finished_at"] and now - v["finished_at"] > 120]:
+            _JOBS.pop(jid, None)
+        return sorted(_JOBS.values(), key=lambda x: x["started_at"], reverse=True)
+
 @app.on_event("startup")
 def startup_event():
     init_db()
+
+@app.get("/api/jobs")
+def get_jobs():
+    """Active + recently-finished background jobs (ticker backfills, retraining) for UI progress bars."""
+    return {"jobs": _jobs_snapshot()}
 
 def get_latest_data(db, end_date=None, mode="real"):
     """Utility to load recent prices and indicators for inference."""
@@ -1025,6 +1073,136 @@ def update_universe(req: UniverseRequest, db=Depends(get_db)):
     db.commit()
     clear_suggestions_cache()
     return {"status": "success", "tickers": req.tickers}
+
+class TickerRequest(BaseModel):
+    ticker: str
+
+def _run_backfill_job(jid, ticker):
+    """Background worker: backfill a newly-added ticker's price history, updating job progress."""
+    try:
+        from data_ingestion.price_fetcher import backfill_ticker
+        backfill_ticker(ticker, progress_cb=lambda p, s: _job_update(jid, progress=p, stage=s))
+        _job_update(jid, progress=100, stage="Complete", status="done")
+        clear_suggestions_cache()
+        global _price_summary_cache
+        _price_summary_cache = {"data": None, "timestamp": None}
+    except Exception as e:
+        _job_update(jid, status="error", error=str(e)[:200])
+
+@app.post("/api/universe/add")
+def add_universe_ticker(req: TickerRequest, db=Depends(get_db)):
+    """Add a single ticker to the monitored universe and kick off a background data backfill."""
+    ticker = req.ticker.upper().strip()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker required")
+    if db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first():
+        return {"status": "exists", "ticker": ticker}
+    db.add(UniverseTicker(ticker=ticker))
+    db.commit()
+    clear_suggestions_cache()
+    jid = _job_new("backfill", f"Backfilling {ticker}")
+    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+    return {"status": "added", "ticker": ticker, "job_id": jid}
+
+@app.post("/api/universe/remove")
+def remove_universe_ticker(req: TickerRequest, db=Depends(get_db)):
+    """Stop monitoring a ticker (remove from the universe). Intended for tickers with no open position."""
+    ticker = req.ticker.upper().strip()
+    row = db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first()
+    if row:
+        db.delete(row)
+        db.commit()
+        clear_suggestions_cache()
+    return {"status": "removed", "ticker": ticker}
+
+class LiquidateRequest(BaseModel):
+    ticker: str
+    shares: float
+
+@app.post("/api/positions/liquidate")
+def liquidate_position(req: LiquidateRequest, mode: str = "real", db=Depends(get_db)):
+    """Sell a chosen number of shares of an open position (partial or full). Real mode closes via Alpaca
+    (which cancels the bracket OCO); simulated mode reduces the local virtual position."""
+    ticker = req.ticker.upper().strip()
+    shares = float(req.shares)
+    if shares <= 0:
+        raise HTTPException(status_code=400, detail="Shares to sell must be positive")
+
+    if mode == "real":
+        try:
+            from execution.executor import get_alpaca_api
+            api = get_alpaca_api()
+            try:
+                pos = api.get_position(ticker)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"No open position in {ticker}")
+            held = float(pos.qty)
+            sell_qty = min(shares, held)
+            if sell_qty >= held - 1e-9:
+                order = api.close_position(ticker)
+                sold = held
+            else:
+                order = api.close_position(ticker, qty=str(int(sell_qty)))
+                sold = float(int(sell_qty))
+            clear_suggestions_cache()
+            return {"status": "submitted", "ticker": ticker, "shares_sold": sold,
+                    "order_id": getattr(order, "id", None)}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)[:200])
+
+    # Simulated mode: reduce the local virtual position
+    pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "replay").first()
+    if not pos or pos.quantity <= 0:
+        raise HTTPException(status_code=400, detail=f"No simulated position in {ticker}")
+    sold = min(shares, pos.quantity)
+    pos.quantity -= sold
+    if pos.quantity <= 1e-6:
+        db.delete(pos)
+    db.commit()
+    return {"status": "submitted", "ticker": ticker, "shares_sold": sold}
+
+def _run_training_job(jid):
+    """Background worker: retrain the served models (XGBoost + HMM, then the swing model)."""
+    try:
+        _job_update(jid, progress=10, stage="Training XGBoost + HMM…")
+        from ml_engine.models import train_models
+        train_models()
+        _job_update(jid, progress=65, stage="Training swing model…")
+        try:
+            from ml_engine.swing_alpha import train_and_save
+            train_and_save()
+        except Exception as e:
+            print(f"Swing retrain skipped: {e}")
+        _job_update(jid, progress=100, stage="Complete", status="done")
+        clear_suggestions_cache()
+    except Exception as e:
+        _job_update(jid, status="error", error=str(e)[:200])
+
+@app.post("/api/train/start")
+def start_training():
+    """Kick off model retraining in the background (idempotent: refuses if one is already running)."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "train" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("train", "Retraining models")
+    threading.Thread(target=_run_training_job, args=(jid,), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/train/status")
+def training_status():
+    """Last-trained time per served model (file mtime) + the current retrain job, if any."""
+    files = {"short_term": "short_term_model.json", "regime_hmm": "hmm_model.pkl", "swing": "swing_model.json"}
+    models = {}
+    for key, fn in files.items():
+        path = os.path.join(SAVED_MODELS_DIR, fn)
+        models[key] = {
+            "last_trained": (datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+                             if os.path.exists(path) else None)
+        }
+    active = [j for j in _jobs_snapshot() if j["type"] == "train"]
+    return {"models": models, "training": active[0] if active else None}
 
 class HoldingRequest(BaseModel):
     ticker: str
