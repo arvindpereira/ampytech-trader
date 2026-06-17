@@ -141,6 +141,9 @@ db-backup:
 db-backup-list:
 	cd backend && $(VENV_PY) scripts/db_backup.py --list
 
+db-verify:
+	cd backend && $(VENV_PY) scripts/db_backup.py --verify $(RESTORE)
+
 db-restore:
 	cd backend && $(VENV_PY) scripts/db_backup.py --restore $(RESTORE)
 

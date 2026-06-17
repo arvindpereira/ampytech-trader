@@ -162,15 +162,80 @@ def restore(name=None, match_commit=False):
     print(f"✓ Restored {target['name']} to {DB_PATH}")
 
 
+def verify(name=None, match_commit=False):
+    """Download a backup to a temp file and validate it (SQLite integrity + row counts) WITHOUT touching
+    the live DB. Proves the backup is restorable; exercises the same download path as --restore."""
+    import sqlite3
+    from googleapiclient.http import MediaIoBaseDownload
+    svc = _service()
+    files = _list(svc)
+    if not files:
+        sys.exit("No backups found in the Drive folder.")
+    cur, _, _ = _git_info()
+    if match_commit:
+        target = next((f for f in files if _commit_of(f) == cur), None)
+        if not target:
+            sys.exit(f"No backup found for the current commit {cur}.")
+    elif name:
+        target = next((x for x in files if x["name"] == name), None)
+        if not target:
+            sys.exit(f"Backup '{name}' not found. Use --list to see available backups.")
+    else:
+        target = files[0]
+
+    tmp = DB_PATH + ".verify"
+    print(f"Downloading {target['name']} (commit {_commit_of(target)}) → {tmp} for verification…")
+    req = svc.files().get_media(fileId=target["id"])
+    with open(tmp, "wb") as fh:
+        dl = MediaIoBaseDownload(fh, req)
+        done = False
+        while not done:
+            _, done = dl.next_chunk()
+
+    tables = ["news_llm_scores", "daily_prices", "recent_prices", "universe_tickers", "virtual_orders"]
+    try:
+        c = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
+        integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
+        b_counts = {t: _safe_count(c, t) for t in tables}
+        c.close()
+        live = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        l_counts = {t: _safe_count(live, t) for t in tables}
+        live.close()
+        size = os.path.getsize(tmp) / 1e6
+        print(f"\nBackup file: {size:.0f} MB | PRAGMA integrity_check: {integrity}")
+        print(f"{'table':<20}{'backup':>12}{'live':>12}")
+        for t in tables:
+            flag = "" if b_counts[t] == l_counts[t] else "  ⚠ differs"
+            print(f"{t:<20}{str(b_counts[t]):>12}{str(l_counts[t]):>12}{flag}")
+        ok = integrity == "ok" and all(b_counts[t] is not None for t in tables)
+        print("\n✓ Backup is valid and restorable." if ok else "\n⚠ Verification found issues — inspect before relying on it.")
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def _safe_count(conn, table):
+    try:
+        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    except Exception:
+        return None
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Back up / restore the trading DB to Google Drive (commit-stamped)")
     p.add_argument("--keep", type=int, default=None, help="after upload, keep only the N newest backups")
     p.add_argument("--list", action="store_true", help="list backups (with commit) in the Drive folder")
     p.add_argument("--restore", nargs="?", const="__latest__", help="restore a backup (default: newest)")
     p.add_argument("--restore-commit", action="store_true", help="restore the newest backup matching the current git commit")
+    p.add_argument("--verify", nargs="?", const="__latest__", help="download+validate a backup without touching the live DB (default: newest)")
+    p.add_argument("--verify-commit", action="store_true", help="verify the newest backup matching the current git commit")
     a = p.parse_args()
     if a.list:
         list_backups()
+    elif a.verify_commit:
+        verify(match_commit=True)
+    elif a.verify is not None:
+        verify(None if a.verify == "__latest__" else a.verify)
     elif a.restore_commit:
         restore(match_commit=True)
     elif a.restore is not None:
