@@ -23,6 +23,8 @@ system diverges from the original design or the product README, that is called o
 | [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns |
 | [operations.md](./operations.md) | Setup, CLI/Makefile, scheduler, day-to-day runbook |
 | [current-state-and-gaps.md](./current-state-and-gaps.md) | **Read this.** What's real vs. mock, known bugs/discrepancies, and a prioritized roadmap to "trustworthy" |
+| [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) | **Honest OOS results.** Swing is a bull amplifier (−25% in 2022); MPT resilient but survivorship-inflated; blend is most defensible |
+| [strategy-suggester-plan.md](./strategy-suggester-plan.md) | *Plan (not built).* Evidence-driven per-ticker Swing-vs-MPT-vs-Hold recommender for the Portfolio tab |
 | [stock_trader_design.md](./stock_trader_design.md) | *Original* architecture exploration (design intent, pre-build) |
 | [implementation_plan.md](./implementation_plan.md) | *Original* staged build plan (design intent, pre-build) |
 
