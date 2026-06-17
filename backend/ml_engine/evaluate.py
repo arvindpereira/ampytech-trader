@@ -57,7 +57,7 @@ def _benchmark_series(db, ticker, dates):
 
 
 def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
-                   start_date=None, end_date=None, progress_cb=None):
+                   start_date=None, end_date=None, oos_start=None, progress_cb=None):
     """Returns {series, metrics, window, caveats, mode}.
 
     Default (no dates) = walk-forward model evaluation. If start_date/end_date are given it's a STRESS
@@ -75,7 +75,7 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
     if "swing" in strategies and not windowed:
         report(5, "Swing walk-forward (training folds)…")
         from ml_engine.swing_alpha import backtest_swing_curve
-        curve, _ = backtest_swing_curve(horizon=horizon, n_splits=splits,
+        curve, _ = backtest_swing_curve(horizon=horizon, n_splits=splits, oos_start=oos_start,
                                         progress_cb=lambda f: report(5 + int(f * 45), "Swing walk-forward (training folds)…"))
         if curve:
             raw["swing"] = _curve_to_daily(curve)

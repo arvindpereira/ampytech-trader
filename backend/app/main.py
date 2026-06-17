@@ -119,11 +119,11 @@ def get_jobs():
 
 _EVAL_RESULTS = {}
 
-def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date):
+def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start):
     try:
         from ml_engine.evaluate import run_evaluation
         res = run_evaluation(strategies, horizon=horizon, splits=splits, allocation=allocation,
-                             start_date=start_date, end_date=end_date,
+                             start_date=start_date, end_date=end_date, oos_start=oos_start,
                              progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
         _EVAL_RESULTS[jid] = res
         _job_update(jid, progress=100, stage="Complete", status="done")
@@ -1167,6 +1167,7 @@ class EvaluateRequest(BaseModel):
     use_allocation: bool = True
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    oos_start: Optional[str] = None
 
 @app.post("/api/evaluate")
 def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
@@ -1183,7 +1184,7 @@ def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
                       "longterm_tickers": lt_tickers or None}
     jid = _job_new("evaluate", "Evaluating strategies")
     threading.Thread(target=_run_eval_job,
-                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date, req.end_date),
+                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date, req.end_date, req.oos_start),
                      daemon=True).start()
     return {"status": "started", "job_id": jid}
 

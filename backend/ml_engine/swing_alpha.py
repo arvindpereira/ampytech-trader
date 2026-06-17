@@ -189,8 +189,12 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
     print("\nVerdict: LLM news helps iff WITH beats WITHOUT on portfolio Sharpe / return.\n")
 
 
-def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, progress_cb=None):
+def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None):
     """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics).
+
+    `oos_start` (YYYY-MM-DD), when given, fixes where out-of-sample testing begins (the first fold trains
+    only on data before it) — e.g. '2022-01-01' to put the 2022 bear in the OOS window. Otherwise the
+    first fold starts after `warmup_frac` of the data.
 
     Trains XGBoost on each expanding past fold, predicts the held-out window, picks the threshold via the
     nested inner split, and feeds the pooled OOS signals through the capital-aware portfolio simulator.
@@ -206,8 +210,9 @@ def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, progress_cb=Non
     if len(df) < 1000:
         return [], {}
 
-    edges = pd.date_range(df["dt"].min() + (df["dt"].max() - df["dt"].min()) * warmup_frac,
-                          df["dt"].max(), periods=n_splits + 1)
+    first_edge = (pd.to_datetime(oos_start) if oos_start
+                  else df["dt"].min() + (df["dt"].max() - df["dt"].min()) * warmup_frac)
+    edges = pd.date_range(first_edge, df["dt"].max(), periods=n_splits + 1)
     frames = []
     for i in range(n_splits):
         lo, hi = edges[i], edges[i + 1]

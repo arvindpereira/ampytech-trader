@@ -145,6 +145,7 @@ export default function Home() {
   const [evalResult, setEvalResult] = useState<any>(null);
   const [evalWindow, setEvalWindow] = useState<string>('none');
   const [evalCustom, setEvalCustom] = useState<{ start: string; end: string }>({ start: '', end: '' });
+  const [evalOosStart, setEvalOosStart] = useState<string>('');
   const [newHolding, setNewHolding] = useState<Holding>({
     ticker: '',
     quantity: 0,
@@ -300,13 +301,15 @@ export default function Home() {
     let start: string | null = null, end: string | null = null;
     if (evalWindow === 'custom') { start = evalCustom.start || null; end = evalCustom.end || null; }
     else if (evalWindow !== 'none') { start = STRESS_PRESETS[evalWindow].start; end = STRESS_PRESETS[evalWindow].end; }
+    // OOS-start only applies to walk-forward mode (not a fixed stress window)
+    const oos = (evalWindow === 'none' && evalOosStart) ? evalOosStart : null;
     setEvalRunning(true);
     setEvalResult(null);
     setEvalProgress({ pct: 0, stage: 'Starting…' });
     try {
       const res = await fetch(`http://localhost:8008/api/evaluate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end }),
+        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos }),
       });
       const { job_id } = await res.json();
       const poll = async () => {
@@ -1714,6 +1717,13 @@ export default function Home() {
                       <input type="date" value={evalCustom.end} onChange={(e) => setEvalCustom({ ...evalCustom, end: e.target.value })}
                         style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '7px 10px', fontSize: '13px' }} />
                     </div>
+                  </div>
+                )}
+                {evalWindow === 'none' && (
+                  <div title="Walk-forward: training uses only data before this date; testing (out-of-sample) starts here. Set to 2022-01-01 to put the 2022 bear in the OOS test.">
+                    <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OOS test starts (optional)</label>
+                    <input type="date" value={evalOosStart} onChange={(e) => setEvalOosStart(e.target.value)} placeholder="auto"
+                      style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '7px 10px', fontSize: '13px' }} />
                   </div>
                 )}
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
