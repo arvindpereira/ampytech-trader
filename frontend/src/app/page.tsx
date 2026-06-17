@@ -961,38 +961,6 @@ export default function Home() {
 
             {/* Right Column */}
             <aside>
-              {/* Crisis Stress Tests */}
-              <div className="glass-card" style={{ marginBottom: '24px' }}>
-                <h2>
-                  <ShieldAlert size={20} color="var(--color-gold)" />
-                  Macro Crisis Stress Testing
-                </h2>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  Unsupervised HMM regime switching and sector covariance shrinkage backtested during historic liquidity drawdowns:
-                </p>
-
-                <div style={{ borderLeft: '3px solid var(--color-buy)', paddingLeft: '12px', marginBottom: '16px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600 }}>Dot-Com Bubble (1999–2002)</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Portfolio Return: <span className="text-green">+14.2%</span> | Max DD: <span className="text-red">-18.4%</span> (vs SPY -44.7%)
-                  </div>
-                </div>
-
-                <div style={{ borderLeft: '3px solid var(--color-gold)', paddingLeft: '12px', marginBottom: '16px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600 }}>2008 Financial Crisis (2007–2009)</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Portfolio Return: <span className="text-green">+2.8%</span> | Max DD: <span className="text-red">-12.5%</span> (vs SPY -50.8%)
-                  </div>
-                </div>
-
-                <div style={{ borderLeft: '3px solid var(--color-accent)', paddingLeft: '12px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600 }}>COVID-19 Crash (2020)</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Portfolio Return: <span className="text-green">+32.4%</span> | Max DD: <span className="text-red">-8.2%</span> (vs SPY -33.9%)
-                  </div>
-                </div>
-              </div>
-
               {/* Sentiment feeds */}
               <div className="glass-card">
                 <h2>
@@ -1309,6 +1277,38 @@ export default function Home() {
                     </div>
                   )}
                 </form>
+              </div>
+
+              {/* Crisis Stress Tests (moved below the live sentiment/news feeds) */}
+              <div className="glass-card" style={{ marginTop: '24px' }}>
+                <h2>
+                  <ShieldAlert size={20} color="var(--color-gold)" />
+                  Macro Crisis Stress Testing
+                </h2>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Unsupervised HMM regime switching and sector covariance shrinkage backtested during historic liquidity drawdowns:
+                </p>
+
+                <div style={{ borderLeft: '3px solid var(--color-buy)', paddingLeft: '12px', marginBottom: '16px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>Dot-Com Bubble (1999–2002)</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Portfolio Return: <span className="text-green">+14.2%</span> | Max DD: <span className="text-red">-18.4%</span> (vs SPY -44.7%)
+                  </div>
+                </div>
+
+                <div style={{ borderLeft: '3px solid var(--color-gold)', paddingLeft: '12px', marginBottom: '16px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>2008 Financial Crisis (2007–2009)</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Portfolio Return: <span className="text-green">+2.8%</span> | Max DD: <span className="text-red">-12.5%</span> (vs SPY -50.8%)
+                  </div>
+                </div>
+
+                <div style={{ borderLeft: '3px solid var(--color-accent)', paddingLeft: '12px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>COVID-19 Crash (2020)</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Portfolio Return: <span className="text-green">+32.4%</span> | Max DD: <span className="text-red">-8.2%</span> (vs SPY -33.9%)
+                  </div>
+                </div>
               </div>
             </aside>
           </>
