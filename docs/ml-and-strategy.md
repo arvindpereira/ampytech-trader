@@ -1,138 +1,102 @@
-# ML Models & Strategy Logic
+# ML & Strategy
 
-The bot produces two outputs every time `/api/suggestions` is called:
-1. **Short-term suggestions** — per-ticker BUY/SELL/HOLD breakout calls.
-2. **Long-term allocation** — portfolio weights under the current market regime.
+How the bot turns data into trades: feature engineering, the models/strategies, the per-stock
+suggester, the regime overlay, and the honest out-of-sample evaluation harness.
 
-```mermaid
-flowchart TB
-    DB[(recent_prices<br/>ticker_sentiments<br/>macro_indicators)] --> FE[features.py<br/>build_all_features]
-    FE --> ST{Short-term}
-    FE --> LT{Long-term}
-    ST --> XGB[XGBoost breakout<br/>short_term_model.json]
-    ST --> PT[PyTorch GRU+Attn<br/>temporal_attention_model.pth]
-    LT --> HMM[HMM regime<br/>hmm_model.pkl]
-    HMM --> MPT[MPT Sharpe-max<br/>SciPy SLSQP Solver]
-    XGB & PT --> SUG[BUY/SELL/HOLD<br/>+ stop/target]
-    MPT --> ALLOC[weights + CASH]
-```
+> Read alongside [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) (the OOS verdict)
+> and [strategy-suggester-plan.md](./strategy-suggester-plan.md) (the suggester design).
 
-## 1. Feature engineering (`ml_engine/features.py`)
+## Strategies at a glance
 
-`build_all_features(prices, sentiment, macro, universe)`:
-1. Per ticker (needs ≥ 50 rows): `build_features_for_df()` computes technicals, merges sentiment & macro,
-   builds the target, then **shifts every feature by 1 row** (look-ahead mitigation) into `feat_*` columns.
-2. Concatenate all tickers, then `add_cross_ticker_features()` adds SPY/QQQ-relative features.
+| Strategy | Horizon | Signal | Status | Code |
+| :-- | :-- | :-- | :-- | :-- |
+| **Swing + News** | ~5 trading days | XGBoost on daily technicals **+ LLM-scored news** | **Default tradeable**; real edge in bull regimes, amplifies bears | `ml_engine/swing_alpha.py` |
+| **Long-term MPT** | weeks–months | regime-aware max-Sharpe optimizer over the universe | Bear-resilient; absolute returns survivorship-inflated | `ml_engine/longterm_alpha.py`, `models.py:PortfolioOptimizer` |
+| **Regime HMM** | — | 3-state HMM on daily SPY vol + macro → growth/transition/crisis | Drives MPT scaling + the swing **regime overlay** | `ml_engine/models.py:train_models` |
+| **Short-term (legacy)** | ~2 trading days (hourly) | XGBoost breakout | **Net-negative; not executed by default** | `ml_engine/models.py`, `deep_models.py` (PyTorch, opt-in) |
 
-**Feature groups** (all emitted as `feat_*`, all shift(1)):
+The PyTorch temporal-attention model (`deep_models.py`) exists but `SERVED_MODEL=xgboost`, so it is not
+served by default.
 
-| Group | Features |
-| :-- | :-- |
-| Normalized Price / Vol | `returns`, `volatility_10`, `parkinson_vol_10` (rolling extreme-value), `ma_ratio`, `volume_ratio` (rolling volume multiplier), `returns_vol_adj` |
-| Stationary Techs | `rsi_14`, `bb_width`, `atr_ratio` (stationary volatility scaled by close), `close_to_sma10`, `close_to_sma50`, `high_low_ratio`, `close_to_bb_mid`, `macd_ratio`, `macd_signal_ratio` (all absolute prices like open/high/low/close/bb_mid are excluded to maintain stationarity) |
-| Sentiment (Decayed) | `news_sentiment_score`, `reddit_sentiment_score`, `news/reddit_mention_count`, `combined_sentiment_decayed` (0.6·news+0.4·reddit scored via 7-bar half-life EMA), `sent_sma_3`, `sent_sma_7`, `sent_momentum` |
-| Macro | `fed_funds`, `yield_spread` |
-| Alternative Disclosures | `insider_buying_ratio` / `insider_buying_30d` (rolling 30d corporate buying value / close), `congress_buying_ratio` / `congress_buying_90d` (rolling 90d Congressional buying value / close) |
-| Cross-ticker | `relative_return_spy/qqq`, `relative_vol_spy/qqq`, `cum_rel_ret_spy_50`, `rank_return` (rank returns per day), `rank_volatility` (rank volatility per day), `rank_volume_ratio` (rank volume multiplier per day), `rank_sentiment` (rank sentiment per day), `corr_spy_20`, `corr_qqq_20` |
+## Feature engineering (`ml_engine/features.py`)
 
-**Target (`target_win`) — triple-barrier:** `1` only if, within `SHORT_TERM_HORIZON_BARS` (14) bars, the
-**take-profit is touched before the stop** (path-dependent, intrabar high/low); `0` if the stop hits first
-or neither does (timeout); same-bar ambiguity is scored conservatively as a loss; NaN on the censored tail.
-Brackets are ATR-based (`stop = clip(2·ATR/close, 1.5%, 5%)`, `tp = 2.5·stop`) — the **same `config.py`
-params used for live orders and the backtest time-stop**, so the label equals the trade as executed. This
-   replaced the old "did the high touch +2%" breakout target, which scored a volatility *touch* (inflated AUC
-   0.925) rather than an exitable trade. Judged by the full **walk-forward + capital-aware portfolio
-   simulation** (`run.py walkforward`): pooled AUC 0.710 and a faint per-trade tail edge (+0.0048 in the top
-   0.1%), but as a **real capital-constrained portfolio the strategy LOSES 27–40%** (negative Sharpe) — not
-   deployable. See [current-state-and-gaps.md §1b](./current-state-and-gaps.md#1b-validation-results).
+- **Technicals**: SMA-10/50, RSI-14, MACD, ATR-14, volatility, returns; cross-ticker features
+  (correlation to SPY/QQQ, relative volume) via `add_cross_ticker_features`.
+- **Macro**: fed funds, yield spread (joined from `macro_indicators`).
+- **LLM-news features** (the swing edge), `swing_alpha.add_llm_features`: from `news_llm_scores`, a
+  per-(ticker,date) relevance-weighted score `Σ(score·rel)/Σrel`. Three features — a 3-day decayed
+  weighted mean (`feat_llm_news`), a material-news intensity (`feat_llm_news_intensity`), and today's
+  score (`feat_llm_news_today`) — all **shifted +1 day** so a day's news can't inform that same day.
+- **Labels — triple-barrier** (`triple_barrier_outcomes`): for each entry, did price hit the
+  take-profit (ATR-scaled) before the stop within the horizon? `target_win` ∈ {0,1} and `trade_ret`
+  (realized). The same ATR brackets label training data **and** size live stop/take-profit orders, so
+  the target matches the executed trade.
+- Point-in-time: technicals/news use only data through *T−1*; only the label looks forward.
 
-**Entry threshold (calibrated, not hand-set):** the BUY cutoff is derived per served model by
-`calibrate_threshold()` to hit a target selectivity (`SHORT_TERM_SIGNAL_RATE`, default top 0.5%) on a
-held-out slice, and written to `saved_models/threshold.json` (latest ≈ **0.1335**). Inference/backtest read
-it via `load_buy_threshold()`, falling back to `SHORT_TERM_BUY_THRESHOLD` only if absent. This replaced the
-old hand-set 0.23 (which was tuned on a different model than served — PR#2 review C6).
+## LLM-scored news (`data_ingestion/news_llm.py`)
 
-**Sentiment & macro join (fixed):** `build_features_for_df` derives `cal_date = date[:10]` and joins
-daily-grained news/macro on it, so a day's sentiment/macro broadcasts across all of that day's hourly bars
-(previously the join silently failed and these features were always 0). Mock rows are excluded from
-training. Sentiment is a **short-term-only** input; the long-term/regime model is price+macro.
+The swing strategy's distinctive input. For each ticker it pages Polygon/Massive news and asks a local
+**Ollama** model (`gemma4:e4b` — fast, JSON-clean, free) to rate each headline's directional impact on
+that ticker over the next few days: `{s: -1..1, rel: 0..1}`. Results upsert into `news_llm_scores`
+(resumable — already-scored article ids are skipped; the per-ticker fetch window is trimmed to just past
+the latest stored date). Coverage is dense from **~2021** (≈226k headline scores across ~50 tickers).
+Run via `make news-llm` or the scheduler; needs Ollama running locally.
 
-> **Resolution (Stage 19 — done):** short-term features/targets run on hourly `recent_prices` with a
-> bar-aware horizon; the regime + MPT long-term path now reads daily `daily_prices`. Both features and solvers
-> have been fully updated. The regime classification is daily-based and weight allocation uses the SciPy solver.
-> Exposes look-ahead protected Congressional and SEC Form 4 insider buying features and supports beta-neutral / pair-trade long-short hedging.
+## Swing model (`ml_engine/swing_alpha.py`)
 
-## 2. Short-term model A — XGBoost (`models.py`)
+- `load_swing_data` builds daily features + LLM-news features + the horizon triple-barrier target.
+- `train_and_save` trains the production XGBoost on the full LLM-active window (now **2021→present,
+  ~54k samples incl. the 2022 bear**) and persists `saved_models/swing_model.json` + metadata
+  (feature columns, calibrated threshold, horizon).
+- `build_swing_signals` does inference for the latest date per equity, ranks by win-probability, caps
+  BUYs to `SWING_TOP_N` (10), and anchors stop/take-profit to the **live** price (so a stale-close
+  bracket can't be rejected). Served as `swing_suggestions` in `/api/suggestions`.
+- `backtest_swing_curve` / `swing_oos_frame` run the walk-forward OOS used by the evaluator + suggester.
 
-- `XGBClassifier(n_estimators=100, max_depth=4, lr=0.05, subsample=0.8, colsample_bytree=0.8)`.
-- Trained on all `feat_*` columns (hourly `recent_prices` + real sentiment + macro) vs `target_breakout`.
-- **Sample weights = exponential temporal decay**, 5-year half-life (recent rows weigh more).
-- **Out-of-sample eval**: a time-ordered 80/20 split prints ROC-AUC + precision@BUY before the production
-  model is refit on all data.
-- Saved to `ml_engine/saved_models/short_term_model.json`.
+## Long-term MPT (`ml_engine/longterm_alpha.py`, `models.py:PortfolioOptimizer`)
 
-## 3. Short-term model B — PyTorch Temporal Attention (`deep_models.py`)
+Monthly-rebalanced max-Sharpe weights (SciPy SLSQP) using **trailing-only** returns for the covariance
+(look-ahead-free), scaled by the current regime. `backtest_longterm_curve` produces the OOS equity curve
+(restrictable to the longterm-bucket tickers). An optional Black-Litterman-style insider-buy tilt exists
+(`backtest_longterm_tilt`) but `ALT_DATA_ENABLED=False` by default.
 
-- `LightTemporalAttentionNet`: GRU (hidden 32) → scaled dot-product self-attention → mean-pool → sigmoid.
-- Input = sequences of **10 consecutive rows** per ticker; features standardized with mean/std saved to
-  `temporal_attention_metadata.pkl`.
-- Same 5-year temporal-decay sample weights; `BCELoss`, Adam lr 0.005, default 30 epochs (Makefile uses 100).
-- Saved to `temporal_attention_model.pth`.
+## Strategy suggester (`ml_engine/strategy_suggester.py`)
 
-**Which model serves** is explicit via `SERVED_MODEL` (default `xgboost`; `pytorch` opt-in) — no longer
-"whatever `.pth` exists" (PR#2 review C6/C14). When `pytorch` is selected, a ticker with < 10 valid rows
-falls back to XGBoost for that ticker. Both output a single probability `prob ∈ [0,1]`.
+Per-ticker recommendation of **swing / longterm / hold**, evidence-driven and conservative (defaults
+away from swing). For each equity, out-of-sample with the 2022 bear in the test set, it measures:
+1. **Swing OOS edge** — expectancy/win-rate of above-threshold signals (and 2022 behavior),
+2. **News responsiveness** — volume + correlation of the daily news score with forward returns,
+3. **Long-term quality** — trailing Sharpe / max drawdown / momentum,
+4. **Bear behavior** — 2022 return/drawdown.
 
-```mermaid
-flowchart LR
-    A[ticker features] --> B{SERVED_MODEL}
-    B -->|pytorch & >=10 rows| D[PyTorch prob]
-    B -->|pytorch & <10 rows| E[XGBoost prob]
-    B -->|xgboost default| E
-    D & E --> F{"prob ≥ calibrated BUY threshold (threshold.json) → BUY<br/>prob ≤ SELL_THRESHOLD (0.02) → SELL<br/>else HOLD"}
-```
+A z-scored rubric picks swing only when it clears a bar **and** beats the long-term score by a margin,
+else longterm, else hold — each with a confidence + plain-English rationale. **Self-validation**
+(`validate_assignments`) backtests the *suggested* vs *current* assignments' blended OOS curves (plus a
+MPT-leaning variant) and returns a verdict; it confirmed the suggestions lift blended OOS Sharpe
+(~1.48 → 1.77 at a 50/45 split). **v2 regime overlay** (in execution) shrinks swing capital in
+defensive regimes. Surfaced in the Portfolio tab ("Suggest per-stock strategies", "Validate vs current").
 
-## 4. Long-term model — HMM regime + MPT (`models.py`)
+## Evaluation harness (`ml_engine/evaluate.py`, Model Evaluation tab)
 
-**Regime (HMM):** `GaussianHMM(n_components=3, covariance_type="diag")` fit on **daily** SPY
-`[feat_volatility_10, feat_fed_funds, feat_yield_spread]` from `daily_prices` (multi-decade, 1998→ — so the
-regime model now actually sees real bull/bear/crisis history incl. dot-com & 2008, not 5 years of hourly).
-The 3 states are sorted by mean volatility and mapped → `growth` (lowest) / `transition` / `crisis`
-(highest). Saved to `hmm_model.pkl` + `hmm_metadata.pkl`. At inference the **last daily SPY row** sets the
-current regime.
+`run_evaluation` plots growth-of-$100k for the chosen strategies + a blended (by current buckets) curve
+vs **SPY / QQQ / BRK-B**, fully out-of-sample:
+- **Walk-forward** mode (default): swing trains only on data before each fold; `oos_start` fixes where
+  testing begins (set `2022-01-01` to put the bear in the OOS window — the single most important knob).
+- **Stress-window** mode (fixed start/end): the MPT engine + benchmarks over a historical bear; swing
+  isn't run for a fixed window (use walk-forward + oos_start instead). Emits **caveats**, including a
+  **survivorship-bias** warning for pre-2020 windows.
 
-**Allocation (MPT):** `PortfolioOptimizer.calculate_optimal_weights(daily_returns[-252:], regime)` — fed
-**daily** returns (≈1 trading year) from the `DailyPrice` database table:
-- Expected returns = annualized mean; covariance = **Ledoit-Wolf shrinkage**, annualized.
-- **SciPy Optimizer**: Solves for Maximum Sharpe Ratio using `scipy.optimize.minimize` (SLSQP), enforcing constraints (weights sum to 1.0, long-only, max asset concentration of 25% in growth regimes and 10% cash/defensive concentration in crisis regimes).
-- In `crisis` regime the MPT allocation scales all optimal weights by 0.5 (keeping ~50% cash) to manage risk.
+### The honest verdict (do not skip)
+With 2022 in the OOS test, **swing's risk-adjusted edge largely evaporates** (Sharpe ~0.70, −25% in
+2022 vs −20% S&P) — it's a bull-market amplifier. **MPT** was resilient in 2022 (+7%) but its absolute
+backtest returns are **survivorship-inflated** (the universe is today's winners). The **blended** book
+is the most defensible. Earlier rosy swing Sharpes (1.1–1.75) came from OOS windows that excluded 2022.
+Full detail + tables: [strategy-evaluation-findings.md](./strategy-evaluation-findings.md).
 
-## 5. Position sizing — Fractional Kelly (`models.py`)
+## Key config (`app/core/config.py`)
 
-Used by the **executor**, not the suggestions endpoint:
-- `f* = (b·p − q)/b`, clipped to [0,1], then × fraction. `p` = model confidence, `b` = payoff ratio
-  (hard-coded 2.5), `fraction = 0.2` (so ~1/5-Kelly).
-- Final trade value = `min(10% of equity, equity·f*)`; skipped if < $100.
-
-## 6. Training & artifacts
-
-```mermaid
-flowchart LR
-    subgraph train["run.py train  (= make train, epochs 100)"]
-        M1[models.py --train<br/>XGBoost + HMM]
-        M2[deep_models.py --train<br/>PyTorch]
-    end
-    M1 --> J[short_term_model.json]
-    M1 --> P1[hmm_model.pkl]
-    M1 --> P2[hmm_metadata.pkl]
-    M2 --> T1[temporal_attention_model.pth]
-    M2 --> T2[temporal_attention_metadata.pkl]
-```
-
-All artifacts live in `backend/ml_engine/saved_models/` (plus `threshold.json` from calibration). They are
-**gitignored** (regenerated by `make train`), so a fresh clone serves nothing until trained.
-
-> **Held-out evaluation:** `train_models` now prints an out-of-sample ROC-AUC and precision@BUY from a
-> time-ordered 80/20 split (XGBoost) before refitting on all data. PyTorch still reports in-sample
-> loss/accuracy. For full strategy P&L, also run `run.py backtest` (PyBroker) — see
-> [execution-and-simulation.md](./execution-and-simulation.md). Surfacing these metrics in the UI is still open.
+`SWING_ENABLED`, `SWING_HORIZON_DAYS=5`, `SWING_TOP_N=10`, `SWING_POSITION_PCT=0.10`,
+`SWING_ATR_STOP_MULT`/`TP_MULT`/`STOP_MIN`/`STOP_MAX`; `EXECUTION_STRATEGY=swing`;
+`REGIME_OVERLAY_ENABLED` + `REGIME_SWING_FACTORS` (crisis ×0.25, transition ×0.6, growth ×1.0);
+`OLLAMA_URL`, `LLM_MODEL`, `NEWS_LLM_START=2021-01-01`; `SERVED_MODEL=xgboost`; `MPT_WINDOW_DAYS=252`;
+`ALT_DATA_ENABLED=False`.
