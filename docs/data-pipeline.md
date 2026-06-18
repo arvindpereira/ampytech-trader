@@ -10,13 +10,26 @@ in git/LFS — back it up with `make db-backup` (see [operations.md](./operation
 | `price_fetcher.py` | Massive/Polygon (hourly ~5y) + Yahoo (daily 1998+) | `recent_prices`, `daily_prices` | computes SMA/RSI/MACD/ATR locally; `backfill_ticker()` does a single new ticker (prices **+ news**) |
 | `macro_fetcher.py` | Massive/FRED | `macro_indicators` | treasury yields, fed funds |
 | `sentiment_fetcher.py` | News API / Reddit / premium uploads | `ticker_sentiments`, `sentiment_source_logs` | VADER-scored; `is_mock` flag separates real vs mock |
-| `news_llm.py` | Polygon news → **local Ollama LLM** | `news_llm_scores` | per-ticker directional + relevance score; the **swing** edge; dense from ~2021 |
+| `news_llm.py` | Polygon news → **LLM (Ollama or OpenAI)** | `news_llm_scores` | per-ticker directional + relevance score; the **swing** edge; dense from ~2021. Pluggable provider (`NEWS_LLM_PROVIDER`); batches score **concurrently** |
+| `premium_ingest.py` + `premium_llm.py` | **Premium newsletter emails** (e.g. The Information) via IMAP → LLM | `news_llm_scores` | reads subscriber emails you receive, LLM-extracts which **universe tickers** an article materially affects (incl. indirect/private-company knock-ons), writes scores tagged `premium:<source>`. Only derived scores are stored, not article text |
 | `alternative_fetcher.py` | SEC EDGAR Form 4 | `insider_disclosures`, `congress_disclosures` | only when `ALT_DATA_ENABLED` |
 | `crisis_fetcher.py` | yfinance | `crisis_prices` | historic crash eras for stress display |
 | `popular_tickers.py` | yfinance scrape | `universe_tickers` | popular/trending helper |
 
-`run.py fetch` runs the core fetchers sequentially; `make news-llm` runs the (Ollama-dependent) news
-scorer; both are also driven by the scheduler.
+`run.py fetch` runs the core fetchers sequentially; `make news-llm` runs the news scorer; both are also
+driven by the scheduler.
+
+**News-LLM scoring providers.** `news_llm.py` scores headlines concurrently (thread pool) and supports
+two providers via `NEWS_LLM_PROVIDER`:
+- **`ollama`** (default) — local `gemma4:e4b`, free + private. Used by the recurring daily/intraday
+  scheduler jobs.
+- **`openai`** — `gpt-4o-mini` via REST, a fast opt-in for bulk backfills (10–50× faster; **<~$1** for a
+  full 2021→now universe backfill). Needs `OPENAI_API_KEY` in `backend/.env`. Run with
+  `make news-llm PROVIDER=openai`, or the cheapest unattended `make news-llm-batch` (OpenAI Batch API).
+
+The per-stock UI **Backfill** button automatically uses OpenAI when `OPENAI_API_KEY` is set, else Ollama.
+Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempotent** (upsert on
+`(ticker, article_id)`), so re-runs and concurrent backfills are safe.
 
 ## Database schema (SQLite, `app/database/models.py`)
 
@@ -29,8 +42,9 @@ scorer; both are also driven by the scheduler.
 **Signals & news**
 - `ticker_sentiments` — per-(ticker,date,source) aggregate VADER sentiment (`is_mock`).
 - `sentiment_source_logs` — individual articles/posts with scores + URLs (`is_mock`).
-- `news_llm_scores` — **`(ticker, article_id)` PK**, `date`, `published_utc`, `title`, `llm_score`
-  (−1..1), `llm_relevance` (0..1), `model`. The LLM-scored news driving the swing strategy.
+- `news_llm_scores` — **`(ticker, article_id)` PK**, `date`, `published_utc` (full ISO timestamp), `title`,
+  `llm_score` (−1..1), `llm_relevance` (0..1), `model` (the scoring LLM), `source` (`polygon` headlines vs
+  `premium:the-information` newsletter — lets models filter/weight premium news separately). Drives swing.
 - `insider_disclosures`, `congress_disclosures` — SEC Form 4 / congressional trades (alt-data, off by default).
 
 **Universe, strategy & settings**

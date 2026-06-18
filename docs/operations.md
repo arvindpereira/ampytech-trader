@@ -7,13 +7,26 @@ make install            # backend venv + Python deps + frontend npm deps
 # Fill backend/.env: MASSIVE_API_KEY (Polygon), ALPACA_API_KEY/SECRET (paper), FRED, Reddit (optional),
 #                    GOOGLE_OAUTH_CLIENT_ID/SECRET (for DB backup). Defaults point Alpaca at paper.
 # Install + run Ollama locally with the LLM_MODEL (default gemma4:e4b) for news scoring.
+# Optional: OPENAI_API_KEY to use OpenAI for fast bulk news backfills (else local Ollama is used) and
+#           to write the Model-Evaluation "expert interpretation" (OPENAI_EXPERT_MODEL, default gpt-5.5;
+#           disable with EXPERT_INTERP_ENABLED=false).
 ```
 
 ## 2. Day-to-day commands (Makefile → `run.py` / scripts)
 
 **Data**
 - `make fetch` — hourly+daily prices, macro, sentiment, crisis eras.
-- `make news-llm [NEWS_START=2021-01-01]` — LLM-score news (Ollama) for the swing model.
+- `make news-llm [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]` — LLM-score news for the swing
+  model. Default provider is local **Ollama** (free); `PROVIDER=openai` is a fast bulk backfill
+  (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`). Batches score concurrently.
+- `make news-llm-batch [START=… TICKERS=…]` — submit the same via OpenAI's **Batch API** (50% cheaper,
+  unattended, up to 24h); `make news-llm-batch-collect BATCH_ID=<id>` ingests it (resumable).
+- `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP,
+  LLM-extract per-ticker scores into the swing news feed. Set `IMAP_USER`/`IMAP_PASSWORD` (an
+  **app-password**, not your main password), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Runs in the daily
+  scheduler job when creds are present. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml`
+  (also `.html/.txt/.md`); preview without scoring: `make premium-ingest DRY_RUN=1`. Only content you
+  receive by email is read, and only derived scores (not article text) are stored.
 - `make insider` — real SEC Form 4 (only when `ALT_DATA_ENABLED`).
 
 **Models**
@@ -78,6 +91,7 @@ You can also retrain from the UI (Portfolio tab → **Model Training → Retrain
 
 ## 6. Health & monitoring
 
-`GET /api/health` (and the navbar pills) report **Ollama, Alpaca, scheduler, DB, news** status. The
-swing pipeline needs **Ollama up**; if it stops, news scoring stalls (degrades gracefully). The
+`GET /api/health` (and the navbar pills) report **Ollama, Alpaca, scheduler, DB, news** status. With the
+default Ollama provider the swing pipeline needs **Ollama up**; if it stops, news scoring stalls
+(degrades gracefully) unless `OPENAI_API_KEY` is set, in which case backfills use OpenAI instead. The
 intraday loop and execution require the **Alpaca paper** creds and (for execution) an open market.

@@ -160,12 +160,22 @@ def _run_validate_job(jid, oos_start):
         import traceback; traceback.print_exc()
         _job_update(jid, status="error", error=str(e)[:200])
 
-def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start):
+def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start,
+                  exclude_premium=False):
     try:
         from ml_engine.evaluate import run_evaluation
         res = run_evaluation(strategies, horizon=horizon, splits=splits, allocation=allocation,
                              start_date=start_date, end_date=end_date, oos_start=oos_start,
+                             exclude_premium=exclude_premium,
                              progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        # Final step: a powerful model writes a plain-English, honest interpretation of the results.
+        from app.core.config import EXPERT_INTERP_ENABLED, OPENAI_API_KEY, OPENAI_EXPERT_MODEL
+        res["_params"] = {"strategies": strategies, "horizon": horizon, "splits": splits,
+                          "allocation": allocation, "oos_start": oos_start}
+        if EXPERT_INTERP_ENABLED and OPENAI_API_KEY:
+            _job_update(jid, progress=97, stage=f"Generating expert interpretation ({OPENAI_EXPERT_MODEL})…")
+            from ml_engine.expert import interpret_evaluation
+            res["interpretation"] = interpret_evaluation(res, res["_params"])
         _EVAL_RESULTS[jid] = res
         _job_update(jid, progress=100, stage="Complete", status="done")
     except Exception as e:
@@ -1367,6 +1377,7 @@ class EvaluateRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     oos_start: Optional[str] = None
+    exclude_premium: bool = False
 
 @app.post("/api/evaluate")
 def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
@@ -1383,7 +1394,8 @@ def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
                       "longterm_tickers": lt_tickers or None}
     jid = _job_new("evaluate", "Evaluating strategies")
     threading.Thread(target=_run_eval_job,
-                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date, req.end_date, req.oos_start),
+                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date,
+                           req.end_date, req.oos_start, req.exclude_premium),
                      daemon=True).start()
     return {"status": "started", "job_id": jid}
 
@@ -1396,6 +1408,42 @@ def get_evaluation_result(job_id: str):
     if j:
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
+
+@app.get("/api/premium/value")
+def premium_value():
+    """Forward predictive value of premium-newsletter signals (e.g. The Information): coverage + a
+    hit-rate / directional-edge study over closed forward windows. Populates as data accumulates."""
+    from ml_engine.premium_eval import premium_value_report
+    return premium_value_report()
+
+@app.get("/api/llm/usage")
+def llm_usage(since: str = None):
+    """Accumulated token usage + estimated cost per model (from the DB usage ledger), across every
+    provider the server uses (OpenAI + local Ollama). Cost is recomputed from current pricing."""
+    from app.core.llm_cost import usage_summary
+    return usage_summary(since=since)
+
+class CalibrateRequest(BaseModel):
+    model: str
+    actual_cost: float
+    since: str = None
+
+@app.post("/api/llm/calibrate")
+def llm_calibrate(req: CalibrateRequest):
+    """Scale a model's pricing so its estimated cost over the window matches the real `actual_cost` you
+    read from the OpenAI dashboard. Persists to llm_pricing.json; future estimates use the new rate."""
+    from app.core.llm_cost import calibrate_model
+    return calibrate_model(req.model, req.actual_cost, since=req.since)
+
+@app.post("/api/evaluate/interpret")
+def regenerate_interpretation(job_id: str):
+    """(Re)generate the plain-English expert interpretation for a finished evaluation result."""
+    res = _EVAL_RESULTS.get(job_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="No evaluation result for that job_id.")
+    from ml_engine.expert import interpret_evaluation
+    res["interpretation"] = interpret_evaluation(res, res.get("_params") or {})
+    return {"status": "done", "interpretation": res["interpretation"]}
 
 @app.post("/api/strategy/suggest")
 def start_strategy_suggest(oos_start: str = "2022-01-01"):

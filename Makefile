@@ -1,9 +1,10 @@
 .PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+        news-llm-batch news-llm-batch-collect llm-usage premium-ingest \
         db-backup db-backup-list db-restore db-restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
-EPOCHS ?= 100
+EPOCHS ?= 10
 DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
@@ -14,6 +15,9 @@ STRENGTH ?= 0.10
 START ?= 2021-01-01
 NEWS_START ?= $(START)
 LLM_MODEL ?= gemma4:e4b
+PROVIDER ?=
+WORKERS  ?=
+BATCH_ID ?=
 TICKER   ?=
 TICKERS  ?=
 BACKUP_KEEP ?= 10
@@ -35,7 +39,11 @@ help:
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
-	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 TICKERS=AAPL,NVDA]"
+	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]"
+	@echo "  make news-llm-batch    - Same via OpenAI Batch API (cheapest, unattended; needs OPENAI_API_KEY)"
+	@echo "  make news-llm-batch-collect BATCH_ID=<id> - Ingest a submitted batch's results"
+	@echo "  make premium-ingest    - Ingest premium newsletter emails (IMAP) → swing news [DAYS=7 PREMIUM_FILE=path DRY_RUN=1]"
+	@echo "  make llm-usage         - Show OpenAI token usage + est cost per model (refine pricing)"
 	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
 	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
@@ -131,9 +139,37 @@ longterm-eval:
 
 news-llm:
 	@echo "========================================================================"
-	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "🗞️  LLM-scoring news headlines [START=$(NEWS_START)$(if $(PROVIDER), PROVIDER=$(PROVIDER))$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "    (default provider = local Ollama; PROVIDER=openai for a fast bulk backfill)"
 	@echo "========================================================================"
-	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) $(if $(TICKERS),--tickers $(TICKERS))
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) \
+		$(if $(TICKERS),--tickers $(TICKERS)) $(if $(PROVIDER),--provider $(PROVIDER)) $(if $(WORKERS),--workers $(WORKERS))
+
+news-llm-batch:
+	@echo "========================================================================"
+	@echo "🗞️  Submitting OpenAI Batch news-scoring job (cheapest, unattended) [START=$(NEWS_START)$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) --batch \
+		$(if $(TICKERS),--tickers $(TICKERS))
+
+news-llm-batch-collect:
+	@echo "========================================================================"
+	@echo "🗞️  Ingesting OpenAI Batch results [BATCH_ID=$(BATCH_ID)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --collect $(BATCH_ID)
+
+premium-ingest:
+	@echo "========================================================================"
+	@echo "📬 Ingesting premium newsletter articles via IMAP → news_llm_scores$(if $(PREMIUM_FILE), [FILE=$(PREMIUM_FILE)], [DAYS=$(DAYS)])..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/premium_ingest.py $(if $(PREMIUM_FILE),--file $(PREMIUM_FILE),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
+
+llm-usage:
+	@echo "========================================================================"
+	@echo "📊 OpenAI token usage + estimated cost per model (from the usage ledger)..."
+	@echo "    Divide your real dashboard spend by these tokens to refine pricing."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) -c "from app.core.llm_cost import usage_summary; import json; print(json.dumps(usage_summary(), indent=2))"
 
 db-backup:
 	@echo "========================================================================"

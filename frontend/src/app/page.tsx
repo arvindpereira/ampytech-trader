@@ -21,7 +21,13 @@ import {
   Play,
   RotateCcw,
   Cpu,
-  Clock
+  Clock,
+  Brain,
+  ThumbsUp,
+  ThumbsDown,
+  AlertTriangle,
+  CheckCircle2,
+  Newspaper
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -154,9 +160,19 @@ export default function Home() {
   const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
+  const [evalExcludePremium, setEvalExcludePremium] = useState<boolean>(false);
+  const [premiumValue, setPremiumValue] = useState<any>(null);
   const [evalRunning, setEvalRunning] = useState<boolean>(false);
   const [evalProgress, setEvalProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [evalResult, setEvalResult] = useState<any>(null);
+  const [evalJobId, setEvalJobId] = useState<string | null>(null);
+  const [interpLoading, setInterpLoading] = useState<boolean>(false);
+  const [llmUsage, setLlmUsage] = useState<any>(null);
+  const [llmSince, setLlmSince] = useState<'today' | '7d' | 'all'>('today');
+  const [llmLoading, setLlmLoading] = useState<boolean>(false);
+  const [calModel, setCalModel] = useState<string>('');
+  const [calCost, setCalCost] = useState<string>('');
+  const [calMsg, setCalMsg] = useState<string>('');
   const [evalWindow, setEvalWindow] = useState<string>('none');
   const [evalCustom, setEvalCustom] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [evalOosStart, setEvalOosStart] = useState<string>('');
@@ -375,9 +391,10 @@ export default function Home() {
     try {
       const res = await fetch(`http://localhost:8008/api/evaluate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos }),
+        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos, exclude_premium: evalExcludePremium }),
       });
       const { job_id } = await res.json();
+      setEvalJobId(job_id);
       const poll = async () => {
         try {
           const r = await fetch(`http://localhost:8008/api/evaluate/result?job_id=${job_id}`);
@@ -390,6 +407,55 @@ export default function Home() {
       poll();
     } catch (err) { console.error(err); setEvalRunning(false); }
   };
+
+  const regenerateInterpretation = async () => {
+    if (!evalJobId) return;
+    setInterpLoading(true);
+    try {
+      const r = await fetch(`http://localhost:8008/api/evaluate/interpret?job_id=${evalJobId}`, { method: 'POST' });
+      const d = await r.json();
+      if (d.interpretation) setEvalResult((prev: any) => ({ ...prev, interpretation: d.interpretation }));
+    } catch (err) { console.error(err); } finally { setInterpLoading(false); }
+  };
+
+  const sinceDate = (mode: string) => {
+    if (mode === 'all') return '';
+    const d = new Date();
+    if (mode === '7d') d.setDate(d.getDate() - 6);
+    // Local date (not UTC) — the backend stamps usage rows with datetime.now() local time, so a UTC
+    // slice can be a day ahead and filter out everything near midnight.
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const fetchLlmUsage = async (mode: string = llmSince) => {
+    setLlmLoading(true);
+    try {
+      const s = sinceDate(mode);
+      const r = await fetch(`http://localhost:8008/api/llm/usage${s ? `?since=${s}` : ''}`);
+      setLlmUsage(await r.json());
+    } catch (err) { console.error(err); } finally { setLlmLoading(false); }
+  };
+  const calibrateModel = async () => {
+    if (!calModel || !calCost) return;
+    setCalMsg('');
+    try {
+      const s = sinceDate(llmSince);
+      const r = await fetch('http://localhost:8008/api/llm/calibrate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: calModel, actual_cost: parseFloat(calCost), since: s || null }),
+      });
+      const d = await r.json();
+      if (d.error) setCalMsg(d.error);
+      else { setCalMsg(`Calibrated ${d.model}: ×${d.factor} (est $${d.est_cost_before} → set to $${d.actual_cost})`); setCalCost(''); fetchLlmUsage(); }
+    } catch (err) { console.error(err); setCalMsg('Calibration failed.'); }
+  };
+  const fetchPremiumValue = async () => {
+    try {
+      const r = await fetch('http://localhost:8008/api/premium/value');
+      setPremiumValue(await r.json());
+    } catch (err) { console.error(err); }
+  };
+  useEffect(() => { if (activeTab === 'virtual_perf') { fetchLlmUsage(llmSince); fetchPremiumValue(); } /* eslint-disable-next-line */ }, [activeTab, llmSince]);
 
   const handleAddStock = async () => {
     const t = addStockTicker.toUpperCase().trim();
@@ -1816,6 +1882,9 @@ export default function Home() {
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
                   <input type="checkbox" checked={evalUseAlloc} onChange={(e) => setEvalUseAlloc(e.target.checked)} /> Use my current allocation (blended curve)
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }} title="A/B: re-run the swing walk-forward with premium-newsletter news excluded, to isolate its effect. Only meaningful once premium news spans the OOS window.">
+                  <input type="checkbox" checked={evalExcludePremium} onChange={(e) => setEvalExcludePremium(e.target.checked)} /> Exclude premium news (A/B)
+                </label>
                 <button onClick={handleRunEval} disabled={evalRunning}
                   style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--color-buy)', border: 'none', borderRadius: '8px', color: '#06121f', padding: '10px 22px', fontWeight: 700, fontSize: '14px', cursor: evalRunning ? 'default' : 'pointer', opacity: evalRunning ? 0.6 : 1 }}>
                   {evalRunning ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
@@ -1850,6 +1919,62 @@ export default function Home() {
                 </ul>
               </div>
             )}
+
+            {evalResult && evalResult.interpretation && (() => {
+              const it = evalResult.interpretation;
+              const s = it.sections;
+              const label: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '6px' };
+              const para: React.CSSProperties = { margin: 0, fontSize: '13.5px', lineHeight: '1.65', color: 'var(--text-secondary)' };
+              const ul: React.CSSProperties = { margin: 0, paddingLeft: '20px', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.65', display: 'flex', flexDirection: 'column', gap: '4px' };
+              return (
+                <div className="glass-card" style={{ marginBottom: '24px', border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)' }}>
+                      <Brain size={20} color="#a78bfa" /> Expert Interpretation
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {it.model && <span>{it.model}{it.tokens ? ` · ${it.input_tokens != null ? `${it.input_tokens.toLocaleString()}→${(it.output_tokens || 0).toLocaleString()}` : it.tokens.toLocaleString()} tok` : ''}{typeof it.cost === 'number' ? ` · ~$${it.cost.toFixed(4)}` : ''}</span>}
+                      <button onClick={regenerateInterpretation} disabled={interpLoading}
+                        style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', padding: '4px 10px', borderRadius: '6px', cursor: interpLoading ? 'default' : 'pointer', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.35)', color: 'var(--text-primary)' }}>
+                        <RefreshCw size={12} className={interpLoading ? 'animate-spin' : ''} /> {interpLoading ? 'Thinking…' : 'Regenerate'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {it.error ? (
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>{it.error}</div>
+                  ) : s ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      {s.tldr && (
+                        <div style={{ fontSize: '14.5px', lineHeight: '1.65', color: 'var(--text-primary)', padding: '12px 14px', borderRadius: '8px', background: 'rgba(139,92,246,0.10)', borderLeft: '3px solid #a78bfa' }}>{s.tldr}</div>
+                      )}
+                      {s.what_was_tested && (
+                        <div><div style={label}>What was tested</div><p style={para}>{s.what_was_tested}</p></div>
+                      )}
+                      {Array.isArray(s.key_findings) && s.key_findings.length > 0 && (
+                        <div><div style={label}>Key findings</div><ul style={ul}>{s.key_findings.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '18px' }}>
+                        {Array.isArray(s.strengths) && s.strengths.length > 0 && (
+                          <div><div style={{ ...label, color: 'var(--color-buy)' }}><ThumbsUp size={14} /> Strengths</div><ul style={ul}>{s.strengths.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                        )}
+                        {Array.isArray(s.weaknesses) && s.weaknesses.length > 0 && (
+                          <div><div style={{ ...label, color: 'var(--color-sell)' }}><ThumbsDown size={14} /> Weaknesses</div><ul style={ul}>{s.weaknesses.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                        )}
+                      </div>
+                      {Array.isArray(s.shortcomings) && s.shortcomings.length > 0 && (
+                        <div><div style={{ ...label, color: 'var(--color-gold)' }}><AlertTriangle size={14} /> Shortcomings of this study</div><ul style={ul}>{s.shortcomings.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                      )}
+                      {s.verdict && (
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', padding: '12px 14px', borderRadius: '8px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
+                          <CheckCircle2 size={18} color="var(--color-buy)" style={{ flexShrink: 0, marginTop: '1px' }} /> <span>{s.verdict}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
 
             {evalResult && evalResult.series && evalResult.series.length > 0 && (
               <>
@@ -1923,6 +2048,158 @@ export default function Home() {
                 </div>
               </>
             )}
+
+            {/* Value of The Information (premium news) widget */}
+            {premiumValue && premiumValue.coverage && (
+              <div className="glass-card" style={{ marginTop: '24px', border: '1px solid rgba(139,92,246,0.3)' }}>
+                <h2 style={{ margin: '0 0 6px' }}><Newspaper size={20} color="#a78bfa" /> Value of The Information</h2>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: 0 }}>
+                  Does the newsletter's calls predict moves? For each premium score we check the ticker's
+                  forward return once that window closes — <b>hit-rate</b> = direction matched; <b>avg edge</b> =
+                  return from going long on bullish calls / short on bearish ones.
+                </p>
+                {premiumValue.coverage.scores > 0 ? (
+                  <>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '8px 0 14px' }}>
+                      <b style={{ color: 'var(--text-primary)' }}>{premiumValue.coverage.scores}</b> scores from{' '}
+                      <b style={{ color: 'var(--text-primary)' }}>{premiumValue.coverage.articles}</b> articles ·{' '}
+                      {premiumValue.coverage.tickers} tickers · {premiumValue.coverage.date_min} → {premiumValue.coverage.date_max} ·{' '}
+                      {premiumValue.coverage.high_conviction} high-conviction (rel≥0.6)
+                      {premiumValue.coverage.top_tickers && premiumValue.coverage.top_tickers.length > 0 && (
+                        <> · top: {premiumValue.coverage.top_tickers.slice(0, 5).map((t: any[]) => `${t[0]}(${t[1]})`).join(', ')}</>
+                      )}
+                    </div>
+                    {!premiumValue.enough_data && (
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '13px', color: 'var(--color-gold)', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
+                        <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '1px' }} />
+                        <span>Accumulating — need ≥{premiumValue.min_n} closed samples per horizon for any confidence, and most forward windows are still open. This becomes a real read after a few weeks of premium news; treat current numbers as noise.</span>
+                      </div>
+                    )}
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="trade-table">
+                        <thead>
+                          <tr><th>Horizon</th><th>Closed</th><th>Pending</th><th>Hit-rate</th><th>Avg edge</th><th>High-conviction (n · hit · edge)</th></tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(premiumValue.horizons).map(([h, v]: [string, any]) => (
+                            <tr key={h}>
+                              <td style={{ fontWeight: 600 }}>{h}d</td>
+                              <td>{v.n || 0}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{v.pending || 0}</td>
+                              <td>{v.n ? `${(v.hit_rate * 100).toFixed(0)}%` : '—'}</td>
+                              <td className={v.n ? (v.avg_edge >= 0 ? 'text-green' : 'text-red') : ''}>{v.n ? `${v.avg_edge >= 0 ? '+' : ''}${(v.avg_edge * 100).toFixed(2)}%` : '—'}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{v.high_conviction && v.high_conviction.n ? `${v.high_conviction.n} · ${(v.high_conviction.hit_rate * 100).toFixed(0)}% · ${v.high_conviction.avg_edge >= 0 ? '+' : ''}${(v.high_conviction.avg_edge * 100).toFixed(2)}%` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '12px', lineHeight: 1.5 }}>
+                      For the swing-model A/B, tick <b>“Exclude premium news (A/B)”</b> above and compare a run to a normal one — but it only diverges once premium news spans the out-of-sample window (currently {premiumValue.coverage.date_min}→{premiumValue.coverage.date_max}). The forward study above is the near-term meter for whether the subscription pays for itself.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No premium news ingested yet — run <code>make premium-ingest</code>.</p>
+                )}
+              </div>
+            )}
+
+            {/* LLM usage + cost widget */}
+            <div className="glass-card" style={{ marginTop: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+                <h2 style={{ margin: 0 }}><DollarSign size={20} color="var(--color-gold)" /> LLM Usage &amp; Cost</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {(['today', '7d', 'all'] as const).map(m => (
+                    <button key={m} onClick={() => setLlmSince(m)} className={`toggle-btn ${llmSince === m ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: '12px' }}>{m === 'today' ? 'Today' : m === '7d' ? '7 days' : 'All'}</button>
+                  ))}
+                  <button onClick={() => fetchLlmUsage(llmSince)} title="Refresh"
+                    style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: '6px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <RefreshCw size={14} className={llmLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+              </div>
+
+              {llmUsage && llmUsage.totals && llmUsage.totals.calls > 0 ? (
+                <>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="trade-table">
+                      <thead>
+                        <tr><th>Model</th><th>Provider</th><th>Calls</th><th>API reqs</th><th>Input tok</th><th>Output tok</th><th>Est. cost</th></tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(llmUsage.by_model).map(([model, v]: [string, any]) => (
+                          <tr key={model}>
+                            <td style={{ fontWeight: 600 }}>{model}</td>
+                            <td><span style={{ fontSize: '11px', padding: '2px 7px', borderRadius: '10px', background: v.provider === 'openai' ? 'rgba(16,185,129,0.15)' : 'rgba(139,92,246,0.15)', color: v.provider === 'openai' ? 'var(--color-buy)' : '#a78bfa' }}>{v.provider || '—'}</span></td>
+                            <td>{v.calls.toLocaleString()}</td>
+                            <td>{v.requests.toLocaleString()}</td>
+                            <td>{v.prompt_tokens.toLocaleString()}</td>
+                            <td>{v.completion_tokens.toLocaleString()}</td>
+                            <td>{v.priced ? `~$${v.est_cost.toFixed(4)}` : <span style={{ color: 'var(--text-secondary)' }}>free / local</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: '2px solid var(--border-glass)', fontWeight: 700 }}>
+                          <td>Total</td><td></td>
+                          <td>{llmUsage.totals.calls.toLocaleString()}</td>
+                          <td>{llmUsage.totals.requests.toLocaleString()}</td>
+                          <td>{llmUsage.totals.prompt_tokens.toLocaleString()}</td>
+                          <td>{llmUsage.totals.completion_tokens.toLocaleString()}</td>
+                          <td style={{ color: 'var(--color-gold)' }}>~${llmUsage.totals.est_cost.toFixed(4)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {llmUsage.by_purpose && Object.keys(llmUsage.by_purpose).length > 0 && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '6px' }}>By purpose</div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="trade-table">
+                          <thead><tr><th>Purpose</th><th>Calls</th><th>API reqs</th><th>Input tok</th><th>Output tok</th><th>Est. cost</th></tr></thead>
+                          <tbody>
+                            {Object.entries(llmUsage.by_purpose).sort((a: any, b: any) => b[1].est_cost - a[1].est_cost).map(([purpose, v]: [string, any]) => (
+                              <tr key={purpose}>
+                                <td style={{ fontWeight: 600 }}>{purpose}</td>
+                                <td>{v.calls.toLocaleString()}</td>
+                                <td>{v.requests.toLocaleString()}</td>
+                                <td>{v.prompt_tokens.toLocaleString()}</td>
+                                <td>{v.completion_tokens.toLocaleString()}</td>
+                                <td>{v.est_cost > 0 ? `~$${v.est_cost.toFixed(4)}` : <span style={{ color: 'var(--text-secondary)' }}>free / local</span>}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: '16px', padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '8px' }}>Calibrate against your real OpenAI cost</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <select value={calModel} onChange={(e) => setCalModel(e.target.value)}
+                        style={{ padding: '6px 10px', borderRadius: '6px', background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontSize: '13px' }}>
+                        <option value="">Select model…</option>
+                        {Object.entries(llmUsage.by_model).filter(([, v]: [string, any]) => v.priced).map(([model]) => <option key={model} value={model}>{model}</option>)}
+                      </select>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>actual $ (for {llmSince === 'today' ? 'today' : llmSince === '7d' ? 'last 7 days' : 'all time'}):</span>
+                      <input type="number" step="0.01" value={calCost} onChange={(e) => setCalCost(e.target.value)} placeholder="1.11"
+                        style={{ width: '90px', padding: '6px 10px', borderRadius: '6px', background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontSize: '13px' }} />
+                      <button onClick={calibrateModel} disabled={!calModel || !calCost}
+                        style={{ padding: '6px 14px', borderRadius: '6px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.35)', color: 'var(--color-gold)', fontWeight: 600, fontSize: '13px', cursor: (!calModel || !calCost) ? 'default' : 'pointer' }}>Calibrate</button>
+                    </div>
+                    {calMsg && <div style={{ marginTop: '8px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>{calMsg}</div>}
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      Token counts are tracked from every call; cost is estimated from a pricing table (gpt-5.5 is a starting estimate). Enter the model's real cost from your OpenAI dashboard for the selected window and we'll scale its rate so future estimates match.
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No LLM calls recorded {llmSince === 'today' ? 'today' : llmSince === '7d' ? 'in the last 7 days' : 'yet'}. Run an evaluation (expert interpretation) or news scoring to populate this.</p>
+              )}
+            </div>
           </section>
         )}
 

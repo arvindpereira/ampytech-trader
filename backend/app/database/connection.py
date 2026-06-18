@@ -108,6 +108,17 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for strategy on universe_tickers: {em}")
 
+    # 6. Migrate news_llm_scores: add source column (headlines vs premium newsletters)
+    try:
+        columns_news = [c["name"] for c in inspector.get_columns("news_llm_scores")]
+        if columns_news and "source" not in columns_news:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE news_llm_scores ADD COLUMN source VARCHAR DEFAULT 'polygon'"))
+                conn.commit()
+            print("Successfully added source column to news_llm_scores table via auto-migration.")
+    except Exception as em:
+        print(f"Auto-migration check failed for source on news_llm_scores: {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE

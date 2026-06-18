@@ -368,27 +368,30 @@ def backfill_ticker(ticker, progress_cb=None):
     finally:
         db.close()
 
-    # 3) LLM-score the ticker's news (the slow part — thousands of headlines via Ollama).
+    # 3) LLM-score the ticker's news. Prefer OpenAI when configured (fast); else fall back to local
+    #    Ollama (requires it to be up). News scoring is the slow part of a backfill.
     news_scored = 0
     news_skipped = False
     try:
-        from app.core.config import SWING_ENABLED, NEWS_LLM_START, OLLAMA_URL
-        import requests as _rq
-        ollama_up = False
-        try:
-            ollama_up = _rq.get(f"{OLLAMA_URL}/api/tags", timeout=3).status_code == 200
-        except Exception:
-            ollama_up = False
-        if SWING_ENABLED and ollama_up:
-            report(50, "Scoring news headlines with the LLM…")
+        from app.core.config import SWING_ENABLED, NEWS_LLM_START, OLLAMA_URL, OPENAI_API_KEY
+        provider = "openai" if OPENAI_API_KEY else "ollama"
+        ollama_up = True
+        if provider == "ollama":
+            import requests as _rq
+            try:
+                ollama_up = _rq.get(f"{OLLAMA_URL}/api/tags", timeout=3).status_code == 200
+            except Exception:
+                ollama_up = False
+        if SWING_ENABLED and (provider == "openai" or ollama_up):
+            report(50, f"Scoring news headlines ({provider})…")
             from data_ingestion.news_llm import fetch_and_score
             before = _count_news(ticker)
-            fetch_and_score(start=NEWS_LLM_START, tickers=[ticker],
+            fetch_and_score(start=NEWS_LLM_START, tickers=[ticker], provider=provider,
                             progress_cb=lambda f, note: report(50 + int(f * 49), note))
             news_scored = _count_news(ticker) - before
         elif not ollama_up:
             news_skipped = True
-            report(95, "Skipped news scoring — Ollama offline")
+            report(95, "Skipped news scoring — Ollama offline (set OPENAI_API_KEY to use OpenAI)")
     except Exception as e:
         print(f"News scoring failed for {ticker}: {e}")
 

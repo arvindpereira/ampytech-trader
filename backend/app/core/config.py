@@ -142,6 +142,41 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:e4b")   # local, fast, JSON-clean (qwen3.5 emits empty under json mode)
 NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2021-01-01")  # how far back to score headlines (~5y, dense from 2021)
 
+# News-LLM scoring provider. Default "ollama" keeps the recurring daily/intraday jobs free + local.
+# "openai" is a fast opt-in for bulk backfills (10-50x faster; ~<$1 for a full backfill). Headlines
+# are public data, so there's no privacy concern sending them out.
+NEWS_LLM_PROVIDER = os.getenv("NEWS_LLM_PROVIDER", "ollama")
+NEWS_LLM_WORKERS = int(os.getenv("NEWS_LLM_WORKERS", "12"))   # concurrent batches when provider=openai
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")       # cheap, fast, reliable JSON mode
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+# Premium-newsletter ingestion (e.g. The Information). Reads articles you legitimately receive by email
+# via IMAP, has the LLM extract which universe tickers are materially affected, and stores per-ticker
+# scores into news_llm_scores so they feed the swing model. Only derived scores are kept in the DB.
+IMAP_HOST = os.getenv("IMAP_HOST", "imap.gmail.com")
+IMAP_PORT = int(os.getenv("IMAP_PORT", "993"))
+IMAP_USER = os.getenv("IMAP_USER", "")
+IMAP_PASSWORD = os.getenv("IMAP_PASSWORD", "")           # use an app-password, never your main password
+IMAP_FOLDER = os.getenv("IMAP_FOLDER", "INBOX")
+PREMIUM_SENDER = os.getenv("PREMIUM_SENDER", "theinformation.com")   # From-address filter
+PREMIUM_SOURCE_TAG = os.getenv("PREMIUM_SOURCE_TAG", "the-information")
+# Skip recurring digest/community emails (substring match on subject, case-insensitive) — they're not
+# single-story articles and just burn scoring calls. Comma-separated; override to taste.
+PREMIUM_SKIP_SUBJECTS = os.getenv(
+    "PREMIUM_SKIP_SUBJECTS",
+    "Top Posts Today,The Briefing,Monday Readout,Weekend Readout,The Information Finance")
+PREMIUM_LLM_MODEL = os.getenv("PREMIUM_LLM_MODEL", "")   # "" -> OPENAI_MODEL (key set) else LLM_MODEL
+PREMIUM_BODY_CHARS = int(os.getenv("PREMIUM_BODY_CHARS", "8000"))    # chars of article body sent to LLM
+PREMIUM_REL_MIN = float(os.getenv("PREMIUM_REL_MIN", "0.3"))         # drop low-relevance mentions
+PREMIUM_ABS_MIN = float(os.getenv("PREMIUM_ABS_MIN", "0.15"))        # drop near-neutral (no direction) mentions
+PREMIUM_MAX_MENTIONS = int(os.getenv("PREMIUM_MAX_MENTIONS", "3"))   # cap tickers per article (top by rel*|s|)
+
+# A more powerful model writes the plain-English "expert interpretation" of evaluation runs (Model
+# Evaluation tab). Configurable so you can point it at whatever strong model you have access to.
+OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-5.5")
+EXPERT_INTERP_ENABLED = os.getenv("EXPERT_INTERP_ENABLED", "true").lower() == "true"
+
 # --- Swing (multi-day) strategy ---------------------------------------------------------------
 # The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
 # features add a real portfolio-level edge (higher return/Sharpe, lower drawdown) over a technicals-only
