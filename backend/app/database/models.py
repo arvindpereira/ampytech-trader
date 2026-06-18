@@ -253,3 +253,43 @@ class LLMUsage(Base):
     completion_tokens = Column(Integer, nullable=False, default=0)
     batch = Column(Boolean, nullable=False, default=False)  # OpenAI Batch API (50% off)
     est_cost = Column(Float, nullable=True)          # snapshot estimate at write time (USD)
+
+
+class TickerFundamental(Base):
+    """Per-period company financials (Polygon/Massive vX/reference/financials) + derived ratios.
+    Feeds the fundamental-quality signal that separates strong-fundamentals dips (accumulate long-term)
+    from weak-fundamentals volatility (speculative). One row per (ticker, period end)."""
+    __tablename__ = "ticker_fundamentals"
+
+    ticker = Column(String, nullable=False)
+    end_date = Column(String, nullable=False)            # fiscal period end (YYYY-MM-DD)
+    fiscal_period = Column(String, nullable=True)        # Q1/Q2/Q3/Q4/FY
+    fiscal_year = Column(String, nullable=True)
+    # raw key line items (USD)
+    revenues = Column(Float, nullable=True)
+    gross_profit = Column(Float, nullable=True)
+    operating_income = Column(Float, nullable=True)
+    net_income = Column(Float, nullable=True)
+    op_cash_flow = Column(Float, nullable=True)
+    capex = Column(Float, nullable=True)
+    total_assets = Column(Float, nullable=True)
+    total_liabilities = Column(Float, nullable=True)
+    equity = Column(Float, nullable=True)
+    current_assets = Column(Float, nullable=True)
+    current_liabilities = Column(Float, nullable=True)
+    shares = Column(Float, nullable=True)
+    # derived ratios
+    gross_margin = Column(Float, nullable=True)
+    operating_margin = Column(Float, nullable=True)
+    net_margin = Column(Float, nullable=True)
+    fcf = Column(Float, nullable=True)                   # op_cash_flow - capex
+    fcf_margin = Column(Float, nullable=True)
+    roe = Column(Float, nullable=True)
+    debt_to_equity = Column(Float, nullable=True)
+    current_ratio = Column(Float, nullable=True)
+    source = Column(String, nullable=True, default="polygon")
+    fetched_at = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "end_date", name="pk_ticker_fundamentals"),
+    )
