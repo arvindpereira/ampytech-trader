@@ -113,6 +113,9 @@ def _start_backfill(ticker):
     """Spawn a backfill job+thread for `ticker`, but only if one isn't already running.
     Returns the (existing or new) job id. Single entry point so we never spawn duplicate
     threads/progress bars for the same ticker (e.g. suggestions auto-heal firing on every poll)."""
+    from data_ingestion.price_fetcher import FICTIONAL_TICKERS
+    if ticker in FICTIONAL_TICKERS:
+        return None  # synthetic ticker (e.g. SPACE) — nothing to fetch, don't create a job
     label = f"Backfilling {ticker}"
     with _JOBS_LOCK:
         for job in _JOBS.values():
@@ -341,7 +344,10 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
 
     # Auto-heal: Check if any active universe tickers are missing price data
     if not date:
+        from data_ingestion.price_fetcher import FICTIONAL_TICKERS
         for ticker in active_universe:
+            if ticker in FICTIONAL_TICKERS:
+                continue  # synthetic ticker (e.g. SPACE) has no real data to fetch — don't loop backfills
             has_data = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).first() is not None
             if not has_data:
                 # _start_backfill is a no-op if one is already in flight, so polling is safe.
