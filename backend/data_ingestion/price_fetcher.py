@@ -314,8 +314,11 @@ def _write_bars(db, Model, ticker, bars, daily=False):
         # inserted the same (ticker, date) bars between our existing_map snapshot and this commit.
         # ON CONFLICT DO NOTHING makes the insert idempotent so the race can't raise IntegrityError.
         from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
-        rows = [{c.name: getattr(r, c.name) for c in Model.__table__.columns
-                 if getattr(r, c.name) is not None} for r in new_records]
+        # Every row must carry the same column set (NULL for missing indicators), otherwise the
+        # multi-row VALUES insert renders inconsistently. Safe: both tables use a composite
+        # (ticker, date) PK with no autoincrement id.
+        cols = [c.name for c in Model.__table__.columns]
+        rows = [{c: getattr(r, c) for c in cols} for r in new_records]
         stmt = _sqlite_insert(Model).values(rows).on_conflict_do_nothing(
             index_elements=["ticker", "date"])
         db.execute(stmt)
