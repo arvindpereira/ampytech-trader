@@ -39,6 +39,38 @@ NON_NEWS = {"SPACE"}   # fictional ticker, no real news
 BATCH = 15             # headlines per LLM call (sweet spot for gemma4:e4b and gpt-4o-mini)
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
+# Approx OpenAI pricing (USD per 1M tokens) for live cost estimates; falls back to gpt-4o-mini rates.
+_OPENAI_PRICING = {
+    "gpt-4o-mini": (0.15, 0.60), "gpt-4o": (2.50, 10.0),
+    "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1-nano": (0.10, 0.40),
+}
+
+
+def _price(model):
+    for k, v in _OPENAI_PRICING.items():
+        if model.startswith(k):
+            return v
+    return _OPENAI_PRICING["gpt-4o-mini"]
+
+
+def _est_cost(model, prompt_tok, completion_tok, batch=False):
+    pin, pout = _price(model)
+    c = prompt_tok / 1e6 * pin + completion_tok / 1e6 * pout
+    return c * 0.5 if batch else c   # Batch API is 50% off
+
+
+def _fmt_tok(n):
+    if n >= 1e6:
+        return f"{n / 1e6:.2f}M"
+    if n >= 1e3:
+        return f"{n / 1e3:.1f}K"
+    return str(int(n))
+
+
+def _bar(frac, width=22):
+    fill = int(frac * width)
+    return "[" + "#" * fill + "-" * (width - fill) + "]"
+
 
 # --------------------------------------------------------------------------------------------------
 # Prompt + parsing (shared across providers so scores are comparable)
@@ -67,6 +99,7 @@ def _parse_scores(text, n):
 # Providers — each returns a list of (score, relevance) aligned to `headlines`
 # --------------------------------------------------------------------------------------------------
 def _ollama_score(ticker, headlines, model=None, retries=2):
+    """Returns (scores, usage) — usage = {'prompt': n, 'completion': n} token counts."""
     model = model or LLM_MODEL
     prompt = _build_prompt(ticker, headlines, no_think=True)
     for _ in range(retries):
@@ -75,10 +108,13 @@ def _ollama_score(ticker, headlines, model=None, retries=2):
                               json={"model": model, "prompt": prompt, "stream": False, "format": "json",
                                     "options": {"temperature": 0, "num_predict": 40 * len(headlines) + 60}},
                               timeout=180)
-            return _parse_scores(r.json().get("response", ""), len(headlines))
+            data = r.json()
+            usage = {"prompt": data.get("prompt_eval_count", 0) or 0,
+                     "completion": data.get("eval_count", 0) or 0}
+            return _parse_scores(data.get("response", ""), len(headlines)), usage
         except Exception:
             time.sleep(0.5)
-    return [(0.0, 0.0)] * len(headlines)
+    return [(0.0, 0.0)] * len(headlines), {"prompt": 0, "completion": 0}
 
 
 def _openai_score(ticker, headlines, model=None, retries=4):
@@ -101,14 +137,18 @@ def _openai_score(ticker, headlines, model=None, retries=4):
                 time.sleep(wait)
                 continue
             r.raise_for_status()
-            content = r.json()["choices"][0]["message"]["content"]
-            return _parse_scores(content, len(headlines))
+            j = r.json()
+            content = j["choices"][0]["message"]["content"]
+            u = j.get("usage", {}) or {}
+            usage = {"prompt": u.get("prompt_tokens", 0), "completion": u.get("completion_tokens", 0)}
+            return _parse_scores(content, len(headlines)), usage
         except Exception:
             time.sleep(min(2 ** attempt, 30))
-    return [(0.0, 0.0)] * len(headlines)
+    return [(0.0, 0.0)] * len(headlines), {"prompt": 0, "completion": 0}
 
 
 def score_batch(ticker, headlines, provider, model):
+    """Returns (scores, usage). usage has 'prompt'/'completion' token counts."""
     if provider == "openai":
         return _openai_score(ticker, headlines, model=model)
     return _ollama_score(ticker, headlines, model=model)
@@ -161,8 +201,9 @@ def _build_work(db, start, end, tickers):
         db_tickers = db.query(UniverseTicker).all()
         tickers = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)
     tickers = [t for t in tickers if t not in NON_NEWS and not t.startswith(("X:", "C:"))]
+    print(f"🔎 Fetching news for {len(tickers)} ticker(s), {start}→{end} (skipping already-scored)…")
 
-    work, total = [], 0
+    work, total, with_news = [], 0, 0
     for ticker in tickers:
         # Incremental: resume from the latest already-scored date minus 2 days to avoid refetching old news.
         ticker_start = start
@@ -183,10 +224,14 @@ def _build_work(db, start, end, tickers):
         existing = {r[0] for r in db.query(NewsLLMScore.article_id)
                     .filter(NewsLLMScore.ticker == ticker).all()}
         todo = [a for a in arts if a[0] not in existing]
+        if todo:
+            with_news += 1
+            print(f"   • {ticker}: {len(arts)} fetched → {len(todo)} new to score")
         for idx, k in enumerate(range(0, len(todo), BATCH)):
             chunk = todo[k:k + BATCH]
             work.append((ticker, idx, chunk))
             total += len(chunk)
+    print(f"🔎 Fetch complete: {total} new headlines across {with_news} ticker(s) → {len(work)} batches.")
     return work, total
 
 
@@ -221,38 +266,61 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None, provider=Non
     if workers is None:
         workers = NEWS_LLM_WORKERS if provider == "openai" else int(os.getenv("OLLAMA_NUM_PARALLEL", "2"))
 
+    print(f"🗞️  News-LLM scoring | provider={provider} model={model} | {workers} concurrent workers")
     init_db()
     db = SessionLocal()
     try:
         work, total = _build_work(db, start, end, tickers)
         if not work:
-            print("LLM news scoring: nothing new to score.")
+            print("✅ Nothing new to score — all headlines already scored.")
             if progress_cb:
                 progress_cb(1.0, "no new headlines")
             return
-        print(f"LLM news scoring ({provider}/{model}, {workers} workers): "
-              f"{len(work)} batches / {total} headlines...")
+        print(f"⏳ Scoring {total} headlines in {len(work)} batches…")
 
-        done_batches, grand = 0, 0
+        t0 = time.time()
+        done, grand, ptok, ctok = 0, 0, 0, 0
+        log_every = max(1, len(work) // 20)   # ~20 status lines over the run
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futs = {pool.submit(score_batch, ticker, [t for _, _, t in chunk], provider, model):
                     (ticker, chunk) for ticker, _idx, chunk in work}
             for fut in as_completed(futs):
                 ticker, chunk = futs[fut]
                 try:
-                    results = fut.result()
+                    results, usage = fut.result()
                 except Exception:
-                    results = [(0.0, 0.0)] * len(chunk)
+                    results, usage = [(0.0, 0.0)] * len(chunk), {"prompt": 0, "completion": 0}
                 _upsert_scores(db, _rows_for(ticker, chunk, results, model))
-                done_batches += 1
+                done += 1
                 grand += len(chunk)
-                if done_batches % 10 == 0 or done_batches == len(work):
+                ptok += usage.get("prompt", 0)
+                ctok += usage.get("completion", 0)
+                if done % 10 == 0 or done == len(work):
                     db.commit()
+                frac = done / len(work)
+                if done % log_every == 0 or done == len(work):
+                    el = time.time() - t0
+                    rate = grand / el if el > 0 else 0
+                    eta = (total - grand) / rate if rate > 0 else 0
+                    tok = f" | {_fmt_tok(ptok + ctok)} tok" if (ptok + ctok) else ""
+                    cost = f" | ~${_est_cost(model, ptok, ctok):.3f}" if provider == "openai" else ""
+                    print(f"  {_bar(frac)} {frac * 100:4.0f}% | {grand}/{total} headlines"
+                          f"{tok}{cost} | {rate:.0f} hl/s | ETA {eta:3.0f}s")
                 if progress_cb:
-                    progress_cb(done_batches / len(work),
-                                f"scored {grand}/{total} headlines ({ticker})")
+                    note = f"scored {grand}/{total} headlines ({ticker})"
+                    if provider == "openai" and (ptok + ctok):
+                        note += f" • {_fmt_tok(ptok + ctok)} tok • ~${_est_cost(model, ptok, ctok):.2f}"
+                    progress_cb(frac, note)
         db.commit()
-        print(f"LLM news scoring complete: {grand} new headline scores.\n")
+        el = time.time() - t0
+        summary = f"✅ Scored {grand} headlines in {el:.1f}s ({grand / el:.0f} hl/s)" if el > 0 else \
+                  f"✅ Scored {grand} headlines"
+        if provider == "openai":
+            summary += (f" | tokens: {_fmt_tok(ptok)} in + {_fmt_tok(ctok)} out = {_fmt_tok(ptok + ctok)}"
+                        f" | est cost ~${_est_cost(model, ptok, ctok):.4f}")
+        elif (ptok + ctok):
+            summary += f" | {_fmt_tok(ptok + ctok)} tokens"
+        print(summary + "\n")
     finally:
         db.close()
 
@@ -338,7 +406,7 @@ def collect_batch(batch_id, poll_seconds=20):
                        headers=_openai_headers(), timeout=120).text
     init_db()
     db = SessionLocal()
-    grand = 0
+    grand, ptok, ctok = 0, 0, 0
     try:
         for i, line in enumerate(out.splitlines()):
             if not line.strip():
@@ -350,8 +418,12 @@ def collect_batch(batch_id, poll_seconds=20):
                 continue
             ticker = cid.split("|")[0]
             try:
-                content = rec["response"]["body"]["choices"][0]["message"]["content"]
+                body = rec["response"]["body"]
+                content = body["choices"][0]["message"]["content"]
                 results = _parse_scores(content, len(chunk))
+                u = body.get("usage", {}) or {}
+                ptok += u.get("prompt_tokens", 0)
+                ctok += u.get("completion_tokens", 0)
             except Exception:
                 results = [(0.0, 0.0)] * len(chunk)
             _upsert_scores(db, _rows_for(ticker, [tuple(c) for c in chunk], results, model))
@@ -361,7 +433,9 @@ def collect_batch(batch_id, poll_seconds=20):
         db.commit()
     finally:
         db.close()
-    print(f"Batch {batch_id} ingested: {grand} headline scores.\n")
+    print(f"✅ Batch {batch_id} ingested: {grand} headline scores | "
+          f"tokens: {_fmt_tok(ptok)} in + {_fmt_tok(ctok)} out | "
+          f"est cost ~${_est_cost(model, ptok, ctok, batch=True):.4f} (Batch API, 50% off)\n")
 
 
 def fetch_and_score_batch(start=None, end=None, tickers=None, model=None):
