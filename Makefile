@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news news-llm insider fundamentals train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+.PHONY: help default install fetch backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
@@ -41,6 +41,7 @@ help:
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
 	@echo "  make fundamentals      - Ingest company financials (Polygon) & derived ratios [TICKERS=NVDA,BYND]"
+	@echo "  make classify          - Tier the universe by risk x fundamental-quality (quant + LLM)"
 	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]"
 	@echo "  make news-llm-batch    - Same via OpenAI Batch API (cheapest, unattended; needs OPENAI_API_KEY)"
 	@echo "  make news-llm-batch-collect BATCH_ID=<id> - Ingest a submitted batch's results"
@@ -112,6 +113,12 @@ fundamentals:
 	@echo "📊 Ingesting company fundamentals (Polygon/Massive financials) → ticker_fundamentals$(if $(TICKERS), [TICKERS=$(TICKERS)])..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) data_ingestion/fundamentals_fetcher.py $(if $(TICKERS),--tickers $(TICKERS))
+
+classify:
+	@echo "========================================================================"
+	@echo "🏷️  Classifying universe into risk × fundamental-quality tiers (quant + LLM overlay)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) -m ml_engine.classify --run-llm
 
 insider:
 	@echo "========================================================================"
