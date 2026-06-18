@@ -9,7 +9,7 @@ registry and polled for progress.
 
 | Method · Path | Returns |
 | :-- | :-- |
-| `GET /api/suggestions?mode&hedge_mode&date` | `{date, regime, hedge_mode, short_term_suggestions[], swing_suggestions[], long_term_allocation[]}`. The main daily output. `swing_suggestions` (the default tradeable book): per-equity `{ticker, close, action, confidence, stop_loss, take_profit, horizon_days, llm_news, llm_news_intensity, reasoning}`, top-N ranked. Cached, keyed on data freshness incl. the LLM-news count. |
+| `GET /api/suggestions?mode&hedge_mode&date` | `{date, regime, hedge_mode, short_term_suggestions[], swing_suggestions[], high_risk_suggestions[], long_term_allocation[]}`. The main daily output. `swing_suggestions` (the core swing book) and `high_risk_suggestions` (speculative book): per-equity `{ticker, close, action, confidence, stop_loss, take_profit, horizon_days, llm_news, llm_news_intensity, reasoning}`, top-N ranked. Cached, keyed on data freshness. |
 | `GET /api/sentiment?mode` | Latest per-ticker aggregate VADER sentiment. |
 | `GET /api/sentiment/sources?ticker&date&mode` | Individual article/Reddit/premium items + scores + links. |
 | `POST /api/sentiment/premium` | Ingest a paywalled article; VADER-scores it and recomputes aggregates. |
@@ -18,6 +18,7 @@ registry and polled for progress.
 | `GET /api/screener/volatile?refresh` | 30-day historical volatility for a candidate list (yfinance). |
 | `GET /api/health` | Service status (api/database/ollama/alpaca/scheduler/news_llm) + news coverage span + execution strategy. 12s cache. |
 | `GET /api/performance?mode` | Equity curve + metrics vs SPY/QQQ/BRK from `broker_performance_logs`. |
+| `GET /api/premium/value` | Forward predictive value metrics of premium-newsletter signals (e.g. The Information): coverage + hit-rate / directional edge. |
 
 ## Portfolio, universe & per-stock strategy
 
@@ -35,6 +36,8 @@ registry and polled for progress.
 | `POST /api/positions/liquidate?mode` `{ticker, shares}` | Sell N shares (partial/full) — real mode via Alpaca `close_position` (cancels the bracket OCO). |
 | `GET /api/holdings` · `POST /api/holdings` · `DELETE /api/holdings/{ticker}` | Manual holdings CRUD. |
 | `POST /api/account?mode` `{cash}` | Set the virtual account cash. |
+| `GET /api/classification` | Returns per-ticker risk × fundamental-quality tier details: `{ticker: {tier, quality, volatility, dd_2022, distressed, verdict, overridden}}`. |
+| `POST /api/classification/override` | Set manual tier override for a ticker: `{ticker, tier: 'core'\|'quality_growth'\|'speculative'\|'value_trap'\|null}`. |
 
 ## Suggester, validation & evaluation (background jobs)
 

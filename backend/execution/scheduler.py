@@ -27,7 +27,7 @@ from data_ingestion.macro_fetcher import fetch_macro_indicators
 from data_ingestion.sentiment_fetcher import fetch_sentiment
 from data_ingestion.news_llm import fetch_and_score as score_news_llm
 from ml_engine.models import train_models
-from ml_engine.swing_alpha import train_and_save as train_swing_model
+from ml_engine.swing_alpha import train_both as train_swing_model
 from execution.executor import run_execution
 from app.core.config import SWING_ENABLED
 

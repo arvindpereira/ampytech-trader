@@ -2809,8 +2809,17 @@ export default function Home() {
                   </div>
                 )}
 
+                {strategyConfig?.retrain?.retrain_recommended && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '8px 10px', marginBottom: '14px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    <ShieldAlert size={14} color="var(--color-gold)" style={{ flexShrink: 0 }} />
+                    <span>
+                      <strong style={{ color: 'var(--color-gold)' }}>Retrain recommended.</strong> Manual tier overrides have changed since the models were last trained. Retrain to bake them in.
+                    </span>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {([['swing', 'Swing model'], ['short_term', 'Short-term (XGBoost)'], ['regime_hmm', 'Regime (HMM)']] as const).map(([k, label]) => (
+                  {([['swing', 'Swing model (Core)'], ['swing_aggressive', 'Swing model (Aggressive)'], ['short_term', 'Short-term (XGBoost)'], ['regime_hmm', 'Regime (HMM)']] as const).map(([k, label]) => (
                     <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                       <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
                       <span style={{ fontWeight: 500 }}>{trainStatus?.models?.[k]?.last_trained ? `trained ${trainStatus.models[k].last_trained}` : '—'}</span>

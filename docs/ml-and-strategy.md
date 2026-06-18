@@ -45,13 +45,24 @@ Run via `make news-llm` or the scheduler; needs Ollama running locally.
 ## Swing model (`ml_engine/swing_alpha.py`)
 
 - `load_swing_data` builds daily features + LLM-news features + the horizon triple-barrier target.
-- `train_and_save` trains the production XGBoost on the full LLM-active window (now **2021→present,
-  ~54k samples incl. the 2022 bear**) and persists `saved_models/swing_model.json` + metadata
-  (feature columns, calibrated threshold, horizon).
-- `build_swing_signals` does inference for the latest date per equity, ranks by win-probability, caps
-  BUYs to `SWING_TOP_N` (10), and anchors stop/take-profit to the **live** price (so a stale-close
-  bracket can't be rejected). Served as `swing_suggestions` in `/api/suggestions`.
-- `backtest_swing_curve` / `swing_oos_frame` run the walk-forward OOS used by the evaluator + suggester.
+- **Two-Model Training**: `train_both` fits two models on the LLM-active window (2021→present):
+  - **Core model** (`saved_models/swing_model.json` + `swing_metadata.pkl`): Trained strictly on Hot (`quality_growth`), Solid (`core`), and Unrated names, isolating quality stocks.
+  - **Aggressive model** (`saved_models/swing_aggressive_model.json` + `swing_aggressive_metadata.pkl`): Trained on all tickers, including speculative names, to capture breakouts in high-volatility names.
+- `build_swing_signals` runs inference using the respective model (Core model for Hot/Solid/Unrated, Aggressive model for speculative Long-shot names), ranks by conviction, caps BUYs to `SWING_TOP_N` (10), and sizes brackets off live quotes. Core suggestions are output to `swing_suggestions`, while speculative ones go to `high_risk_suggestions`.
+- `backtest_swing_curve` / `swing_oos_frame` run the walk-forward OOS evaluation.
+
+## Risk × Quality Grid Classification (`ml_engine/classify.py`)
+
+To route tickers to the appropriate swing model and capital sleeve, the system classes the universe:
+1. **Quantitative Quality** (`fundamental_quality.py`): Scores company health (0-1 composite) based on revenues, gross margin, operating margin, net income, FCF margin, ROE, and debt-to-equity ratios.
+2. **LLM Qualitative Overlay** (`fundamental_llm.py`): Scans for qualitative adjustments to override mechanical ratio errors (e.g. FCF metrics for financial banks, negative book equity for Dell, or turnarounds and one-off profits).
+3. **Volatility & Bear Stress**: Measures trailing annualized daily-return volatility and maximum drawdown during the 2022 bear market.
+4. **Grid Mapping**: Blends quant (50%) and LLM (50%) quality scores, flags distressed names, and buckets tickers:
+   - **Hot (quality_growth)**: Quality $\ge 0.55$, volatility $\ge$ median. Routed to the Core swing model (accumulate dips).
+   - **Solid (core)**: Quality $\ge 0.55$, volatility $<$ median. Routed to the Core swing model.
+   - **Long-shot (speculative)**: Quality $< 0.55$ (or distressed), volatility $\ge$ median. Routed to the Aggressive swing model and restricted to the `high_risk` sleeve.
+   - **Cold (value_trap)**: Quality $< 0.55$, volatility $<$ median. Excluded from trading.
+Manual overrides (`tier_override`) can be set via `/api/classification/override` to bypass computed tiers.
 
 ## Long-term MPT (`ml_engine/longterm_alpha.py`, `models.py:PortfolioOptimizer`)
 
@@ -98,5 +109,7 @@ Full detail + tables: [strategy-evaluation-findings.md](./strategy-evaluation-fi
 `SWING_ENABLED`, `SWING_HORIZON_DAYS=5`, `SWING_TOP_N=10`, `SWING_POSITION_PCT=0.10`,
 `SWING_ATR_STOP_MULT`/`TP_MULT`/`STOP_MIN`/`STOP_MAX`; `EXECUTION_STRATEGY=swing`;
 `REGIME_OVERLAY_ENABLED` + `REGIME_SWING_FACTORS` (crisis ×0.25, transition ×0.6, growth ×1.0);
+`SWING_VOL_TARGET=0.35` (per-name volatility cap scaling; 0 to disable);
+`HIGH_RISK_CAP=0.05` (hard equity cap for the speculative high-risk sleeve);
 `OLLAMA_URL`, `LLM_MODEL`, `NEWS_LLM_START=2021-01-01`; `SERVED_MODEL=xgboost`; `MPT_WINDOW_DAYS=252`;
 `ALT_DATA_ENABLED=False`.

@@ -21,12 +21,19 @@ ampytech-trader/
 │   │   ├── price_fetcher.py      # Recent rolling 2-year yfinance daily bar fetcher
 │   │   ├── macro_fetcher.py      # FRED economic indicator fetcher (Fed Funds, Yield Spread)
 │   │   ├── crisis_fetcher.py     # Price history fetcher for historic market crisis eras
-│   │   └── sentiment_fetcher.py  # Reddit (PRAW), NewsAPI, and Premium news folder scanner
-│   ├── ml_engine/                # Machine learning training & feature logic
+│   │   ├── sentiment_fetcher.py  # Reddit (PRAW), NewsAPI, and Premium news folder scanner
+│   │   ├── fundamentals_fetcher.py # Polygon financials statement API fetcher
+│   │   ├── premium_ingest.py     # IMAP subscriber email scraper
+│   │   └── premium_llm.py        # LLM extractor for premium emails
+│   ├── ml_engine/                # Machine learning training, classification & feature logic
 │   │   ├── features.py           # Engineered features (technicals, macro, and sentiment SMAs)
-│   │   └── models.py             # XGBoost Breakout and HMM-based MPT Portfolio Allocator
+│   │   ├── fundamental_quality.py # Quantitative fundamental quality scoring
+│   │   ├── fundamental_llm.py    # LLM moat/durability quality overlay
+│   │   ├── classify.py           # Risk × quality grid classification
+│   │   ├── swing_alpha.py        # Core and aggressive swing XGBoost strategy engine
+│   │   └── models.py             # Short-term XGBoost and HMM-based MPT Portfolio Allocator
 │   ├── execution/                # Paper trade executor & scheduler
-│   │   ├── executor.py           # Sizing (Fractional Kelly) and stop-loss check loop
+│   │   ├── executor.py           # Sizing (volatility scaling) and stop-loss check loop
 │   │   └── scheduler.py          # Daily APScheduler loop (fetches data, updates recommendations)
 │   ├── run.py                    # Master CLI command runner
 │   └── requirements.txt          # Python dependencies
@@ -84,14 +91,18 @@ Now, open your web browser and navigate to: **`http://localhost:3002`**
 
 All backend operations are centralized under the `backend/run.py` master utility script:
 
-| CLI Command | Purpose | When to Use |
+| CLI Command / Make Target | Purpose | When to Use |
 | :--- | :--- | :--- |
-| `python run.py fetch` | Refreshes recent stock prices, FRED macro indices, scans for premium news, and processes active sentiment feeds. | Daily, before market open (around 09:00 ET). |
-| `python run.py train` | Retrains both the short-term XGBoost classifier and the long-term HMM model on the latest 2-year rolling window. | Weekly (every Sunday) or after major strategy configuration changes. |
-| `python run.py serve` | Launches the FastAPI backend API on `http://localhost:8008`. | Required to run concurrently with the frontend dashboard. |
-| `python run.py backtest` | Executes a historical backtest of the ML strategies via PyBroker and prints overall return, Sharpe ratio, and drawdown. | To audit theoretical strategy performance over the past 2 years. |
-| `python run.py simulate --days N` | Valuates the Virtual Broker forward using live cached prices for `N` trading days. | Daily, to watch how recommendations update and fill in real-time. |
-| `python run.py backtest-virtual --months N` | Replays `N` months of historical trading day-by-day inside the Virtual Broker (fills at next-day open). | To stress-test the executor's look-ahead free stop-loss/take-profit bracket orders. |
+| `python run.py fetch` / `make fetch` | Refreshes recent stock prices, FRED macro indices, scans for premium news, and processes active sentiment feeds. | Daily, before market open (around 09:00 ET). |
+| `make fundamentals` | Ingests company financials (Polygon financials API) and calculates derived balance sheet/income statement ratios. | As needed when adding new tickers or quarterly updates. |
+| `make classify` | Runs the risk × quality universe classification (blending quant ratios and LLM qualitative overlay) to assign tickers to routing tiers. | Weekly or after updating company financials/LLM flags. |
+| `python run.py train` / `make train` | Retrains the legacy short-term hourly XGBoost model and the daily HMM macro regime model. | Weekly (every Sunday). |
+| `python run.py swing-train` / `make swing-train` | Retrains both the **Core** swing model (on core/quality_growth/unrated names) and the **Aggressive** swing model (on all names). | Weekly, after running classification. |
+| `python run.py news-llm` / `make news-llm` | Scores news headlines using local Ollama (or OpenAI) to generate directional signals. | Daily or in bulk backfills. |
+| `make premium-ingest` | Polls IMAP subscriber email folder for premium newsletters (e.g. The Information) and LLM-extracts ticker sentiment impact. | Daily (via scheduler) or manually via files. |
+| `python run.py serve` / `make serve` | Launches FastAPI backend (port 8008) and Next.js frontend (port 3002). | Required to run the full dashboard web application. |
+| `python run.py simulate --days N` / `make simulate` | Valuates the Virtual Broker forward using live cached prices for `N` trading days. | Daily, to test real-time recommendation updates. |
+| `python run.py backtest-virtual --months N` / `make backtest-virtual` | Replays `N` months of historical trading day-by-day inside the Virtual Broker (fills at next-day open). | To stress-test stop-loss/take-profit brackets and capital sleeves. |
 
 ---
 
@@ -99,26 +110,34 @@ All backend operations are centralized under the `backend/run.py` master utility
 
 Here is a step-by-step product guide for each core workflow of the platform.
 
-### Workflow 1: Daily Ingestion & Automated Model Predictions
-This workflow updates the database with the latest market indicators and prepares trading recommendations for the day.
+### Workflow 1: Daily Ingestion, Classification & Model Predictions
+This workflow updates the database with market indicators, company financials, and sentiment data, then generates trading recommendations.
 
 1. **Scheduling**: In live production, the APScheduler daemon (`python run.py schedule`) handles this automatically.
-2. **Data Syncing**: The pipeline runs `fetch`, querying `yfinance` for daily OHLCV bars and the FRED API for the latest daily interest rates and yield spreads.
-3. **Rate Limit Protection**: The fetcher checks SQLite before hitting external APIs. If today's market bars and news sentiment metrics are already cached, it skips external requests, preventing free-tier API lockout.
+2. **Data Syncing**: The pipeline runs `fetch` to retrieve price bars and macro indicators. If needed, `make fundamentals` can be run to fetch company financials (revenues, FCF, assets, etc.) from Polygon.
+3. **Risk × Quality Classification**: Running `make classify` blends quantitative financial ratios and qualitative LLM overlays (e.g. flagging turnaround situations or adjusting for one-off gains) to tier the universe:
+   * **Hot (quality_growth)**: Strong fundamentals, high volatility.
+   * **Solid (core)**: Solid fundamentals, low volatility.
+   * **Long-shot (speculative)**: Weak fundamentals, high volatility.
+   * **Cold (value_trap)**: Weak fundamentals, low volatility (to be avoided).
 4. **Inference Execution**:
-   - The HMM model evaluates macro volatility to classify the current market regime (as `growth`, `transition`, or `crisis`).
-   - The short-term XGBoost model runs predictions for all universe tickers, calculating the probability of a $\ge 2\%$ breakout in the next 3 days.
-5. **Dashboard Reflection**: Refreshing the dashboard shows the updated suggestions under the **"Suggestions Dashboard"** tab.
+   * The HMM model evaluates macro volatility to classify the current market regime (as `growth`, `transition`, or `crisis`).
+   * The swing strategy runs predictions using two separate XGBoost models:
+     * **Core Model**: Trained on core, quality_growth, and unrated tickers. Used to trade stable, quality companies.
+     * **Aggressive Model**: Trained on all universe tickers. Used to find breakout signals in speculative ("Long-shot") tickers.
+5. **Dashboard Reflection**: Refreshing the dashboard shows the updated suggestions, displaying visual badges representing each stock's classification tier.
 
 ---
 
 ### Workflow 2: Understanding Dashboard Strategy Suggestions
-Open the dashboard and look at the **"Daily Strategy Recommendations"** panel. It has two strategies:
+Open the dashboard and look at the **"Daily Strategy Recommendations"** panel. It has two main strategies:
 
-#### A. Short-Term Volatility (Breakout Signal Table)
-* **Goal**: Target short-term price expansions.
-* **Mechanism**: Displays a table of target tickers, current close prices, ML recommendation (`BUY`, `SELL`, `HOLD`), confidence percentage (XGBoost probability), Stop-Loss, and Take-Profit limits.
-* **Kelly Sizing**: When executing, the system uses a **Fractional Kelly Criterion** (Half-Kelly) that scales position sizes based on historical signal win rates, capping risk at a maximum of `10%` of equity per position.
+#### A. Swing + News Suggestions (Split Core vs. Aggressive Sleeves)
+* **Goal**: Target multi-day price expansions driven by technical trends and LLM-scored news sentiment.
+* **Mechanism**: Displays recommendations (`BUY`, `HOLD`) and conviction percentages, split into:
+  * **Core Swing**: Suggester signals for Solid and Hot tickers using the Core swing model.
+  * **High-Risk Sleeve**: Speculative ("Long-shot") tickers evaluated by the Aggressive swing model.
+* **Volatility Sizing**: Instead of a raw fixed 10% sizing, position sizes are dynamically scaled downward for high-volatility names using a volatility target scaling factor: `min(1.0, SWING_VOL_TARGET / name_vol)` (where `SWING_VOL_TARGET` = 0.35). This prevents volatile names from dominating the portfolio risk. The total allocation to the speculative `high_risk` sleeve is hard-capped at 5% of total equity.
 
 #### B. Long-Term MPT Weights (Regime Allocator)
 * **Goal**: Optimize long-term asset weights for stable growth.

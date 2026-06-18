@@ -46,35 +46,41 @@ explorations are preserved at the bottom for history).
 
 ```mermaid
 flowchart LR
-    subgraph Ingest["1 · Ingestion (run.py fetch + news-llm)"]
-        P["price_fetcher<br/>hourly: Massive/Polygon ~5y<br/>daily: Yahoo 1998+"]
+    subgraph Ingest["1 · Ingestion (make fetch / fundamentals / premium-ingest)"]
+        P["price_fetcher<br/>hourly: Massive ~5y<br/>daily: Yahoo 1998+"]
         M[macro_fetcher<br/>treasury yields]
-        S[sentiment_fetcher<br/>news/Reddit/premium VADER]
-        N["news_llm<br/>Polygon news → Ollama LLM<br/>per-ticker directional score"]
+        S[sentiment_fetcher<br/>news/Reddit VADER]
+        N["news_llm<br/>headlines → Ollama/OpenAI"]
+        FUND["fundamentals_fetcher<br/>Polygon financials API"]
+        PREM["premium_ingest & premium_llm<br/>IMAP email newsletter scan"]
     end
-    DB[(SQLite<br/>prices · news_llm_scores<br/>universe+strategy · app_settings)]
-    subgraph ML["2 · Models (run.py train / swing-train)"]
-        F[features.py<br/>technicals + LLM-news + macro<br/>triple-barrier labels]
-        SW[Swing XGBoost<br/>daily + news]
+    DB[(SQLite DB<br/>prices · fundamentals<br/>classifications · news_llm_scores)]
+    subgraph ML["2 · Models & Classify (make classify / swing-train)"]
+        CLASS["classify.py<br/>quant ratios + LLM overlay"]
+        F[features.py<br/>technicals + LLM-news + macro]
+        SW_CORE["Swing Core XGBoost<br/>(Hot / Solid names)"]
+        SW_AGG["Swing Aggressive XGBoost<br/>(Speculative names)"]
         H[HMM regime + MPT optimizer]
-        X[legacy hourly XGBoost]
     end
-    subgraph Serve["3 · API (run.py serve)"]
-        API["FastAPI :8008<br/>/api/suggestions, /portfolio,<br/>/strategy/*, /evaluate, /health"]
+    subgraph Serve["3 · API (make serve)"]
+        API["FastAPI :8008<br/>/api/suggestions, /portfolio,<br/>/api/classification, /evaluate, /health"]
     end
     subgraph Exec["4 · Execution"]
-        BUCK["bucket-aware run_execution<br/>per-ticker strategy + regime overlay"]
+        BUCK["bucket-aware run_execution<br/>core vs speculative sleeves<br/>vol target scaling"]
         ALP[Alpaca paper API]
     end
     UI["Next.js :3002<br/>Suggestions · Model Evaluation · Portfolio"]
     SCH["scheduler.py<br/>daily + intraday + weekly retrain"]
     GD["Google Drive<br/>commit-stamped DB backups"]
 
-    P & M & S & N --> DB
-    DB --> F --> SW & H & X
-    SW & H & X -.saved models.-> API
+    P & M & S & N & FUND & PREM --> DB
+    DB --> CLASS
+    DB --> F
+    CLASS -.tier filtering.-> SW_CORE & SW_AGG
+    F --> SW_CORE & SW_AGG
+    SW_CORE & SW_AGG & H -.saved models.-> API
     DB --> API --> UI
-    UI -->|edit universe/buckets/strategy<br/>run suggest/eval/backup| API
+    UI -->|edit universe/buckets/strategy<br/>run suggest/eval/backup/overrides| API
     API --> BUCK --> ALP
     SCH --> DB & API & BUCK
     DB -. make db-backup .-> GD
@@ -84,17 +90,23 @@ flowchart LR
 
 ## Glossary
 
-- **Universe** — tickers the models evaluate. Stored in `universe_tickers` (each with a per-ticker
-  `strategy`); editable in the UI Portfolio tab.
-- **Swing + News** — the daily, multi-day strategy whose key feature is **LLM-scored news**; the
-  validated (in bull regimes) edge and the default tradeable strategy.
-- **Long-term MPT** — regime-aware max-Sharpe portfolio weights (the "rebalance" book).
-- **Short-term** — the legacy hourly XGBoost breakout signal; **net-negative**, kept for comparison only.
-- **Strategy suggester** — per-ticker recommender (swing / longterm / hold) with a self-validation step.
-- **Capital buckets** — user-set % of equity per strategy (`app_settings`); execution never exceeds them.
-- **Regime overlay** — auto-shrinks the swing bucket in `transition`/`crisis` HMM regimes.
+- **Universe** — Tickers the models evaluate. Stored in `universe_tickers` (each with a per-ticker `strategy`); editable in the UI Portfolio tab.
+- **Risk × Quality Tiers** — The four-tier classification grid defined in `classify.py` that decides stock routing:
+  - **Hot (quality_growth)** — Strong fundamentals, high volatility. Driven by the Core swing model (accumulate dips).
+  - **Solid (core)** — Solid fundamentals, lower volatility. Driven by the Core swing model (core holdings).
+  - **Long-shot (speculative)** — Weak fundamentals, high volatility. Routed to the **high-risk sleeve** using Aggressive swing model signals.
+  - **Cold (value_trap)** — Weak fundamentals, low volatility. Excluded from all active trading (avoided).
+- **Two-Model Swing Setup** — The split model execution path:
+  - **Core Swing Model** — XGBoost trained only on Hot, Solid, and Unrated tickers.
+  - **Aggressive Swing Model** — XGBoost trained on all tickers, used to generate suggestions for speculative Long-shot names.
+- **High-Risk Sleeve** — Capital allocation sleeve restricted to speculative Long-shot names under the aggressive model, capped at 5% of total equity (`HIGH_RISK_CAP`).
+- **Volatility Sizing** — Dynamic position scaling factor `min(1.0, SWING_VOL_TARGET / name_vol)` based on the stock's trailing volatility to cap absolute risk.
+- **Manual Overrides (`tier_override`)** — Database flag in `ticker_classification` allowing direct user placement of any ticker into a specific tier, bypassing computed models.
+- **Long-term MPT** — Regime-aware max-Sharpe portfolio weights (the "rebalance" book).
+- **Short-term** — The legacy hourly XGBoost breakout signal; **net-negative**, kept for comparison only.
+- **Strategy suggester** — Per-ticker recommender (swing / longterm / hold) with a self-validation step.
+- **Capital buckets** — User-set % of equity per strategy (`app_settings`); execution never exceeds them.
+- **Regime overlay** — Auto-shrinks the swing bucket in `transition`/`crisis` HMM regimes.
 - **Regime** — `growth` / `transition` / `crisis`, from a 3-state HMM on daily SPY volatility + macro.
-- **Mode (`real` vs `simulated`/`replay`)** — two isolated virtual accounts; `real` mirrors the Alpaca
-  paper book.
-- **Look-ahead-free / OOS** — walk-forward evaluation where models only see data before the test date;
-  LLM-news features are shifted +1 day (point-in-time).
+- **Mode (`real` vs `simulated`/`replay`)** — Two isolated virtual accounts; `real` mirrors the Alpaca paper book.
+- **Look-ahead-free / OOS** — Walk-forward evaluation where models only see data before the test date; LLM-news features are shifted +1 day (point-in-time).

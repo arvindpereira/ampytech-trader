@@ -1329,6 +1329,23 @@ def update_universe(req: UniverseRequest, db=Depends(get_db)):
     clear_suggestions_cache()
     return {"status": "success", "tickers": req.tickers}
 
+def _retrain_status(db):
+    """Whether tier overrides postdate the trained models (so a retrain would bake them in)."""
+    from app.database import TickerClassification, AppSetting
+    n_over = db.query(TickerClassification).filter(TickerClassification.tier_override.isnot(None)).count()
+    changed = db.query(AppSetting).filter(AppSetting.key == "tier_overrides_changed_at").first()
+    changed_at = changed.value if changed else None
+    trained_at = None
+    try:
+        from ml_engine.swing_alpha import load_swing_model
+        _, meta = load_swing_model()
+        trained_at = (meta or {}).get("trained_at")
+    except Exception:
+        pass
+    recommended = bool(n_over > 0 and changed_at and (not trained_at or changed_at > trained_at))
+    return {"override_count": n_over, "retrain_recommended": recommended,
+            "overrides_changed_at": changed_at, "models_trained_at": trained_at}
+
 @app.get("/api/strategy/config")
 def get_strategy_config(db=Depends(get_db)):
     """Bucket capital allocations + per-ticker strategy assignments + the live regime overlay."""
@@ -1346,6 +1363,7 @@ def get_strategy_config(db=Depends(get_db)):
         "swing_factor": factor,
         "effective_swing": round(buckets.get("swing", 0.0) * factor, 4),
         "overlay_active": factor < 1.0,
+        "retrain": _retrain_status(db),
     }
 
 class BucketsRequest(BaseModel):
@@ -1453,6 +1471,14 @@ def set_tier_override(req: TierOverrideRequest, db=Depends(get_db)):
     row.tier_override = req.tier
     if req.tier:
         row.tier = req.tier                       # immediate effect
+    # stamp when overrides last changed, so the UI can flag "retrain recommended" vs the trained models
+    from app.database import AppSetting
+    ts = datetime.now().isoformat(timespec="seconds")
+    stamp = db.query(AppSetting).filter(AppSetting.key == "tier_overrides_changed_at").first()
+    if stamp:
+        stamp.value = ts
+    else:
+        db.add(AppSetting(key="tier_overrides_changed_at", value=ts))
     db.commit()
     try:
         from ml_engine.classify import classify_universe   # re-derive effective tiers (no LLM, fast)
@@ -1663,10 +1689,10 @@ def _run_training_job(jid):
         _job_update(jid, progress=10, stage="Training XGBoost + HMM…")
         from ml_engine.models import train_models
         train_models()
-        _job_update(jid, progress=65, stage="Training swing model…")
+        _job_update(jid, progress=65, stage="Training swing models (core + aggressive)…")
         try:
-            from ml_engine.swing_alpha import train_and_save
-            train_and_save()
+            from ml_engine.swing_alpha import train_both
+            train_both()   # retrains BOTH the core + aggressive models on the current tiers
         except Exception as e:
             print(f"Swing retrain skipped: {e}")
         _job_update(jid, progress=100, stage="Complete", status="done")
@@ -1687,7 +1713,12 @@ def start_training():
 @app.get("/api/train/status")
 def training_status():
     """Last-trained time per served model (file mtime) + the current retrain job, if any."""
-    files = {"short_term": "short_term_model.json", "regime_hmm": "hmm_model.pkl", "swing": "swing_model.json"}
+    files = {
+        "short_term": "short_term_model.json",
+        "regime_hmm": "hmm_model.pkl",
+        "swing": "swing_model.json",
+        "swing_aggressive": "swing_aggressive_model.json"
+    }
     models = {}
     for key, fn in files.items():
         path = os.path.join(SAVED_MODELS_DIR, fn)

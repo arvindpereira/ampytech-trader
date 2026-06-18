@@ -16,22 +16,16 @@ make install            # backend venv + Python deps + frontend npm deps
 
 **Data**
 - `make fetch` — hourly+daily prices, macro, sentiment, crisis eras.
-- `make news-llm [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]` — LLM-score news for the swing
-  model. Default provider is local **Ollama** (free); `PROVIDER=openai` is a fast bulk backfill
-  (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`). Batches score concurrently.
-- `make news-llm-batch [START=… TICKERS=…]` — submit the same via OpenAI's **Batch API** (50% cheaper,
-  unattended, up to 24h); `make news-llm-batch-collect BATCH_ID=<id>` ingests it (resumable).
-- `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP,
-  LLM-extract per-ticker scores into the swing news feed. Set `IMAP_USER`/`IMAP_PASSWORD` (an
-  **app-password**, not your main password), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Runs in the daily
-  scheduler job when creds are present. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml`
-  (also `.html/.txt/.md`); preview without scoring: `make premium-ingest DRY_RUN=1`. Only content you
-  receive by email is read, and only derived scores (not article text) are stored.
+- `make fundamentals [TICKERS=NVDA,AAPL]` — fetch company financial statements (Polygon API) and calculate ratios.
+- `make classify` — tier the universe by risk × fundamental-quality (runs quantitative metrics + LLM overlay).
+- `make news-llm [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]` — LLM-score news for the swing model. Default provider is local **Ollama** (free); `PROVIDER=openai` is a fast bulk backfill (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`). Batches score concurrently.
+- `make news-llm-batch [START=… TICKERS=…]` — submit the same via OpenAI's **Batch API** (50% cheaper, unattended, up to 24h); `make news-llm-batch-collect BATCH_ID=<id>` ingests it (resumable).
+- `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP, LLM-extract per-ticker scores into the swing news feed. Set `IMAP_USER`/`IMAP_PASSWORD` (an **app-password**, not your main password), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Runs in the daily scheduler job when creds are present. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml` (also `.html/.txt/.md`); preview without scoring: `make premium-ingest DRY_RUN=1`. Only content you receive by email is read, and only derived scores (not article text) are stored.
 - `make insider` — real SEC Form 4 (only when `ALT_DATA_ENABLED`).
 
 **Models**
-- `make train [EPOCHS=]` — XGBoost (hourly) + HMM regime + PyTorch.
-- `make swing-train [SWING_HORIZON=5]` — train + save the served swing model.
+- `make train [EPOCHS=]` — XGBoost (hourly breakout) + HMM regime + PyTorch.
+- `make swing-train [SWING_HORIZON=5]` — train + save both the **Core** (`swing_model.json`) and **Aggressive** (`swing_aggressive_model.json`) swing models served in the UI.
 - `make walkforward [SPLITS=]` / `make calibrate` — honest OOS check / threshold calibration.
 - `make swing-eval` / `make longterm-eval` / `make longterm-tilt` — research evaluations.
 - `make backtest` — in-sample PyBroker audit.
@@ -64,9 +58,17 @@ as standalone processes and are resumable.
 ## 4. Retraining + restarting
 
 ```bash
-# retrain the served models, then restart the servers (scheduler can stay up):
-cd backend && venv/bin/python3 ml_engine/models.py --train   # XGBoost + HMM
-make swing-train                                             # swing (now trains on 2021→present)
+# 1. retrain legacy hourly XGBoost + daily HMM regime models:
+cd backend && venv/bin/python3 ml_engine/models.py --train
+
+# 2. refresh company financials & risk-quality classification:
+make fundamentals
+make classify
+
+# 3. train production Core and Aggressive swing models on 2021→present:
+make swing-train
+
+# 4. restart servers (scheduler can stay up):
 make serve-backend    # in one terminal
 make serve-frontend   # in another
 # verify: http://localhost:8008/api/train/status  +  http://localhost:8008/api/health
