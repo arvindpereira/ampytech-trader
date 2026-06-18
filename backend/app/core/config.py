@@ -161,6 +161,11 @@ IMAP_PASSWORD = os.getenv("IMAP_PASSWORD", "")           # use an app-password, 
 IMAP_FOLDER = os.getenv("IMAP_FOLDER", "INBOX")
 PREMIUM_SENDER = os.getenv("PREMIUM_SENDER", "theinformation.com")   # From-address filter
 PREMIUM_SOURCE_TAG = os.getenv("PREMIUM_SOURCE_TAG", "the-information")
+# Skip recurring digest/community emails (substring match on subject, case-insensitive) — they're not
+# single-story articles and just burn scoring calls. Comma-separated; override to taste.
+PREMIUM_SKIP_SUBJECTS = os.getenv(
+    "PREMIUM_SKIP_SUBJECTS",
+    "Top Posts Today,The Briefing,Monday Readout,Weekend Readout,The Information Finance")
 PREMIUM_LLM_MODEL = os.getenv("PREMIUM_LLM_MODEL", "")   # "" -> OPENAI_MODEL (key set) else LLM_MODEL
 PREMIUM_BODY_CHARS = int(os.getenv("PREMIUM_BODY_CHARS", "8000"))    # chars of article body sent to LLM
 PREMIUM_REL_MIN = float(os.getenv("PREMIUM_REL_MIN", "0.2"))         # drop low-relevance mentions

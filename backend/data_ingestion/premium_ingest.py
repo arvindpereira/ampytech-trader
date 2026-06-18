@@ -27,9 +27,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import (
     IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASSWORD, IMAP_FOLDER,
-    PREMIUM_SENDER, PREMIUM_SOURCE_TAG,
+    PREMIUM_SENDER, PREMIUM_SOURCE_TAG, PREMIUM_SKIP_SUBJECTS,
 )
 from data_ingestion.premium_llm import ingest_article
+
+_SKIP = [p.strip().lower() for p in (PREMIUM_SKIP_SUBJECTS or "").split(",") if p.strip()]
+
+
+def _is_skipped(subject):
+    s = (subject or "").lower()
+    return any(p in s for p in _SKIP)
 
 _STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "data", "premium_ingest_state.json")
@@ -141,7 +148,7 @@ def ingest_imap(days=7, dry_run=False):
     print(f"🔎 {len(ids)} message(s) from {PREMIUM_SENDER} since {since}.")
 
     seen = _load_state()
-    new_count, total_scores = 0, 0
+    new_count, total_scores, skipped = 0, 0, 0
     for num in ids:
         typ, mdata = M.fetch(num, "(RFC822)")
         if not mdata or not mdata[0]:
@@ -151,6 +158,11 @@ def ingest_imap(days=7, dry_run=False):
         if mid in seen:
             continue
         subject, date = _decode(msg.get("Subject", "(no subject)")), _msg_date(msg)
+        if _is_skipped(subject):
+            skipped += 1
+            if dry_run:
+                print(f"   ⊘ {date}  {subject[:80]}   (skipped: digest)")
+            continue
         if dry_run:
             print(f"   • {date}  {subject[:90]}")
             continue
@@ -164,7 +176,10 @@ def ingest_imap(days=7, dry_run=False):
         total_scores += len(accepted)
     if not dry_run:
         _save_state(seen)
-        print(f"✅ Ingested {new_count} new email(s) → {total_scores} ticker score(s) into news_llm_scores.")
+        print(f"✅ Ingested {new_count} new email(s) → {total_scores} ticker score(s) into "
+              f"news_llm_scores ({skipped} digest email(s) skipped).")
+    else:
+        print(f"   ({skipped} digest email(s) would be skipped.)")
     M.logout()
 
 
