@@ -2150,6 +2150,29 @@ export default function Home() {
                     </table>
                   </div>
 
+                  {llmUsage.by_purpose && Object.keys(llmUsage.by_purpose).length > 0 && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '6px' }}>By purpose</div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="trade-table">
+                          <thead><tr><th>Purpose</th><th>Calls</th><th>API reqs</th><th>Input tok</th><th>Output tok</th><th>Est. cost</th></tr></thead>
+                          <tbody>
+                            {Object.entries(llmUsage.by_purpose).sort((a: any, b: any) => b[1].est_cost - a[1].est_cost).map(([purpose, v]: [string, any]) => (
+                              <tr key={purpose}>
+                                <td style={{ fontWeight: 600 }}>{purpose}</td>
+                                <td>{v.calls.toLocaleString()}</td>
+                                <td>{v.requests.toLocaleString()}</td>
+                                <td>{v.prompt_tokens.toLocaleString()}</td>
+                                <td>{v.completion_tokens.toLocaleString()}</td>
+                                <td>{v.est_cost > 0 ? `~$${v.est_cost.toFixed(4)}` : <span style={{ color: 'var(--text-secondary)' }}>free / local</span>}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ marginTop: '16px', padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)' }}>
                     <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '8px' }}>Calibrate against your real OpenAI cost</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>

@@ -105,7 +105,7 @@ def usage_summary(since=None):
     calibration). Returns {by_model, totals, pricing, since}."""
     from app.database import SessionLocal, LLMUsage
     pricing = load_pricing()
-    by_model = {}
+    by_model, by_purpose = {}, {}
     tot = {"calls": 0, "requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "est_cost": 0.0}
     db = SessionLocal()
     try:
@@ -116,8 +116,10 @@ def usage_summary(since=None):
             m = by_model.setdefault(r.model, {"provider": r.provider, "calls": 0, "requests": 0,
                                               "prompt_tokens": 0, "completion_tokens": 0,
                                               "est_cost": 0.0, "priced": _rate(r.model, pricing) is not None})
+            p = by_purpose.setdefault(r.purpose or "other", {"calls": 0, "requests": 0,
+                                      "prompt_tokens": 0, "completion_tokens": 0, "est_cost": 0.0})
             c = estimate_cost(r.model, r.prompt_tokens, r.completion_tokens, batch=r.batch, pricing=pricing) or 0.0
-            for agg in (m, tot):
+            for agg in (m, p, tot):
                 agg["calls"] += 1
                 agg["requests"] += r.requests or 1
                 agg["prompt_tokens"] += r.prompt_tokens or 0
@@ -125,7 +127,7 @@ def usage_summary(since=None):
                 agg["est_cost"] += c
     finally:
         db.close()
-    return {"by_model": by_model, "totals": tot, "pricing": pricing, "since": since}
+    return {"by_model": by_model, "by_purpose": by_purpose, "totals": tot, "pricing": pricing, "since": since}
 
 
 def calibrate_model(model, actual_cost, since=None):
