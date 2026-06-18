@@ -151,6 +151,11 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")       # cheap, fast, reliable JSON mode
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+# A more powerful model writes the plain-English "expert interpretation" of evaluation runs (Model
+# Evaluation tab). Configurable so you can point it at whatever strong model you have access to.
+OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-5.5")
+EXPERT_INTERP_ENABLED = os.getenv("EXPERT_INTERP_ENABLED", "true").lower() == "true"
+
 # --- Swing (multi-day) strategy ---------------------------------------------------------------
 # The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
 # features add a real portfolio-level edge (higher return/Sharpe, lower drawdown) over a technicals-only

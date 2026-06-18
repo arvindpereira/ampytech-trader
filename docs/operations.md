@@ -7,7 +7,9 @@ make install            # backend venv + Python deps + frontend npm deps
 # Fill backend/.env: MASSIVE_API_KEY (Polygon), ALPACA_API_KEY/SECRET (paper), FRED, Reddit (optional),
 #                    GOOGLE_OAUTH_CLIENT_ID/SECRET (for DB backup). Defaults point Alpaca at paper.
 # Install + run Ollama locally with the LLM_MODEL (default gemma4:e4b) for news scoring.
-# Optional: OPENAI_API_KEY to use OpenAI for fast bulk news backfills (else local Ollama is used).
+# Optional: OPENAI_API_KEY to use OpenAI for fast bulk news backfills (else local Ollama is used) and
+#           to write the Model-Evaluation "expert interpretation" (OPENAI_EXPERT_MODEL, default gpt-5.5;
+#           disable with EXPERT_INTERP_ENABLED=false).
 ```
 
 ## 2. Day-to-day commands (Makefile → `run.py` / scripts)

@@ -42,7 +42,8 @@ registry and polled for progress.
 | :-- | :-- |
 | `POST /api/strategy/suggest?oos_start` → `GET /api/strategy/suggest/result?job_id` | Per-ticker recommendations `{ticker, recommended, confidence, rationale, swing/news/longterm/bear_2022, …}` + counts. |
 | `POST /api/strategy/validate?oos_start` → `GET /api/strategy/validate/result?job_id` | Blended-OOS backtest of current vs suggested (vs 30/60) assignments + a verdict. |
-| `POST /api/evaluate` `{strategies, splits, use_allocation, start_date, end_date, oos_start}` → `GET /api/evaluate/result?job_id` | Growth-of-$100k curves + metrics for the strategies, blended, and SPY/QQQ/BRK; `caveats` + `mode`. |
+| `POST /api/evaluate` `{strategies, splits, use_allocation, start_date, end_date, oos_start}` → `GET /api/evaluate/result?job_id` | Growth-of-$100k curves + metrics for the strategies, blended, and SPY/QQQ/BRK; `caveats` + `mode`. When `EXPERT_INTERP_ENABLED` + `OPENAI_API_KEY`, the result also carries `interpretation` — a powerful model's (`OPENAI_EXPERT_MODEL`) plain-English, honest read (tldr / what_was_tested / key_findings / strengths / weaknesses / shortcomings / verdict). |
+| `POST /api/evaluate/interpret?job_id` | Re-generate the expert interpretation for a finished evaluation. |
 | `GET /api/jobs` | Active + recently-finished background jobs (for progress bars). |
 | `POST /api/train/start` → `GET /api/train/status` | Retrain XGBoost+HMM+swing in the background; status reports each served model's last-trained time + progress. |
 

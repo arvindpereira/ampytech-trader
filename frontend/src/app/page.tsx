@@ -21,7 +21,12 @@ import {
   Play,
   RotateCcw,
   Cpu,
-  Clock
+  Clock,
+  Brain,
+  ThumbsUp,
+  ThumbsDown,
+  AlertTriangle,
+  CheckCircle2
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -157,6 +162,8 @@ export default function Home() {
   const [evalRunning, setEvalRunning] = useState<boolean>(false);
   const [evalProgress, setEvalProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [evalResult, setEvalResult] = useState<any>(null);
+  const [evalJobId, setEvalJobId] = useState<string | null>(null);
+  const [interpLoading, setInterpLoading] = useState<boolean>(false);
   const [evalWindow, setEvalWindow] = useState<string>('none');
   const [evalCustom, setEvalCustom] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [evalOosStart, setEvalOosStart] = useState<string>('');
@@ -378,6 +385,7 @@ export default function Home() {
         body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos }),
       });
       const { job_id } = await res.json();
+      setEvalJobId(job_id);
       const poll = async () => {
         try {
           const r = await fetch(`http://localhost:8008/api/evaluate/result?job_id=${job_id}`);
@@ -389,6 +397,16 @@ export default function Home() {
       };
       poll();
     } catch (err) { console.error(err); setEvalRunning(false); }
+  };
+
+  const regenerateInterpretation = async () => {
+    if (!evalJobId) return;
+    setInterpLoading(true);
+    try {
+      const r = await fetch(`http://localhost:8008/api/evaluate/interpret?job_id=${evalJobId}`, { method: 'POST' });
+      const d = await r.json();
+      if (d.interpretation) setEvalResult((prev: any) => ({ ...prev, interpretation: d.interpretation }));
+    } catch (err) { console.error(err); } finally { setInterpLoading(false); }
   };
 
   const handleAddStock = async () => {
@@ -1850,6 +1868,62 @@ export default function Home() {
                 </ul>
               </div>
             )}
+
+            {evalResult && evalResult.interpretation && (() => {
+              const it = evalResult.interpretation;
+              const s = it.sections;
+              const label: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '6px' };
+              const para: React.CSSProperties = { margin: 0, fontSize: '13.5px', lineHeight: '1.65', color: 'var(--text-secondary)' };
+              const ul: React.CSSProperties = { margin: 0, paddingLeft: '20px', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.65', display: 'flex', flexDirection: 'column', gap: '4px' };
+              return (
+                <div className="glass-card" style={{ marginBottom: '24px', border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)' }}>
+                      <Brain size={20} color="#a78bfa" /> Expert Interpretation
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {it.model && <span>{it.model}{it.tokens ? ` · ${it.tokens.toLocaleString()} tok` : ''}{typeof it.cost === 'number' ? ` · ~$${it.cost.toFixed(3)}` : ''}</span>}
+                      <button onClick={regenerateInterpretation} disabled={interpLoading}
+                        style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', padding: '4px 10px', borderRadius: '6px', cursor: interpLoading ? 'default' : 'pointer', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.35)', color: 'var(--text-primary)' }}>
+                        <RefreshCw size={12} className={interpLoading ? 'animate-spin' : ''} /> {interpLoading ? 'Thinking…' : 'Regenerate'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {it.error ? (
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>{it.error}</div>
+                  ) : s ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                      {s.tldr && (
+                        <div style={{ fontSize: '14.5px', lineHeight: '1.65', color: 'var(--text-primary)', padding: '12px 14px', borderRadius: '8px', background: 'rgba(139,92,246,0.10)', borderLeft: '3px solid #a78bfa' }}>{s.tldr}</div>
+                      )}
+                      {s.what_was_tested && (
+                        <div><div style={label}>What was tested</div><p style={para}>{s.what_was_tested}</p></div>
+                      )}
+                      {Array.isArray(s.key_findings) && s.key_findings.length > 0 && (
+                        <div><div style={label}>Key findings</div><ul style={ul}>{s.key_findings.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '18px' }}>
+                        {Array.isArray(s.strengths) && s.strengths.length > 0 && (
+                          <div><div style={{ ...label, color: 'var(--color-buy)' }}><ThumbsUp size={14} /> Strengths</div><ul style={ul}>{s.strengths.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                        )}
+                        {Array.isArray(s.weaknesses) && s.weaknesses.length > 0 && (
+                          <div><div style={{ ...label, color: 'var(--color-sell)' }}><ThumbsDown size={14} /> Weaknesses</div><ul style={ul}>{s.weaknesses.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                        )}
+                      </div>
+                      {Array.isArray(s.shortcomings) && s.shortcomings.length > 0 && (
+                        <div><div style={{ ...label, color: 'var(--color-gold)' }}><AlertTriangle size={14} /> Shortcomings of this study</div><ul style={ul}>{s.shortcomings.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                      )}
+                      {s.verdict && (
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', padding: '12px 14px', borderRadius: '8px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
+                          <CheckCircle2 size={18} color="var(--color-buy)" style={{ flexShrink: 0, marginTop: '1px' }} /> <span>{s.verdict}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
 
             {evalResult && evalResult.series && evalResult.series.length > 0 && (
               <>
