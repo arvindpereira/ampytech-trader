@@ -17,6 +17,7 @@ Usage:
 """
 import os
 import sys
+import time
 import argparse
 import subprocess
 from datetime import datetime
@@ -77,10 +78,30 @@ def _service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
+def _exec(req, tries=4):
+    """Execute a Drive request, retrying transient failures — including Google's edge-level HTML
+    'Error 400 (Bad Request)!!1' / 5xx hiccups (which arrive as HTML, not a real JSON API error)."""
+    from googleapiclient.errors import HttpError
+    for i in range(tries):
+        try:
+            return req.execute()
+        except HttpError as e:
+            status = int(getattr(e.resp, "status", 0) or 0)
+            content = e.content if isinstance(e.content, (bytes, bytearray)) else (e.content or b"")
+            is_html = b"<html" in (content.lower() if isinstance(content, (bytes, bytearray)) else b"")
+            transient = is_html or status in (429, 500, 502, 503, 504)
+            if transient and i < tries - 1:
+                wait = 2 ** i
+                print(f"  Drive API transient error ({status or 'edge'}); retrying in {wait}s…")
+                time.sleep(wait)
+                continue
+            raise
+
+
 def _list(svc):
     q = f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and name contains '{PREFIX}' and trashed=false"
-    res = svc.files().list(q=q, orderBy="createdTime desc",
-                           fields="files(id,name,size,createdTime,appProperties)", pageSize=200).execute()
+    res = _exec(svc.files().list(q=q, orderBy="createdTime desc",
+                                 fields="files(id,name,size,createdTime,appProperties)", pageSize=200))
     return res.get("files", [])
 
 
@@ -104,12 +125,17 @@ def backup(keep=None):
           f"{' (dirty tree!)' if dirty else ''} → folder {GOOGLE_DRIVE_FOLDER_ID}…")
     if dirty:
         print("  ⚠ working tree has uncommitted changes — this backup's 'commit' stamp is approximate.")
-    f = svc.files().create(body=meta, media_body=media, fields="id,name").execute()
+    f = _exec(svc.files().create(body=meta, media_body=media, fields="id,name"))
     print(f"✓ Backed up: {f['name']} (id {f['id']})")
     if keep:
-        for old in _list(svc)[keep:]:
-            svc.files().delete(fileId=old["id"]).execute()
-            print(f"  pruned old backup {old['name']}")
+        # The backup is already safely uploaded — never let prune-of-old-backups turn a successful
+        # backup into a failure (e.g. a transient Drive 400 on the list/delete calls).
+        try:
+            for old in _list(svc)[keep:]:
+                _exec(svc.files().delete(fileId=old["id"]))
+                print(f"  pruned old backup {old['name']}")
+        except Exception as e:
+            print(f"  ⚠ backup OK, but pruning old backups failed (will retry next run): {str(e)[:140]}")
 
 
 def list_backups():
