@@ -3,7 +3,7 @@
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
-EPOCHS ?= 100
+EPOCHS ?= 10
 DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
