@@ -20,6 +20,7 @@ import email
 import imaplib
 import argparse
 from email.utils import parsedate_to_datetime
+from email.header import decode_header, make_header
 from datetime import datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +33,16 @@ from data_ingestion.premium_llm import ingest_article
 
 _STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "data", "premium_ingest_state.json")
+
+
+def _decode(s):
+    """Decode a MIME-encoded header (=?UTF-8?...?=) into a readable string."""
+    if not s:
+        return ""
+    try:
+        return str(make_header(decode_header(s))).strip()
+    except Exception:
+        return s
 
 
 def _html_to_text(html):
@@ -102,7 +113,7 @@ def ingest_file(path):
     raw = open(path, "rb").read()
     if path.lower().endswith(".eml"):
         msg = email.message_from_bytes(raw)
-        title, body, date = msg.get("Subject", os.path.basename(path)), _email_body(msg), _msg_date(msg)
+        title, body, date = _decode(msg.get("Subject", os.path.basename(path))), _email_body(msg), _msg_date(msg)
     else:
         text = raw.decode("utf-8", errors="replace")
         body = _html_to_text(text) if path.lower().endswith((".html", ".htm")) else text
@@ -139,7 +150,7 @@ def ingest_imap(days=7, dry_run=False):
         mid = msg.get("Message-ID") or f"{msg.get('Date','')}|{msg.get('Subject','')}"
         if mid in seen:
             continue
-        subject, date = msg.get("Subject", "(no subject)"), _msg_date(msg)
+        subject, date = _decode(msg.get("Subject", "(no subject)")), _msg_date(msg)
         if dry_run:
             print(f"   • {date}  {subject[:90]}")
             continue
