@@ -86,6 +86,30 @@ def intraday_news_scoring_job():
     except Exception as e:
         print(f"Error during Intraday LLM News Scoring: {e}")
 
+def intraday_price_fetch_job():
+    """Fetches intraday prices every 5 minutes during market hours so suggestions and models are current."""
+    print(f"\n[{datetime.now()}] Triggering Intraday Price Fetch Job...")
+    try:
+        fetch_recent_prices()
+
+        # Clear suggestions cache and pre-populate
+        try:
+            from app.main import get_daily_suggestions, clear_suggestions_cache
+            from app.database import SessionLocal
+            clear_suggestions_cache()
+            db = SessionLocal()
+            try:
+                get_daily_suggestions(date=None, db=db)
+            finally:
+                db.close()
+            print("Suggestions cache cleared and refreshed with fresh prices.")
+        except Exception as e:
+            print(f"Signal re-run after price fetch failed: {e}")
+
+        print("Intraday Price Fetch completed successfully.")
+    except Exception as e:
+        print(f"Error during Intraday Price Fetch: {e}")
+
 def heartbeat_job():
     _write_heartbeat()
 
@@ -185,7 +209,15 @@ def main():
             name="Intraday LLM news scoring + swing re-execution (hourly, market hours)"
         )
 
-    # 6. Liveness heartbeat (every minute) so /api/health can report the daemon as up.
+    # 6. Intraday price fetch — every 5 minutes during market hours Monday-Friday (9 AM to 5 PM Eastern)
+    scheduler.add_job(
+        intraday_price_fetch_job,
+        trigger=CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*/5", timezone=market_tz),
+        id="intraday_price_fetch",
+        name="Fetch intraday prices (every 5 minutes, market hours)"
+    )
+
+    # 7. Liveness heartbeat (every minute) so /api/health can report the daemon as up.
     scheduler.add_job(heartbeat_job, trigger=IntervalTrigger(seconds=60),
                       id="heartbeat", name="Scheduler liveness heartbeat")
     _write_heartbeat()

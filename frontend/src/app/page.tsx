@@ -20,7 +20,8 @@ import {
   Unlock,
   Play,
   RotateCcw,
-  Cpu
+  Cpu,
+  Clock
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -72,6 +73,13 @@ interface SwingSuggestion {
 interface Allocation {
   ticker: string;
   weight: number;
+  current_shares?: number;
+  entry_price?: number;
+  current_price?: number;
+  current_value?: number;
+  target_shares?: number;
+  target_value?: number;
+  suggested_action?: string;
 }
 
 interface Holding {
@@ -95,7 +103,7 @@ interface VirtualPosition {
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor'>('dashboard');
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'swing' | 'long_term'>('short_term');
-  const [appMode, setAppMode] = useState<'real' | 'simulated'>('real');
+  const appMode = 'real';
   const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
   const [loading, setLoading] = useState<boolean>(true);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
@@ -111,10 +119,10 @@ export default function Home() {
   const [perfCurve, setPerfCurve] = useState<any[]>([]);
   const [perfMode, setPerfMode] = useState<'live' | 'replay'>('live');
   const [metrics, setMetrics] = useState({
-    total_return: 0.285,
-    sharpe_ratio: 1.78,
-    max_drawdown: -0.114,
-    win_rate: 0.58
+    total_return: 0.0,
+    sharpe_ratio: 0.0,
+    max_drawdown: 0.0,
+    win_rate: 0.0
   });
 
   // Benchmark visibility states for chart
@@ -175,6 +183,7 @@ export default function Home() {
   const [loadingSources, setLoadingSources] = useState<boolean>(false);
   const [priceSummary, setPriceSummary] = useState<any[]>([]);
   const [expandedTicker, setExpandedTicker] = useState<string>('');
+  const [expandedAlloc, setExpandedAlloc] = useState<string>('');
   const [llmNews, setLlmNews] = useState<any[]>([]);
   const [health, setHealth] = useState<any>(null);
   const [premiumForm, setPremiumForm] = useState({
@@ -193,18 +202,10 @@ export default function Home() {
         const data = await res.json();
         setSentSources(data.sources || []);
       } else {
-        if (appMode !== 'real') {
-          loadMockSources(ticker);
-        } else {
-          setSentSources([]);
-        }
-      }
-    } catch (err) {
-      if (appMode !== 'real') {
-        loadMockSources(ticker);
-      } else {
         setSentSources([]);
       }
+    } catch (err) {
+      setSentSources([]);
     } finally {
       setLoadingSources(false);
     }
@@ -452,14 +453,6 @@ export default function Home() {
     }
   };
 
-  const loadMockSources = (ticker: string) => {
-    setSentSources([
-      { id: 1, source: "reddit", title: `Options volume surges for ${ticker} on breakout rumors`, text: "Check out the option chains for next Friday calls...", url: "https://www.reddit.com/r/wallstreetbets", score: 0.61 },
-      { id: 2, source: "news", title: `Technical charts indicate strong support for ${ticker}`, text: "Brokers raise price target estimates following recent supply data.", url: "https://finance.yahoo.com", score: 0.38 },
-      { id: 3, source: "premium", title: `The Information: ${ticker} prepares new product trials`, text: "Subscription report: Trial runs are scheduled to begin next week in select markets.", url: "local-premium-upload", score: 0.54 }
-    ]);
-  };
-
   const handlePremiumSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPremiumStatus('Analyzing content...');
@@ -480,8 +473,7 @@ export default function Home() {
           setPremiumStatus('Failed to upload article.');
         }
       } else {
-        setPremiumStatus('Success! Score: +0.45 (Local mock mode)');
-        setPremiumForm({ ticker: 'AAPL', title: '', text: '', url: '' });
+        setPremiumStatus('Backend offline: cannot upload article.');
       }
     } catch (err) {
       setPremiumStatus('Error occurred during submission.');
@@ -567,18 +559,14 @@ export default function Home() {
     } catch (err) {
       console.warn("FastAPI backend is offline.");
       setBackendOnline(false);
-      if (appMode !== 'real') {
-        loadMockData();
-      } else {
-        setSuggestions([]);
-        setAllocations([]);
-        setHoldings([]);
-        setVirtualPositions([]);
-        setPerfCurve([]);
-        setSentimentList([]);
-        setPriceSummary([]);
-        setPortfolio(null);
-      }
+      setSuggestions([]);
+      setAllocations([]);
+      setHoldings([]);
+      setVirtualPositions([]);
+      setPerfCurve([]);
+      setSentimentList([]);
+      setPriceSummary([]);
+      setPortfolio(null);
     } finally {
       setLoading(false);
     }
@@ -590,92 +578,6 @@ export default function Home() {
       fetchLlmNews(expandedTicker);
     }
   }, [expandedTicker, backendOnline, appMode]);
-
-  const loadMockData = () => {
-    setDate(new Date().toISOString().split('T')[0]);
-    setRegime('growth');
-
-    // Simulate short term recommendations
-    const mockSuggestions: ShortTermSuggestion[] = [
-      { ticker: "TSLA", close: 178.4, action: "BUY", confidence: 0.74, stop_loss: 169.5, take_profit: 200.7, reasoning: "Strong momentum breakout supported by social sentiment spikes on Reddit." },
-      { ticker: "NVDA", close: 1150.2, action: "BUY", confidence: 0.68, stop_loss: 1098.0, take_profit: 1280.0, reasoning: "Technicals show strong trend indicators following positive news sentiment polarity." },
-      { ticker: "AAPL", close: 192.25, action: "HOLD", confidence: 0.51, stop_loss: null, take_profit: null, reasoning: "Consolidating within standard technical trading ranges." },
-      { ticker: "JPM", close: 198.5, action: "HOLD", confidence: 0.48, stop_loss: null, take_profit: null, reasoning: "Volume signals normal levels, no breakout indicator present." },
-      { ticker: "XOM", close: 114.3, action: "SELL", confidence: 0.38, stop_loss: null, take_profit: null, reasoning: "Negative technical divergence indicates impending short-term correction." }
-    ];
-    setSuggestions(mockSuggestions);
-
-    // Simulate long term allocations
-    const mockAllocations: Allocation[] = [
-      { ticker: "MSFT", weight: 0.18 },
-      { ticker: "AMZN", weight: 0.15 },
-      { ticker: "GOOGL", weight: 0.12 },
-      { ticker: "LLY", weight: 0.10 },
-      { ticker: "UNH", weight: 0.08 },
-      { ticker: "AAPL", weight: 0.07 },
-      { ticker: "CASH", weight: 0.30 }
-    ];
-    setAllocations(mockAllocations);
-
-    // Simulate universe
-    setUniverseTickers(["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B"]);
-
-    // Simulate holdings
-    setHoldings([
-      { ticker: "AAPL", quantity: 50, entry_price: 180.5, policy: "rebalance" },
-      { ticker: "MSFT", quantity: 20, entry_price: 410.2, policy: "lock" },
-      { ticker: "TSLA", quantity: 40, entry_price: 190.0, policy: "liquidate" }
-    ]);
-
-    setVirtualPositions([
-      { symbol: "AAPL", qty: "50.0", avg_entry_price: "180.50", market_value: "9612.50", cost_basis: "9025.00", unrealized_pl: "587.50", unrealized_plpc: "0.065", current_price: "192.25" },
-      { symbol: "MSFT", qty: "20.0", avg_entry_price: "410.20", market_value: "8300.00", cost_basis: "8204.00", unrealized_pl: "96.00", unrealized_plpc: "0.012", current_price: "415.00" },
-      { symbol: "TSLA", qty: "40.0", avg_entry_price: "190.00", market_value: "7136.00", cost_basis: "7600.00", unrealized_pl: "-464.00", unrealized_plpc: "-0.061", current_price: "178.40" }
-    ]);
-
-    // Generate mock performance curve
-    const mockCurve = [];
-    let pVal = 100000;
-    let sVal = 100000;
-    let qVal = 100000;
-    let bVal = 100000;
-    const baseDate = new Date();
-    baseDate.setDate(baseDate.getDate() - 100);
-
-    for (let i = 0; i < 100; i++) {
-      const d = new Date(baseDate);
-      d.setDate(d.getDate() + i);
-
-      const s_ret = Math.sin(i / 12) * 0.004 + (Math.random() - 0.5) * 0.018;
-      const q_ret = s_ret * 1.25 + (Math.random() - 0.5) * 0.01;
-      const b_ret = s_ret * 0.65 + (Math.random() - 0.5) * 0.008;
-      const p_ret = s_ret * 0.7 + 0.0016 + (Math.random() - 0.44) * 0.01;
-
-      pVal *= (1.0 + p_ret);
-      sVal *= (1.0 + s_ret);
-      qVal *= (1.0 + q_ret);
-      bVal *= (1.0 + b_ret);
-
-      mockCurve.push({
-        date: d.toISOString().split('T')[0],
-        portfolio: pVal,
-        spy: sVal,
-        qqq: qVal,
-        brk: bVal
-      });
-    }
-    setPerfCurve(mockCurve);
-    setSentimentList([
-      { ticker: 'TSLA', source: 'reddit', sentiment_score: 0.42, mention_count: 78, positive_ratio: 0.6, negative_ratio: 0.1 },
-      { ticker: 'TSLA', source: 'news', sentiment_score: 0.28, mention_count: 24, positive_ratio: 0.45, negative_ratio: 0.15 },
-      { ticker: 'NVDA', source: 'news', sentiment_score: 0.61, mention_count: 42, positive_ratio: 0.75, negative_ratio: 0.05 },
-      { ticker: 'NVDA', source: 'reddit', sentiment_score: 0.48, mention_count: 112, positive_ratio: 0.65, negative_ratio: 0.12 },
-      { ticker: 'AAPL', source: 'news', sentiment_score: 0.12, mention_count: 31, positive_ratio: 0.35, negative_ratio: 0.2 },
-      { ticker: 'AAPL', source: 'reddit', sentiment_score: 0.05, mention_count: 55, positive_ratio: 0.3, negative_ratio: 0.25 },
-      { ticker: 'XOM', source: 'reddit', sentiment_score: -0.24, mention_count: 12, positive_ratio: 0.15, negative_ratio: 0.4 },
-      { ticker: 'XOM', source: 'news', sentiment_score: -0.15, mention_count: 8, positive_ratio: 0.2, negative_ratio: 0.35 }
-    ]);
-  };
 
   useEffect(() => {
     fetchData();
@@ -702,37 +604,37 @@ export default function Home() {
     const tickerUpper = newUniverseTicker.toUpperCase().trim();
     if (universeTickers.includes(tickerUpper)) return;
 
-    const updated = [...universeTickers, tickerUpper];
-    setUniverseTickers(updated);
-    setNewUniverseTicker('');
-
-    if (backendOnline) {
-      try {
-        await fetch('http://localhost:8008/api/universe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tickers: updated })
-        });
-      } catch (err) {
-        console.error("Failed to save universe to backend", err);
-      }
+    setActionBusy(true);
+    try {
+      await fetch(`http://localhost:8008/api/universe/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: tickerUpper })
+      });
+      setNewUniverseTicker('');
+      fetchJobsAndTraining();
+      fetchData();
+    } catch (err) {
+      console.error("Failed to add ticker to universe", err);
+    } finally {
+      setActionBusy(false);
     }
   };
 
   const handleRemoveTicker = async (ticker: string) => {
-    const updated = universeTickers.filter(t => t !== ticker);
-    setUniverseTickers(updated);
-
-    if (backendOnline) {
-      try {
-        await fetch('http://localhost:8008/api/universe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tickers: updated })
-        });
-      } catch (err) {
-        console.error("Failed to save universe to backend", err);
-      }
+    if (!confirm(`Stop monitoring ${ticker}?`)) return;
+    setActionBusy(true);
+    try {
+      await fetch(`http://localhost:8008/api/universe/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker })
+      });
+      fetchData();
+    } catch (err) {
+      console.error("Failed to remove ticker from universe", err);
+    } finally {
+      setActionBusy(false);
     }
   };
 
@@ -875,6 +777,13 @@ export default function Home() {
     '--color-sell': '#EF4444',
   } : {}) as React.CSSProperties;
 
+  const formatTime = (ts: string | undefined | null) => {
+    if (!ts || ts === 'none' || ts === 'error') return '—';
+    if (ts.length >= 16) return ts.substring(5, 16);
+    if (ts.length === 10) return ts.substring(5, 10);
+    return ts;
+  };
+
   return (
     <div style={{ background: 'var(--bg-dark)', minHeight: '100vh', color: 'var(--text-primary)', ...realThemeStyles }}>
       {/* Top Navbar */}
@@ -916,57 +825,27 @@ export default function Home() {
             </div>
           )}
 
-          {/* Mode Switcher Toggle */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            background: 'rgba(255, 255, 255, 0.03)',
-            border: '1px solid var(--border-glass)',
-            borderRadius: '999px',
-            padding: '2px',
-            gap: '2px'
-          }}>
-            <button
-              onClick={() => setAppMode('real')}
-              style={{
-                background: appMode === 'real' ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
-                border: appMode === 'real' ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid transparent',
-                borderRadius: '999px',
-                color: appMode === 'real' ? '#10B981' : 'var(--text-secondary)',
-                padding: '6px 12px',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'var(--transition-smooth)'
-              }}
-            >
-              <Cpu size={14} />
-              REAL MODE
-            </button>
-            <button
-              onClick={() => setAppMode('simulated')}
-              style={{
-                background: appMode === 'simulated' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                border: appMode === 'simulated' ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
-                borderRadius: '999px',
-                color: appMode === 'simulated' ? '#00F2FE' : 'var(--text-secondary)',
-                padding: '6px 12px',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'var(--transition-smooth)'
-              }}
-            >
-              <Sliders size={14} />
-              SIMULATED
-            </button>
-          </div>
+          {/* Last Refreshed tracker */}
+          {health && health.last_refreshed && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '4px 12px', borderRadius: '999px',
+              background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)',
+              fontSize: '11px', color: 'var(--text-secondary)'
+            }} title="Last time data was fetched and updated in the DB">
+              <Clock size={12} color="var(--color-buy)" style={{ opacity: 0.8 }} />
+              <span>Prices:</span>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatTime(health.last_refreshed.prices_hourly)}</span>
+              <span style={{ opacity: 0.3 }}>|</span>
+              <span>News:</span>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatTime(health.last_refreshed.news_llm)}</span>
+              <span style={{ opacity: 0.3 }}>|</span>
+              <span>Macro:</span>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{formatTime(health.last_refreshed.macro)}</span>
+            </div>
+          )}
+
+
 
           {!backendOnline && (
             <span style={{ fontSize: '13px', color: '#FF4B6E', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1037,7 +916,7 @@ export default function Home() {
               <div className="metrics-row">
                 <div className="glass-card" style={{ padding: '16px' }}>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <TrendingUp size={16} color="var(--color-buy)" /> Total Simulated Return
+                    <TrendingUp size={16} color="var(--color-buy)" /> Total Return
                   </div>
                   <div style={{ fontSize: '24px', fontWeight: 700 }}>
                     +{(metrics.total_return * 100).toFixed(1)}%
@@ -1278,17 +1157,138 @@ export default function Home() {
                     <p style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
                       MPT reallocations solving for maximum Sharpe Ratio under the current {regime} HMM regime. Target weight balances run monthly.
                     </p>
-                    {allocations.map((item, idx) => (
-                      <div key={idx} style={{ marginBottom: '16px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 500 }}>
-                          <span>{item.ticker}</span>
-                          <span>{(item.weight * 100).toFixed(0)}% Allocation</span>
+                    {allocations.map((item, idx) => {
+                      const isExpanded = expandedAlloc === item.ticker;
+                      const hasDetails = item.current_shares !== undefined;
+                      const ownedPct = item.target_shares > 0 ? (item.current_shares / item.target_shares) * 100 : 0;
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            marginBottom: '12px',
+                            padding: '10px',
+                            borderRadius: '8px',
+                            background: isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent',
+                            border: isExpanded ? '1px solid var(--border-glass)' : '1px solid transparent',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                          }}
+                          onClick={() => setExpandedAlloc(isExpanded ? '' : item.ticker)}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = isExpanded ? 'rgba(255,255,255,0.02)' : 'transparent'; }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{
+                                color: 'var(--text-secondary)',
+                                fontSize: '10px',
+                                display: 'inline-block',
+                                transition: 'transform 0.2s',
+                                transform: isExpanded ? 'rotate(90deg)' : 'none'
+                              }}>▶</span>
+                              <span style={{ fontWeight: 600 }}>{item.ticker}</span>
+                              {item.suggested_action && (
+                                <span className={`badge badge-${item.suggested_action.includes('BUY') ? 'buy' : item.suggested_action.includes('SELL') ? 'sell' : 'hold'}`} style={{ fontSize: '10px', padding: '2px 6px', fontWeight: 700 }}>
+                                  {item.suggested_action.includes('BUY') ? 'BUY' : item.suggested_action.includes('SELL') ? 'SELL' : 'HOLD'}
+                                </span>
+                              )}
+                            </div>
+                            <span style={{ color: 'var(--color-buy)', fontWeight: 600 }}>{(item.weight * 100).toFixed(0)}% Target</span>
+                          </div>
+
+                          {/* Progress Bar indicating Lack of Ownership to Target */}
+                          <div style={{ marginTop: '4px' }}>
+                            <div className="alloc-bar-bg" style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '999px', overflow: 'hidden', display: 'flex', border: '1px solid var(--border-glass)' }}>
+                              <div
+                                className="alloc-bar-fill"
+                                style={{
+                                  height: '100%',
+                                  background: ownedPct >= 100 ? 'var(--color-buy)' : 'var(--color-accent)',
+                                  width: `${Math.min(ownedPct, 100)}%`,
+                                  transition: 'width 0.3s ease'
+                                }}
+                              ></div>
+                              {ownedPct > 100 && (
+                                <div 
+                                  style={{ 
+                                    height: '100%', 
+                                    background: 'var(--color-gold)', 
+                                    width: `${Math.min(ownedPct - 100, 100)}%`,
+                                    transition: 'width 0.3s ease'
+                                  }}
+                                  title="Overweight excess"
+                                ></div>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                              <span>
+                                {item.current_shares > 0
+                                  ? `${item.current_shares.toFixed(1)} / ${item.target_shares.toFixed(1)} shares`
+                                  : `0 / ${item.target_shares.toFixed(1)} shares (0% owned)`
+                                }
+                              </span>
+                              <span>
+                                {ownedPct.toFixed(0)}% of Target
+                              </span>
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div
+                              style={{
+                                padding: '12px',
+                                marginTop: '10px',
+                                borderRadius: '6px',
+                                background: 'rgba(0,0,0,0.15)',
+                                border: '1px solid rgba(255,255,255,0.05)',
+                                fontSize: '12px',
+                                color: 'var(--text-secondary)',
+                                cursor: 'default'
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {hasDetails ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                    <div>
+                                      <span style={{ color: 'var(--text-primary)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', display: 'block', marginBottom: '4px' }}>CURRENT STATE</span>
+                                      <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
+                                        <strong>{item.current_shares?.toFixed(1)}</strong> shares owned
+                                      </div>
+                                      <div style={{ marginTop: '2px', fontSize: '11px' }}>Value: ${item.current_value?.toFixed(2)} @ ${item.current_price?.toFixed(2)}</div>
+                                      <div style={{ fontSize: '11px' }}>Cost Basis: {item.entry_price && item.entry_price > 0 ? `$${item.entry_price.toFixed(2)}` : '—'}</div>
+                                    </div>
+                                    <div>
+                                      <span style={{ color: 'var(--text-primary)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', display: 'block', marginBottom: '4px' }}>TARGET ALLOCATION</span>
+                                      <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
+                                        <strong>{item.target_shares?.toFixed(1)}</strong> shares
+                                      </div>
+                                      <div style={{ marginTop: '2px', fontSize: '11px' }}>Target Value: ${item.target_value?.toFixed(2)}</div>
+                                      <div style={{ fontSize: '11px' }}>Target Weight: {(item.weight * 100).toFixed(1)}%</div>
+                                    </div>
+                                  </div>
+
+                                  <div style={{
+                                    padding: '8px 12px',
+                                    marginTop: '4px',
+                                    borderRadius: '4px',
+                                    background: item.suggested_action?.includes('BUY') ? 'rgba(16, 185, 129, 0.1)' : item.suggested_action?.includes('SELL') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255,255,255,0.03)',
+                                    border: `1px solid ${item.suggested_action?.includes('BUY') ? 'rgba(16, 185, 129, 0.2)' : item.suggested_action?.includes('SELL') ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)'}`,
+                                    color: item.suggested_action?.includes('BUY') ? 'var(--color-buy)' : item.suggested_action?.includes('SELL') ? 'var(--color-sell)' : 'var(--text-primary)',
+                                    lineHeight: 1.4
+                                  }}>
+                                    <strong style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '2px' }}>Suggested Action</strong>
+                                    {item.suggested_action}
+                                  </div>
+                                </div>
+                              ) : (
+                                <p style={{ color: 'var(--text-secondary)', margin: 0 }}>No current holding details available.</p>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="alloc-bar-bg">
-                          <div className="alloc-bar-fill" style={{ width: `${item.weight * 100}%` }}></div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

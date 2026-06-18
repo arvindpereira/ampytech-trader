@@ -15,7 +15,7 @@ import time
 import json
 import argparse
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -104,7 +104,20 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None, progress_cb=
 
     grand = 0
     for ti, ticker in enumerate(tickers):
-        arts = _fetch_news(ticker, start, end, headers)
+        # Optimize fetch range: use latest scored news date minus 2 days as fallback start to avoid fetching old news.
+        ticker_start = start
+        latest_rec = db.query(NewsLLMScore).filter(NewsLLMScore.ticker == ticker).order_by(NewsLLMScore.published_utc.desc()).first()
+        if latest_rec and latest_rec.published_utc:
+            try:
+                latest_dt = datetime.strptime(latest_rec.published_utc[:10], "%Y-%m-%d")
+                safe_start_dt = latest_dt - timedelta(days=2)
+                safe_start = safe_start_dt.strftime("%Y-%m-%d")
+                if not start or safe_start > start:
+                    ticker_start = safe_start
+            except Exception:
+                pass
+
+        arts = _fetch_news(ticker, ticker_start, end, headers)
         if not arts:
             print(f"  {ticker}: no headlines.")
             if progress_cb:

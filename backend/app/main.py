@@ -64,6 +64,7 @@ app.add_middleware(
 # Saved models directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVED_MODELS_DIR = os.path.join(BASE_DIR, "ml_engine", "saved_models")
+SCHEDULER_HEARTBEAT_FILE = os.path.join(BASE_DIR, "data", "scheduler_heartbeat.txt")
 
 # ---------------------------------------------------------------------------
 # Background job registry (in-process) — drives the UI progress bars for ticker
@@ -261,15 +262,34 @@ def compute_current_regime(db):
 
 
 _suggestions_cache = {}
+_last_on_demand_fetch_time = 0.0
 
 def clear_suggestions_cache():
     global _suggestions_cache
     _suggestions_cache.clear()
     print("Suggestions cache cleared successfully.")
 
+def background_update_prices_and_signals():
+    try:
+        from data_ingestion.price_fetcher import fetch_recent_prices
+        from app.database import SessionLocal
+        print("Background Task: Fetching recent prices...")
+        fetch_recent_prices()
+        clear_suggestions_cache()
+        db = SessionLocal()
+        try:
+            get_daily_suggestions(date=None, db=db)
+        finally:
+            db.close()
+        print("Background Task: Price update and cache pre-population complete.")
+    except Exception as e:
+        print(f"Background Task: Price update failed: {e}")
+
 @app.get("/api/suggestions")
 def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
-                          hedge_mode: Optional[str] = None, db=Depends(get_db)):
+                          hedge_mode: Optional[str] = None,
+                          background_tasks: BackgroundTasks = None,
+                          db=Depends(get_db)):
     """Computes daily trading suggestions (Short-Term and Long-Term) using our trained models."""
     global _suggestions_cache
 
@@ -279,13 +299,69 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     if effective_hedge_mode not in VALID_MODES:
         effective_hedge_mode = "none"
 
+    # Reconcile positions/cash with Alpaca broker if in real mode and not viewing historical date
+    if mode == "real" and not date:
+        from execution.executor import get_alpaca_api, sync_broker_positions
+        try:
+            api = get_alpaca_api()
+            if api:
+                sync_broker_positions(db, api)
+        except Exception as e:
+            print(f"Failed to reconcile Alpaca positions during suggestions fetch: {e}")
+
     # Load stock universe dynamically from DB to establish part of cache key
     db_tickers = db.query(UniverseTicker).all()
     active_universe = sorted([t.ticker for t in db_tickers]) if db_tickers else sorted(TICKER_UNIVERSE)
 
+    # Auto-heal: Check if any active universe tickers are missing price data
+    if not date:
+        for ticker in active_universe:
+            has_data = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).first() is not None
+            if not has_data:
+                # Check if there is already a backfill job running for this ticker to avoid duplicates
+                already_running = False
+                for job in _JOBS.values():
+                    if job.get("type") == "backfill" and job.get("description") == f"Backfilling {ticker}" and job.get("status") == "running":
+                        already_running = True
+                        break
+                if not already_running:
+                    print(f"Suggestions Auto-Heal: Ticker {ticker} is missing price records. Starting background backfill...")
+                    jid = _job_new("backfill", f"Backfilling {ticker}")
+                    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+
     # Establish latest dates/states as part of cache key
     latest_price = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()
     latest_price_date = latest_price.date if latest_price else "none"
+
+    # Check if we should trigger an on-demand background fetch of prices (only for live updates in real mode)
+    if mode == "real" and not date:
+        # Determine if scheduler is running
+        scheduler_running = False
+        if os.path.exists(SCHEDULER_HEARTBEAT_FILE):
+            try:
+                age = _time.time() - os.path.getmtime(SCHEDULER_HEARTBEAT_FILE)
+                scheduler_running = age < 150
+            except Exception:
+                pass
+
+        if not scheduler_running:
+            # Check if latest price in DB is older than 5 minutes (300 seconds)
+            global _last_on_demand_fetch_time
+            now = _time.time()
+            if now - _last_on_demand_fetch_time > 300:
+                is_stale = True
+                if latest_price:
+                    try:
+                        latest_dt = datetime.strptime(latest_price.date, "%Y-%m-%d %H:%M:%S")
+                        if datetime.now() - latest_dt < timedelta(minutes=5):
+                            is_stale = False
+                    except Exception:
+                        pass
+
+                if is_stale and background_tasks:
+                    _last_on_demand_fetch_time = now
+                    print("API Suggestions: Latest price is stale (>5m) and scheduler is offline. Triggering background update...")
+                    background_tasks.add_task(background_update_prices_and_signals)
 
     latest_sent = db.query(TickerSentiment).order_by(TickerSentiment.date.desc()).first()
     latest_sent_date = latest_sent.date if latest_sent else "none"
@@ -633,16 +709,111 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     scaled_weights = {t: float(w * regime_scalar) for t, w in opt_weights.items()}
     cash_allocation = 1.0 - sum(scaled_weights.values())
 
+    # Load virtual account and current positions for rebalancing action calculation
+    acc_id = 2 if mode == "real" else 1
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
+    portfolio_equity = float(account.equity) if account else 100000.0
+
+    positions = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
+
+    def get_ticker_price(tk):
+        if prices_df.empty:
+            return 0.0
+        tk_df = prices_df[prices_df["ticker"] == tk]
+        if tk_df.empty:
+            return 0.0
+        return float(tk_df.sort_values("date", ascending=False).iloc[0]["close"])
+
+    buckets = get_strategy_buckets(db)
+    budget_fraction = buckets.get("longterm", 0.0)
+
     long_term_allocation = []
-    for ticker, weight in scaled_weights.items():
-        if weight > 0.01: # Filter out trace allocations
-            long_term_allocation.append({
-                "ticker": ticker,
-                "weight": weight,
-                "shares_multiplier": 1.0,
-                "insider_tilt_score": float(scores_dict.get(ticker, 0.0))
-            })
-    long_term_allocation.append({"ticker": "CASH", "weight": cash_allocation, "insider_tilt_score": 0.0})
+    # Combine active universe tickers and currently held tickers (with quantity > 0)
+    all_rebalance_tickers = sorted(list(set(active_universe) | {t for t, p in positions.items() if p.quantity > 0.01}))
+
+    for ticker in all_rebalance_tickers:
+        weight = scaled_weights.get(ticker, 0.0)
+        cur_price = get_ticker_price(ticker)
+        pos = positions.get(ticker)
+        current_shares = pos.quantity if pos else 0.0
+
+        # Skip if trace weight AND no shares held
+        if weight <= 0.01 and current_shares <= 0.01:
+            continue
+
+        entry_price = pos.entry_price if pos else 0.0
+        current_value = current_shares * cur_price
+
+        target_value = portfolio_equity * weight * budget_fraction
+        target_shares = target_value / cur_price if cur_price > 0 else 0.0
+
+        suggested_action = "Hold"
+        price_dev = 0.0
+        if entry_price > 0.0:
+            price_dev = (cur_price - entry_price) / entry_price
+
+        # Check policy overrides first
+        if pos and pos.policy == "lock":
+            suggested_action = "Hold: Position policy is set to LOCK (trades disabled)."
+        elif pos and pos.policy == "liquidate":
+            suggested_action = f"SELL: Position policy is set to LIQUIDATE. Close all {current_shares:.1f} shares."
+        elif weight == 0.0 and current_shares > 0.0:
+            # Ticker held but not in the target active universe
+            suggested_action = f"SELL: Liquidate position. Ticker is not in active target universe."
+        else:
+            diff_shares = target_shares - current_shares
+
+            if diff_shares > 0.01:
+                # Underweight
+                if current_shares == 0.0:
+                    suggested_action = f"BUY: Target {target_shares:.1f} shares. Position is new."
+                elif price_dev <= -0.03:
+                    suggested_action = f"BUY: Scaled grid tranche. Price ({cur_price:.2f}) fell {abs(price_dev)*100:.1f}% below cost basis ({entry_price:.2f})."
+                else:
+                    trigger_price = entry_price * 0.97
+                    suggested_action = f"Hold: Wait for price to drop below {trigger_price:.2f} (currently {price_dev*100:+.1f}% from cost basis)."
+            elif diff_shares < -0.01:
+                # Overweight
+                if price_dev >= 0.05:
+                    from execution.executor import get_long_term_available_shares
+                    sim_date_str = date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    lt_shares = get_long_term_available_shares(db, ticker, sim_date_str)
+                    if lt_shares > 0.01:
+                        suggested_action = f"SELL: Lock profit. Price ({cur_price:.2f}) is up {price_dev*100:.1f}% from cost basis ({entry_price:.2f}). {lt_shares:.1f} long-term shares eligible."
+                    else:
+                        suggested_action = f"Hold: Overweight, but 0 shares qualify as long-term (>365 days held). Skipping to avoid short-term tax."
+                else:
+                    suggested_action = f"Hold: Overweight by {abs(diff_shares):.1f} shares. Price is only up {price_dev*100:+.1f}% (wait for +5% profit lock target)."
+
+        long_term_allocation.append({
+            "ticker": ticker,
+            "weight": weight,
+            "shares_multiplier": 1.0,
+            "insider_tilt_score": float(scores_dict.get(ticker, 0.0)),
+            "current_shares": float(current_shares),
+            "entry_price": float(entry_price),
+            "current_price": float(cur_price),
+            "current_value": float(current_value),
+            "target_shares": float(target_shares),
+            "target_value": float(target_value),
+            "suggested_action": suggested_action
+        })
+
+    # Remaining cash
+    total_allocated_value = sum(a["current_value"] for a in long_term_allocation)
+    cash_alloc_val = portfolio_equity * cash_allocation
+    long_term_allocation.append({
+        "ticker": "CASH",
+        "weight": cash_allocation,
+        "insider_tilt_score": 0.0,
+        "current_shares": 0.0,
+        "entry_price": 1.0,
+        "current_price": 1.0,
+        "current_value": float(portfolio_equity - total_allocated_value),
+        "target_shares": float(cash_alloc_val),
+        "target_value": float(cash_alloc_val),
+        "suggested_action": "Hold cash buffer"
+    })
 
     # --- Swing (multi-day) signals — daily prices + LLM-scored news (validated portfolio edge) ---
     swing_suggestions = []
@@ -699,61 +870,14 @@ def get_backtest_performance(mode: str = "live", db=Depends(get_db)):
     logs = db.query(BrokerPerformanceLog).filter(BrokerPerformanceLog.mode == mode).order_by(BrokerPerformanceLog.date.asc()).all()
 
     if not logs:
-        if mode == "live":
-            # Real/Live mode: do not return mock performance data!
-            return {
-                "metrics": {
-                    "total_return": 0.0,
-                    "sharpe_ratio": 0.0,
-                    "max_drawdown": 0.0,
-                    "win_rate": 0.0
-                },
-                "equity_curve": []
-            }
-        # Fallback to simulated data if db is empty so the UI looks beautiful
-        # Generate 100 days of mock data
-        dates = pd.date_range(end=datetime.now(), periods=100, freq='D')
-        portfolio_val = 100000.0
-        spy_val = 100000.0
-        qqq_val = 100000.0
-        brk_val = 100000.0
-
-        rng = np.random.default_rng(42)
-        equity_curve = []
-        for i, d in enumerate(dates):
-            if i == 0:
-                p_ret, s_ret, q_ret, b_ret = 0.0, 0.0, 0.0, 0.0
-            else:
-                s_ret = rng.normal(0.0003, 0.012)
-                q_ret = s_ret * 1.2 + rng.normal(0.0001, 0.005)
-                b_ret = s_ret * 0.7 + rng.normal(0.0002, 0.004)
-                p_ret = s_ret * 0.8 + rng.normal(0.0008, 0.007)
-                if s_ret < -0.02:
-                    p_ret = s_ret * 0.3 + rng.normal(0.0, 0.002)
-
-            portfolio_val *= (1.0 + p_ret)
-            spy_val *= (1.0 + s_ret)
-            qqq_val *= (1.0 + q_ret)
-            brk_val *= (1.0 + b_ret)
-
-            equity_curve.append({
-                "date": d.strftime("%Y-%m-%d"),
-                "portfolio": portfolio_val,
-                "spy": spy_val,
-                "qqq": qqq_val,
-                "brk": brk_val
-            })
-
-        metrics = {
-            "total_return": (portfolio_val / 100000.0) - 1.0,
-            "sharpe_ratio": 1.78,
-            "max_drawdown": -0.114,
-            "win_rate": 0.58
-        }
-
         return {
-            "metrics": metrics,
-            "equity_curve": equity_curve
+            "metrics": {
+                "total_return": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "win_rate": 0.0
+            },
+            "equity_curve": []
         }
 
     equity_curve = []
@@ -1773,9 +1897,6 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
         "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
-SCHEDULER_HEARTBEAT_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "scheduler_heartbeat.txt")
-
 _health_cache = {"data": None, "timestamp": None}
 
 @app.get("/api/health")
@@ -1840,7 +1961,44 @@ def get_health(db=Depends(get_db)):
     except Exception:
         svc["news_llm"] = {"status": "down", "detail": "unknown"}
 
-    res = {"services": svc, "execution_strategy": EXECUTION_STRATEGY, "as_of": now.strftime("%H:%M:%S")}
+    # Fetch latest dates in DB for prices, sentiment, macro, and news
+    last_refreshed = {}
+    try:
+        latest_recent = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()
+        last_refreshed["prices_hourly"] = latest_recent.date if latest_recent else "none"
+    except Exception:
+        last_refreshed["prices_hourly"] = "error"
+
+    try:
+        latest_daily = db.query(DailyPrice).order_by(DailyPrice.date.desc()).first()
+        last_refreshed["prices_daily"] = latest_daily.date if latest_daily else "none"
+    except Exception:
+        last_refreshed["prices_daily"] = "error"
+
+    try:
+        latest_macro = db.query(MacroIndicator).order_by(MacroIndicator.date.desc()).first()
+        last_refreshed["macro"] = latest_macro.date if latest_macro else "none"
+    except Exception:
+        last_refreshed["macro"] = "error"
+
+    try:
+        latest_sent = db.query(TickerSentiment).order_by(TickerSentiment.date.desc()).first()
+        last_refreshed["sentiment"] = latest_sent.date if latest_sent else "none"
+    except Exception:
+        last_refreshed["sentiment"] = "error"
+
+    try:
+        latest_news_llm = db.query(NewsLLMScore).order_by(NewsLLMScore.published_utc.desc()).first()
+        last_refreshed["news_llm"] = latest_news_llm.published_utc[:16].replace("T", " ") if latest_news_llm and latest_news_llm.published_utc else "none"
+    except Exception:
+        last_refreshed["news_llm"] = "error"
+
+    res = {
+        "services": svc,
+        "execution_strategy": EXECUTION_STRATEGY,
+        "as_of": now.strftime("%H:%M:%S"),
+        "last_refreshed": last_refreshed
+    }
     _health_cache = {"data": res, "timestamp": now}
     return res
 

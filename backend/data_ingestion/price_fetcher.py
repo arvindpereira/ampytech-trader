@@ -225,29 +225,77 @@ def _write_bars(db, Model, ticker, bars, daily=False):
     """Upserts a bar series into the given price Model, backfilling indicators on existing rows."""
     if not bars:
         return 0, 0
-    sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(bars, daily=daily)
 
-    existing_map = {p.date: p for p in db.query(Model).filter(Model.ticker == ticker).all()}
-    new_records = []
-    updated = 0
+    # 1. Fetch historical bars from database to ensure correct indicator computation
+    history = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.desc()).limit(100).all()
+
+    # Convert DB records to the dict format
+    combined_bars_map = {}
+    for h in history:
+        # Reconstruct timestamp
+        try:
+            if daily:
+                dt = datetime.strptime(h.date, "%Y-%m-%d")
+            else:
+                dt = datetime.strptime(h.date, "%Y-%m-%d %H:%M:%S")
+            t_ms = int(dt.timestamp() * 1000)
+        except Exception:
+            continue
+        combined_bars_map[h.date] = {
+            "t": t_ms, "o": h.open, "h": h.high, "l": h.low, "c": h.close, "v": h.volume
+        }
+
+    # Add new bars (they will overwrite historical if date matches)
     for bar in bars:
         epoch_ms = bar.get("t")
         if not epoch_ms:
             continue
         date_str = timestamp_to_str(epoch_ms, daily=daily)
+        combined_bars_map[date_str] = bar
+
+    # Sort combined bars chronologically
+    combined_bars = sorted(combined_bars_map.values(), key=lambda x: x["t"])
+
+    # Compute indicators on the combined list
+    sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(combined_bars, daily=daily)
+
+    existing_map = {p.date: p for p in db.query(Model).filter(Model.ticker == ticker).all()}
+    new_records = []
+    updated = 0
+
+    # We only want to write or update bars that were actually in the newly fetched `bars`
+    new_bar_dates = {timestamp_to_str(b["t"], daily=daily) for b in bars if b.get("t")}
+
+    for date_str in new_bar_dates:
+        bar = combined_bars_map[date_str]
         macd_pair = macd_map.get(date_str)
 
         existing = existing_map.get(date_str)
         if existing:
             changed = False
-            if existing.sma_10 is None and date_str in sma_10_map:
+            # Check and update standard fields
+            if existing.open != float(bar["o"]):
+                existing.open = float(bar["o"]); changed = True
+            if existing.high != float(bar["h"]):
+                existing.high = float(bar["h"]); changed = True
+            if existing.low != float(bar["l"]):
+                existing.low = float(bar["l"]); changed = True
+            if existing.close != float(bar["c"]):
+                existing.close = float(bar["c"]); changed = True
+            if existing.volume != float(bar["v"]):
+                existing.volume = float(bar["v"]); changed = True
+
+            # Update indicators if they differ or are newly calculated
+            if date_str in sma_10_map and existing.sma_10 != sma_10_map[date_str]:
                 existing.sma_10 = sma_10_map[date_str]; changed = True
-            if existing.sma_50 is None and date_str in sma_50_map:
+            if date_str in sma_50_map and existing.sma_50 != sma_50_map[date_str]:
                 existing.sma_50 = sma_50_map[date_str]; changed = True
-            if existing.rsi_14 is None and date_str in rsi_14_map:
+            if date_str in rsi_14_map and existing.rsi_14 != rsi_14_map[date_str]:
                 existing.rsi_14 = rsi_14_map[date_str]; changed = True
-            if existing.macd is None and macd_pair:
-                existing.macd, existing.macd_signal = macd_pair; changed = True
+            if macd_pair:
+                if existing.macd != macd_pair[0] or existing.macd_signal != macd_pair[1]:
+                    existing.macd, existing.macd_signal = macd_pair; changed = True
+
             if changed:
                 db.add(existing); updated += 1
             continue
@@ -351,13 +399,18 @@ def _get_active_universe(db):
     return sorted(set(universe + [BENCHMARK_TICKER]))
 
 
-def _earliest_latest(db, Model, ticker):
+def _earliest_latest(db, Model, ticker, keep_time=False):
     latest = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.desc()).first()
     earliest = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.asc()).first()
 
     def to_dt(rec):
         if not rec:
             return None
+        if keep_time:
+            try:
+                return datetime.strptime(rec.date, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
         part = rec.date.split(" ")[0].split("T")[0]
         return datetime.strptime(part, "%Y-%m-%d")
     return to_dt(earliest), to_dt(latest)
@@ -407,10 +460,10 @@ def fetch_recent_prices():
     for ticker in active_universe:
         if ticker in FICTIONAL_TICKERS:
             continue
-        _, latest = _earliest_latest(db, RecentPrice, ticker)
+        _, latest = _earliest_latest(db, RecentPrice, ticker, keep_time=True)
         if latest is None:
             fetch_tasks.append((ticker, hourly_start, end_date))
-        elif latest < end_date - timedelta(days=1):
+        elif latest < end_date - timedelta(minutes=5):
             fetch_tasks.append((ticker, max(hourly_start, latest), end_date))
     db.close()
 
