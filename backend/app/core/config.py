@@ -194,6 +194,8 @@ SWING_STOP_MAX = float(os.getenv("SWING_STOP_MAX", "0.12"))
 # Cap concurrent BUYs to the highest-conviction names, matching the ≤10 open positions the portfolio
 # simulation used to validate the edge. Lower-ranked above-threshold candidates are demoted to HOLD.
 SWING_TOP_N = int(os.getenv("SWING_TOP_N", "10"))
+# Small high-risk sleeve (aggressive model on speculative-tier names) — hard cap as a fraction of equity.
+HIGH_RISK_CAP = float(os.getenv("HIGH_RISK_CAP", "0.05"))
 # Fixed fraction of equity per swing position. The portfolio sim that validated the edge used fixed 10%
 # allocations (NOT Kelly) — the model's win-prob is a ranking score, not a calibrated Kelly input, so
 # Kelly sizing would zero most positions. Keep this in lock-step with that sim.

@@ -606,7 +606,8 @@ def close_aged_swing_positions(api, db, mode="real", horizon_days=None, allowed_
                 db.rollback()
 
 
-def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_tickers=None, budget=None):
+def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_tickers=None, budget=None,
+                               suggestions_key="swing_suggestions", label="swing"):
     """Places swing (multi-day) bracket trades on Alpaca paper from `swing_suggestions`.
 
     Sizing is a FIXED fraction of equity (SWING_POSITION_PCT), matching the capital-aware portfolio
@@ -616,15 +617,15 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
 
     `allowed_tickers` (set) restricts buys to stocks assigned the swing strategy; `budget` (float, $)
     is a SOFT cap on total NEW capital deployed this run (the swing bucket's remaining allocation)."""
-    print("--- Executing Swing (Multi-Day) Paper Trades via Alpaca API ---")
+    print(f"--- Executing {label} (Multi-Day) Paper Trades via Alpaca API ---")
     date_str = datetime.now().strftime("%Y-%m-%d")
 
-    swing_sugs = suggestions_data.get("swing_suggestions", [])
+    swing_sugs = suggestions_data.get(suggestions_key, [])
     buys = [s for s in swing_sugs if s.get("action") == "BUY"]
     if allowed_tickers is not None:
         buys = [s for s in buys if s["ticker"] in allowed_tickers]
     if not buys:
-        print("No swing BUY signals for assigned tickers today.")
+        print(f"No {label} BUY signals for assigned tickers today.")
         return
 
     account = api.get_account()
@@ -956,6 +957,15 @@ def run_execution():
             assignments = get_strategy_assignments(db)
             swing_set = {t for t, s in assignments.items() if s == "swing"}
             longterm_set = {t for t, s in assignments.items() if s == "longterm"}
+            # Speculative-tier names are split off into the small high-risk sleeve (aggressive model);
+            # the core swing book excludes them so the two sleeves never trade the same name.
+            try:
+                from ml_engine.swing_alpha import tickers_for_tiers, HIGH_RISK_TIERS
+                spec_set = set(tickers_for_tiers(HIGH_RISK_TIERS))
+            except Exception as e:
+                print(f"Tier lookup failed (high-risk sleeve disabled): {e}")
+                spec_set = set()
+            core_swing_set = swing_set - spec_set
 
             try:
                 equity = float(api.get_account().equity)
@@ -981,11 +991,24 @@ def run_execution():
             print(f"Buckets: swing {buckets.get('swing',0)*100:.0f}%→{swing_w_eff*100:.0f}% (avail ${swing_budget:.0f}), "
                   f"longterm {longterm_frac*100:.0f}% | regime {regime} | assigned swing={len(swing_set)} longterm={len(longterm_set)}")
 
-            # Swing bucket: horizon exits (swing-assigned only), then budget-capped entries.
-            close_aged_swing_positions(api, db, allowed_tickers=swing_set if swing_set else None)
+            # Swing bucket: horizon exits, then budget-capped entries (CORE names only — excl. speculative).
+            close_aged_swing_positions(api, db, allowed_tickers=core_swing_set if core_swing_set else None)
             if buckets.get("swing", 0.0) > 0:
                 execute_swing_paper_trades(api, db, suggestions_data,
-                                           allowed_tickers=swing_set, budget=swing_budget)
+                                           allowed_tickers=core_swing_set, budget=swing_budget)
+
+            # High-risk sleeve: AGGRESSIVE model on speculative names, hard-capped at HIGH_RISK_CAP of equity.
+            from app.core.config import HIGH_RISK_CAP
+            hr_frac = min(HIGH_RISK_CAP, buckets.get("high_risk", 0.0))
+            if hr_frac > 0 and spec_set:
+                deployed_hr = sum(float(p.market_value) for p in broker_pos if p.symbol in spec_set)
+                hr_budget = max(0.0, hr_frac * equity - deployed_hr)
+                print(f"High-risk sleeve: {hr_frac*100:.1f}% cap (avail ${hr_budget:.0f}) over {len(spec_set)} speculative names")
+                close_aged_swing_positions(api, db, allowed_tickers=spec_set)
+                if hr_budget >= 100.0:
+                    execute_swing_paper_trades(api, db, suggestions_data, allowed_tickers=spec_set,
+                                               budget=hr_budget, suggestions_key="high_risk_suggestions",
+                                               label="high-risk")
 
             # Long-term bucket: MPT grid restricted to longterm-assigned tickers, scaled to the bucket.
             if longterm_frac > 0 and longterm_set:
