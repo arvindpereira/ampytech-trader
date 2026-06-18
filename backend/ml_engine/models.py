@@ -561,14 +561,53 @@ def precalculate_exits(oos_df, prices_df, horizon=14, stop_max=None, stop_min=No
     return oos_df_copy
 
 
+def compute_regime_series(oos_start=None):
+    """Point-in-time {date: regime} from the HMM on SPY vol/macro features, mirroring the live overlay.
+
+    The HMM is fit ONLY on data BEFORE `oos_start` (so the regime classifier's parameters never see the
+    out-of-sample window), then labels every date by trailing-vol features. This lets the swing backtest
+    apply the same crisis-shrink the live executor uses, instead of assuming swing is fully deployed
+    through every bear. Returns {} if SPY features are unavailable (caller then runs ungated)."""
+    feats = load_daily_spy_features()
+    if feats is None or feats.empty:
+        return {}
+    cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
+    if not all(c in feats.columns for c in cols):
+        return {}
+    d = feats.dropna(subset=cols).sort_values("date")
+    if len(d) < 100:
+        return {}
+    train = d[d["date"] < oos_start] if oos_start else d
+    if len(train) < 100:
+        train = d
+    try:
+        m = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
+        m.fit(train[cols].values)
+        order = np.argsort(m.means_[:, 0])   # index 0 = volatility; low→growth, high→crisis
+        mapping = {int(order[0]): "growth", int(order[1]): "transition", int(order[2]): "crisis"}
+        states = m.predict(d[cols].values)
+        return {str(dt): mapping[int(s)] for dt, s in zip(d["date"].values, states)}
+    except Exception as e:
+        print(f"Regime series computation failed: {e}")
+        return {}
+
+
 def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0, max_allocation=0.10, fee_pct=0.0005, horizon=14,
-                                     stop_max=None, stop_min=None, atr_mult=None, tp_mult=None):
+                                     stop_max=None, stop_min=None, atr_mult=None, tp_mult=None,
+                                     regime_by_date=None):
     """
     Chronological portfolio simulator enforcing capital limits, max allocation,
     no overlaps, exits, and fees.
+
+    `regime_by_date` ({date: regime}) applies the live regime overlay: on each bar the total swing
+    capital deployed is capped at REGIME_SWING_FACTORS[regime] x equity (crisis 0.25, transition 0.6,
+    growth 1.0), so the backtest reflects the executor's crisis-shrink instead of full bear-market
+    exposure. None = ungated (original behavior).
     """
     if oos_df.empty:
         return [], {}
+    if regime_by_date:
+        from app.core.config import REGIME_SWING_FACTORS
 
     # 1. Sort all unique dates in the test set
     unique_dates = sorted(oos_df["date"].unique())
@@ -638,18 +677,28 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
 
         position_size = max_allocation * current_equity
 
+        # Regime overlay: cap total swing capital deployed this bar (crisis 0.25 / transition 0.6 / growth 1.0).
+        swing_factor = 1.0
+        if regime_by_date:
+            swing_factor = REGIME_SWING_FACTORS.get(regime_by_date.get(dt, "growth"), 1.0)
+        max_invested = swing_factor * current_equity
+        invested = current_equity - cash   # market value of open positions
+
         for sig in signals:
             ticker = sig["ticker"]
             if any(t["ticker"] == ticker for t in active_trades):
                 continue
             if cash < position_size:
                 continue
+            if invested + position_size > max_invested + 1e-9:
+                break   # regime cap on swing exposure reached for this bar
 
             entry_price = sig["entry_price"]
             entry_fee = position_size * fee_pct
             shares = (position_size - entry_fee) / entry_price
 
             cash -= position_size
+            invested += position_size
             active_trades.append({
                 "ticker": ticker,
                 "shares": shares,

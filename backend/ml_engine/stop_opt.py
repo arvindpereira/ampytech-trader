@@ -28,9 +28,13 @@ def stop_tp_study(horizon=5, n_splits=5, oos_start="2022-01-01", progress_cb=Non
     if oos is None or oos.empty:
         return {"error": "Not enough swing OOS data for the stop/TP study."}
 
+    from ml_engine.models import compute_regime_series
+    regime_by_date = compute_regime_series(oos_start)   # gate to match live execution
+
     def _sim(stop_max, stop_min, atr_mult, tp_mult):
         _, m = simulate_portfolio_chronological(oos, prices_df, horizon=horizon, stop_max=stop_max,
-                                                stop_min=stop_min, atr_mult=atr_mult, tp_mult=tp_mult)
+                                                stop_min=stop_min, atr_mult=atr_mult, tp_mult=tp_mult,
+                                                regime_by_date=regime_by_date)
         return m or {}
 
     baseline_m = _sim(SWING_STOP_MAX, SWING_STOP_MIN, SWING_ATR_STOP_MULT, SWING_TP_MULT)
