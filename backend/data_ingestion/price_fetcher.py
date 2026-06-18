@@ -310,7 +310,15 @@ def _write_bars(db, Model, ticker, bars, daily=False):
             macd_signal=macd_pair[1] if macd_pair else None,
         ))
     if new_records:
-        db.bulk_save_objects(new_records)
+        # Upsert: another writer (scheduler fetch + a manual backfill, or two backfills) may have
+        # inserted the same (ticker, date) bars between our existing_map snapshot and this commit.
+        # ON CONFLICT DO NOTHING makes the insert idempotent so the race can't raise IntegrityError.
+        from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
+        rows = [{c.name: getattr(r, c.name) for c in Model.__table__.columns
+                 if getattr(r, c.name) is not None} for r in new_records]
+        stmt = _sqlite_insert(Model).values(rows).on_conflict_do_nothing(
+            index_elements=["ticker", "date"])
+        db.execute(stmt)
     if new_records or updated:
         db.commit()
     return len(new_records), updated
@@ -359,6 +367,7 @@ def backfill_ticker(ticker, progress_cb=None):
 
     # 3) LLM-score the ticker's news (the slow part — thousands of headlines via Ollama).
     news_scored = 0
+    news_skipped = False
     try:
         from app.core.config import SWING_ENABLED, NEWS_LLM_START, OLLAMA_URL
         import requests as _rq
@@ -375,12 +384,21 @@ def backfill_ticker(ticker, progress_cb=None):
                             progress_cb=lambda f, note: report(50 + int(f * 49), note))
             news_scored = _count_news(ticker) - before
         elif not ollama_up:
-            report(95, "Skipped news scoring (Ollama offline)")
+            news_skipped = True
+            report(95, "Skipped news scoring — Ollama offline")
     except Exception as e:
         print(f"News scoring failed for {ticker}: {e}")
 
-    report(100, f"Done — {daily_added} daily, {hourly_added} hourly, {news_scored} news scored")
-    return {"daily": daily_added, "hourly": hourly_added, "news": news_scored}
+    total_news, latest_news = _news_coverage(ticker)
+    if news_skipped:
+        news_part = f"news scoring SKIPPED (Ollama offline) — {total_news:,} on file"
+    elif total_news:
+        news_part = f"news +{news_scored:,} new ({total_news:,} scored, latest {latest_news})"
+    else:
+        news_part = "no news found"
+    report(100, f"Done — prices +{daily_added} daily / +{hourly_added} hourly; {news_part}")
+    return {"daily": daily_added, "hourly": hourly_added, "news": news_scored,
+            "news_total": total_news, "news_latest": str(latest_news) if latest_news else None}
 
 
 def _count_news(ticker):
@@ -388,6 +406,19 @@ def _count_news(ticker):
     db = SessionLocal()
     try:
         return db.query(NewsLLMScore).filter(NewsLLMScore.ticker == ticker).count()
+    finally:
+        db.close()
+
+
+def _news_coverage(ticker):
+    """(total scored headlines, latest scored date) for a ticker — for the backfill summary."""
+    from app.database import NewsLLMScore
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        total = db.query(NewsLLMScore).filter(NewsLLMScore.ticker == ticker).count()
+        latest = db.query(func.max(NewsLLMScore.date)).filter(NewsLLMScore.ticker == ticker).scalar()
+        return total, latest
     finally:
         db.close()
 

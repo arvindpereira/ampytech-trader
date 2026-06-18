@@ -1435,8 +1435,14 @@ def _run_backfill_job(jid, ticker):
     """Background worker: backfill a newly-added ticker's price history, updating job progress."""
     try:
         from data_ingestion.price_fetcher import backfill_ticker
-        backfill_ticker(ticker, progress_cb=lambda p, s: _job_update(jid, progress=p, stage=s))
-        _job_update(jid, progress=100, stage="Complete", status="done")
+        res = backfill_ticker(ticker, progress_cb=lambda p, s: _job_update(jid, progress=p, stage=s))
+        total = (res or {}).get("news_total", 0) or 0
+        latest = (res or {}).get("news_latest")
+        summary = (f"Complete — prices +{(res or {}).get('daily', 0)} daily / "
+                   f"+{(res or {}).get('hourly', 0)} hourly; "
+                   f"news +{(res or {}).get('news', 0)} new ({total:,} scored"
+                   + (f", latest {latest}" if latest else "") + ")")
+        _job_update(jid, progress=100, stage=summary, status="done")
         clear_suggestions_cache()
         global _price_summary_cache
         _price_summary_cache = {"data": None, "timestamp": None}
