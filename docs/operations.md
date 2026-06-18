@@ -21,6 +21,12 @@ make install            # backend venv + Python deps + frontend npm deps
   (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`). Batches score concurrently.
 - `make news-llm-batch [START=… TICKERS=…]` — submit the same via OpenAI's **Batch API** (50% cheaper,
   unattended, up to 24h); `make news-llm-batch-collect BATCH_ID=<id>` ingests it (resumable).
+- `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP,
+  LLM-extract per-ticker scores into the swing news feed. Set `IMAP_USER`/`IMAP_PASSWORD` (an
+  **app-password**, not your main password), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Runs in the daily
+  scheduler job when creds are present. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml`
+  (also `.html/.txt/.md`); preview without scoring: `make premium-ingest DRY_RUN=1`. Only content you
+  receive by email is read, and only derived scores (not article text) are stored.
 - `make insider` — real SEC Form 4 (only when `ALT_DATA_ENABLED`).
 
 **Models**

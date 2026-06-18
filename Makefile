@@ -1,5 +1,5 @@
 .PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
-        news-llm-batch news-llm-batch-collect llm-usage \
+        news-llm-batch news-llm-batch-collect llm-usage premium-ingest \
         db-backup db-backup-list db-restore db-restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
@@ -42,6 +42,7 @@ help:
 	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]"
 	@echo "  make news-llm-batch    - Same via OpenAI Batch API (cheapest, unattended; needs OPENAI_API_KEY)"
 	@echo "  make news-llm-batch-collect BATCH_ID=<id> - Ingest a submitted batch's results"
+	@echo "  make premium-ingest    - Ingest premium newsletter emails (IMAP) → swing news [DAYS=7 PREMIUM_FILE=path DRY_RUN=1]"
 	@echo "  make llm-usage         - Show OpenAI token usage + est cost per model (refine pricing)"
 	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
@@ -156,6 +157,12 @@ news-llm-batch-collect:
 	@echo "🗞️  Ingesting OpenAI Batch results [BATCH_ID=$(BATCH_ID)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) data_ingestion/news_llm.py --collect $(BATCH_ID)
+
+premium-ingest:
+	@echo "========================================================================"
+	@echo "📬 Ingesting premium newsletter articles via IMAP → news_llm_scores$(if $(PREMIUM_FILE), [FILE=$(PREMIUM_FILE)], [DAYS=$(DAYS)])..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/premium_ingest.py $(if $(PREMIUM_FILE),--file $(PREMIUM_FILE),--days $(DAYS)) $(if $(DRY_RUN),--dry-run)
 
 llm-usage:
 	@echo "========================================================================"

@@ -11,6 +11,7 @@ in git/LFS — back it up with `make db-backup` (see [operations.md](./operation
 | `macro_fetcher.py` | Massive/FRED | `macro_indicators` | treasury yields, fed funds |
 | `sentiment_fetcher.py` | News API / Reddit / premium uploads | `ticker_sentiments`, `sentiment_source_logs` | VADER-scored; `is_mock` flag separates real vs mock |
 | `news_llm.py` | Polygon news → **LLM (Ollama or OpenAI)** | `news_llm_scores` | per-ticker directional + relevance score; the **swing** edge; dense from ~2021. Pluggable provider (`NEWS_LLM_PROVIDER`); batches score **concurrently** |
+| `premium_ingest.py` + `premium_llm.py` | **Premium newsletter emails** (e.g. The Information) via IMAP → LLM | `news_llm_scores` | reads subscriber emails you receive, LLM-extracts which **universe tickers** an article materially affects (incl. indirect/private-company knock-ons), writes scores tagged `premium:<source>`. Only derived scores are stored, not article text |
 | `alternative_fetcher.py` | SEC EDGAR Form 4 | `insider_disclosures`, `congress_disclosures` | only when `ALT_DATA_ENABLED` |
 | `crisis_fetcher.py` | yfinance | `crisis_prices` | historic crash eras for stress display |
 | `popular_tickers.py` | yfinance scrape | `universe_tickers` | popular/trending helper |

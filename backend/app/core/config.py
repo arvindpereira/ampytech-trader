@@ -151,6 +151,20 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")       # cheap, fast, reliable JSON mode
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+# Premium-newsletter ingestion (e.g. The Information). Reads articles you legitimately receive by email
+# via IMAP, has the LLM extract which universe tickers are materially affected, and stores per-ticker
+# scores into news_llm_scores so they feed the swing model. Only derived scores are kept in the DB.
+IMAP_HOST = os.getenv("IMAP_HOST", "imap.gmail.com")
+IMAP_PORT = int(os.getenv("IMAP_PORT", "993"))
+IMAP_USER = os.getenv("IMAP_USER", "")
+IMAP_PASSWORD = os.getenv("IMAP_PASSWORD", "")           # use an app-password, never your main password
+IMAP_FOLDER = os.getenv("IMAP_FOLDER", "INBOX")
+PREMIUM_SENDER = os.getenv("PREMIUM_SENDER", "theinformation.com")   # From-address filter
+PREMIUM_SOURCE_TAG = os.getenv("PREMIUM_SOURCE_TAG", "the-information")
+PREMIUM_LLM_MODEL = os.getenv("PREMIUM_LLM_MODEL", "")   # "" -> OPENAI_MODEL (key set) else LLM_MODEL
+PREMIUM_BODY_CHARS = int(os.getenv("PREMIUM_BODY_CHARS", "8000"))    # chars of article body sent to LLM
+PREMIUM_REL_MIN = float(os.getenv("PREMIUM_REL_MIN", "0.2"))         # drop low-relevance mentions
+
 # A more powerful model writes the plain-English "expert interpretation" of evaluation runs (Model
 # Evaluation tab). Configurable so you can point it at whatever strong model you have access to.
 OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-5.5")

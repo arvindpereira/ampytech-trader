@@ -43,6 +43,15 @@ def daily_data_fetch_job():
         if SWING_ENABLED:
             start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
             score_news_llm(start=start)
+        # Pull premium newsletter articles (e.g. The Information) you received by email and LLM-score
+        # them into the same news_llm_scores feed. Only runs if IMAP creds are configured.
+        from app.core.config import IMAP_USER, IMAP_PASSWORD
+        if SWING_ENABLED and IMAP_USER and IMAP_PASSWORD:
+            try:
+                from data_ingestion.premium_ingest import ingest_imap
+                ingest_imap(days=7)
+            except Exception as e:
+                print(f"Premium newsletter ingest skipped: {e}")
         print("Daily Data Ingestion Job completed successfully.")
     except Exception as e:
         print(f"Error during Daily Data Ingestion: {e}")
