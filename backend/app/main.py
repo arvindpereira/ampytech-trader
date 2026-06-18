@@ -109,6 +109,22 @@ def _jobs_snapshot():
             _JOBS.pop(jid, None)
         return sorted(_JOBS.values(), key=lambda x: x["started_at"], reverse=True)
 
+def _start_backfill(ticker):
+    """Spawn a backfill job+thread for `ticker`, but only if one isn't already running.
+    Returns the (existing or new) job id. Single entry point so we never spawn duplicate
+    threads/progress bars for the same ticker (e.g. suggestions auto-heal firing on every poll)."""
+    label = f"Backfilling {ticker}"
+    with _JOBS_LOCK:
+        for job in _JOBS.values():
+            if job["type"] == "backfill" and job["label"] == label and job["status"] == "running":
+                return job["id"]  # already in flight — reuse it, don't spawn another
+        jid = _uuid.uuid4().hex[:8]
+        _JOBS[jid] = {"id": jid, "type": "backfill", "label": label, "status": "running",
+                      "progress": 0, "stage": "queued", "error": None,
+                      "started_at": _time.time(), "finished_at": None}
+    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+    return jid
+
 @app.on_event("startup")
 def startup_event():
     init_db()
@@ -318,16 +334,9 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         for ticker in active_universe:
             has_data = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).first() is not None
             if not has_data:
-                # Check if there is already a backfill job running for this ticker to avoid duplicates
-                already_running = False
-                for job in _JOBS.values():
-                    if job.get("type") == "backfill" and job.get("description") == f"Backfilling {ticker}" and job.get("status") == "running":
-                        already_running = True
-                        break
-                if not already_running:
-                    print(f"Suggestions Auto-Heal: Ticker {ticker} is missing price records. Starting background backfill...")
-                    jid = _job_new("backfill", f"Backfilling {ticker}")
-                    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+                # _start_backfill is a no-op if one is already in flight, so polling is safe.
+                print(f"Suggestions Auto-Heal: Ticker {ticker} is missing price records. Ensuring backfill...")
+                _start_backfill(ticker)
 
     # Establish latest dates/states as part of cache key
     latest_price = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()
@@ -1460,8 +1469,7 @@ def add_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     db.add(UniverseTicker(ticker=ticker))
     db.commit()
     clear_suggestions_cache()
-    jid = _job_new("backfill", f"Backfilling {ticker}")
-    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+    jid = _start_backfill(ticker)
     return {"status": "added", "ticker": ticker, "job_id": jid}
 
 @app.post("/api/universe/backfill")
@@ -1474,8 +1482,7 @@ def backfill_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     if not db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first():
         db.add(UniverseTicker(ticker=ticker))
         db.commit()
-    jid = _job_new("backfill", f"Backfilling {ticker}")
-    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+    jid = _start_backfill(ticker)
     return {"status": "started", "ticker": ticker, "job_id": jid}
 
 @app.post("/api/universe/remove")
