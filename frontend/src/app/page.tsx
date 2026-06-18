@@ -2384,16 +2384,16 @@ export default function Home() {
                           </div>
                         )}
                         <table className="trade-table" style={{ fontSize: '12px' }}>
-                          <thead><tr><th>Scheme</th><th>Buckets (sw/lt)</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>Stocks (sw/lt)</th></tr></thead>
+                          <thead><tr><th>Scheme</th><th>Buckets (sw/lt/hr)</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>Stocks (sw/lt/hr)</th></tr></thead>
                           <tbody>
                             {rows.map(([name, r]: any) => (
                               <tr key={name}>
                                 <td style={{ fontWeight: name === 'suggested' ? 700 : 400 }}>{noChange && name === 'current' ? 'Current (= Suggested)' : (labels[name] || name)}</td>
-                                <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}</td>
+                                <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}/{Math.round((r.buckets.high_risk || 0) * 100)}</td>
                                 <td className={r.metrics.total_return >= 0 ? 'text-green' : 'text-red'}>{r.metrics.total_return >= 0 ? '+' : ''}{(r.metrics.total_return * 100).toFixed(1)}%</td>
                                 <td>{r.metrics.sharpe_ratio.toFixed(2)}</td>
                                 <td className="text-red">{(r.metrics.max_drawdown * 100).toFixed(1)}%</td>
-                                <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}</td>
+                                <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}/{r.n_high_risk ?? 0}</td>
                               </tr>
                             ))}
                           </tbody>
