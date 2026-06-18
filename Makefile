@@ -1,5 +1,5 @@
 .PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
-        news-llm-batch news-llm-batch-collect llm-usage premium-ingest \
+        news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing \
         db-backup db-backup-list db-restore db-restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
@@ -11,6 +11,7 @@ SPLITS ?= 5
 HORIZON ?= 21
 SWING_HORIZON ?= 5
 STRENGTH ?= 0.10
+OOS_START ?= 2022-01-01
 # Full LLM-news window: matches NEWS_LLM_START so `make news-llm` backfills everything to 2021.
 START ?= 2021-01-01
 NEWS_START ?= $(START)
@@ -57,6 +58,7 @@ help:
 	@echo "  make longterm-tilt     - A/B backtest the insider-buy MPT tilt [STRENGTH=0.10]"
 	@echo "  make swing-eval        - Swing model walk-forward + portfolio sim, WITH vs WITHOUT LLM news [SWING_HORIZON=5]"
 	@echo "  make swing-train       - Train + save the production swing model served in the UI [SWING_HORIZON=5]"
+	@echo "  make exec-timing       - Forward-walk: best time of day to enter swing trades [OOS_START=2022-01-01]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -136,6 +138,12 @@ longterm-eval:
 	@echo "🔭 Long-term insider-alpha walk-forward (daily, ~1-3 month horizon) [HORIZON=$(HORIZON)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py longterm-eval --horizon $(HORIZON)
+
+exec-timing:
+	@echo "========================================================================"
+	@echo "🕐 Execution-timing forward-walk: when to enter swing trades (open→close) [OOS_START=$(OOS_START) SWING_HORIZON=$(SWING_HORIZON) SPLITS=$(SPLITS)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) -m ml_engine.exec_timing --horizon $(SWING_HORIZON) --splits $(SPLITS) --oos-start $(OOS_START)
 
 news-llm:
 	@echo "========================================================================"
