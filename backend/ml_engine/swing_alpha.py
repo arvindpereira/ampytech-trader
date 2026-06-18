@@ -239,15 +239,19 @@ def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, prog
 
 
 def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
-                         exclude_premium=False):
-    """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics)."""
+                         exclude_premium=False, regime_gated=True):
+    """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics).
+    `regime_gated` applies the live regime overlay (crisis-shrink) so the backtest matches execution."""
     oos, prices_df, _ = swing_oos_frame(horizon, n_splits, warmup_frac, oos_start, progress_cb,
                                         exclude_premium=exclude_premium)
     if oos is None or oos.empty:
         return [], {}
+    from ml_engine.models import compute_regime_series
+    regime_by_date = compute_regime_series(oos_start) if regime_gated else None
     curve, metrics = simulate_portfolio_chronological(oos, prices_df, horizon=horizon,
                                                       stop_max=SWING_STOP_MAX, stop_min=SWING_STOP_MIN,
-                                                      atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT)
+                                                      atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT,
+                                                      regime_by_date=regime_by_date)
     return curve, metrics
 
 

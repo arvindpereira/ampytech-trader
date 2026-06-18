@@ -14,8 +14,9 @@ HORIZONS = [3, 5, 7, 10, 15]
 
 def horizon_study(horizons=None, n_splits=5, oos_start="2022-01-01", progress_cb=None):
     from ml_engine.swing_alpha import swing_oos_frame
-    from ml_engine.models import simulate_portfolio_chronological
+    from ml_engine.models import simulate_portfolio_chronological, compute_regime_series
     horizons = horizons or HORIZONS
+    regime_by_date = compute_regime_series(oos_start)   # gate to match live execution (regime depends on oos_start, not horizon)
     rows = []
     for i, h in enumerate(horizons):
         if progress_cb:
@@ -26,7 +27,7 @@ def horizon_study(horizons=None, n_splits=5, oos_start="2022-01-01", progress_cb
             continue
         _, m = simulate_portfolio_chronological(oos, prices_df, horizon=h, stop_max=SWING_STOP_MAX,
                                                 stop_min=SWING_STOP_MIN, atr_mult=SWING_ATR_STOP_MULT,
-                                                tp_mult=SWING_TP_MULT)
+                                                tp_mult=SWING_TP_MULT, regime_by_date=regime_by_date)
         rows.append({"horizon": h, "n": int(len(oos)), **(m or {})})
     if progress_cb:
         progress_cb(100, "Complete")
