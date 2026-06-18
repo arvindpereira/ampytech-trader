@@ -20,6 +20,9 @@ from app.database import init_db, SessionLocal, RecentPrice, DailyPrice, Univers
 # Symbols that differ between Massive/Polygon (class-B uses a dot) and Yahoo (uses a dash).
 MASSIVE_SYMBOL_OVERRIDES = {"BRK-B": "BRK.B"}
 
+# Fictional tickers (e.g. SpaceX SPACE) that should be generated synthetically.
+FICTIONAL_TICKERS = {"SPACE"}
+
 
 def map_ticker_to_massive(ticker):
     return MASSIVE_SYMBOL_OVERRIDES.get(ticker, ticker)
@@ -125,7 +128,17 @@ def fetch_yahoo_daily(ticker, start_date, end_date):
                 time.sleep(backoff_sec)
                 backoff_sec *= 2.0
                 continue
-            if res.status_code in (400, 404):
+            if res.status_code == 400:
+                try:
+                    res_json = res.json()
+                    err_desc = res_json.get("chart", {}).get("error", {}).get("description", "")
+                    if "Data doesn't exist for startDate" in err_desc:
+                        return "PRE_IPO_LIMIT"
+                except Exception:
+                    pass
+                print(f"Yahoo has no data for {ticker} ({yahoo_symbol}): HTTP {res.status_code} (likely delisted/renamed).")
+                return []
+            if res.status_code == 404:
                 print(f"Yahoo has no data for {ticker} ({yahoo_symbol}): HTTP {res.status_code} (likely delisted/renamed).")
                 return []
             res.raise_for_status()
@@ -212,29 +225,77 @@ def _write_bars(db, Model, ticker, bars, daily=False):
     """Upserts a bar series into the given price Model, backfilling indicators on existing rows."""
     if not bars:
         return 0, 0
-    sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(bars, daily=daily)
 
-    existing_map = {p.date: p for p in db.query(Model).filter(Model.ticker == ticker).all()}
-    new_records = []
-    updated = 0
+    # 1. Fetch historical bars from database to ensure correct indicator computation
+    history = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.desc()).limit(100).all()
+
+    # Convert DB records to the dict format
+    combined_bars_map = {}
+    for h in history:
+        # Reconstruct timestamp
+        try:
+            if daily:
+                dt = datetime.strptime(h.date, "%Y-%m-%d")
+            else:
+                dt = datetime.strptime(h.date, "%Y-%m-%d %H:%M:%S")
+            t_ms = int(dt.timestamp() * 1000)
+        except Exception:
+            continue
+        combined_bars_map[h.date] = {
+            "t": t_ms, "o": h.open, "h": h.high, "l": h.low, "c": h.close, "v": h.volume
+        }
+
+    # Add new bars (they will overwrite historical if date matches)
     for bar in bars:
         epoch_ms = bar.get("t")
         if not epoch_ms:
             continue
         date_str = timestamp_to_str(epoch_ms, daily=daily)
+        combined_bars_map[date_str] = bar
+
+    # Sort combined bars chronologically
+    combined_bars = sorted(combined_bars_map.values(), key=lambda x: x["t"])
+
+    # Compute indicators on the combined list
+    sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(combined_bars, daily=daily)
+
+    existing_map = {p.date: p for p in db.query(Model).filter(Model.ticker == ticker).all()}
+    new_records = []
+    updated = 0
+
+    # We only want to write or update bars that were actually in the newly fetched `bars`
+    new_bar_dates = {timestamp_to_str(b["t"], daily=daily) for b in bars if b.get("t")}
+
+    for date_str in new_bar_dates:
+        bar = combined_bars_map[date_str]
         macd_pair = macd_map.get(date_str)
 
         existing = existing_map.get(date_str)
         if existing:
             changed = False
-            if existing.sma_10 is None and date_str in sma_10_map:
+            # Check and update standard fields
+            if existing.open != float(bar["o"]):
+                existing.open = float(bar["o"]); changed = True
+            if existing.high != float(bar["h"]):
+                existing.high = float(bar["h"]); changed = True
+            if existing.low != float(bar["l"]):
+                existing.low = float(bar["l"]); changed = True
+            if existing.close != float(bar["c"]):
+                existing.close = float(bar["c"]); changed = True
+            if existing.volume != float(bar["v"]):
+                existing.volume = float(bar["v"]); changed = True
+
+            # Update indicators if they differ or are newly calculated
+            if date_str in sma_10_map and existing.sma_10 != sma_10_map[date_str]:
                 existing.sma_10 = sma_10_map[date_str]; changed = True
-            if existing.sma_50 is None and date_str in sma_50_map:
+            if date_str in sma_50_map and existing.sma_50 != sma_50_map[date_str]:
                 existing.sma_50 = sma_50_map[date_str]; changed = True
-            if existing.rsi_14 is None and date_str in rsi_14_map:
+            if date_str in rsi_14_map and existing.rsi_14 != rsi_14_map[date_str]:
                 existing.rsi_14 = rsi_14_map[date_str]; changed = True
-            if existing.macd is None and macd_pair:
-                existing.macd, existing.macd_signal = macd_pair; changed = True
+            if macd_pair:
+                if existing.macd != macd_pair[0] or existing.macd_signal != macd_pair[1]:
+                    existing.macd, existing.macd_signal = macd_pair; changed = True
+
             if changed:
                 db.add(existing); updated += 1
             continue
@@ -249,10 +310,120 @@ def _write_bars(db, Model, ticker, bars, daily=False):
             macd_signal=macd_pair[1] if macd_pair else None,
         ))
     if new_records:
-        db.bulk_save_objects(new_records)
+        # Upsert: another writer (scheduler fetch + a manual backfill, or two backfills) may have
+        # inserted the same (ticker, date) bars between our existing_map snapshot and this commit.
+        # ON CONFLICT DO NOTHING makes the insert idempotent so the race can't raise IntegrityError.
+        from sqlalchemy.dialects.sqlite import insert as _sqlite_insert
+        # Every row must carry the same column set (NULL for missing indicators), otherwise the
+        # multi-row VALUES insert renders inconsistently. Safe: both tables use a composite
+        # (ticker, date) PK with no autoincrement id.
+        cols = [c.name for c in Model.__table__.columns]
+        rows = [{c: getattr(r, c) for c in cols} for r in new_records]
+        stmt = _sqlite_insert(Model).values(rows).on_conflict_do_nothing(
+            index_elements=["ticker", "date"])
+        db.execute(stmt)
     if new_records or updated:
         db.commit()
     return len(new_records), updated
+
+
+def backfill_ticker(ticker, progress_cb=None):
+    """Fetch + store DAILY history and HOURLY recent bars for a single newly-added ticker.
+
+    `progress_cb(percent:int, stage:str)` is called as it advances so the UI can show a progress bar.
+    Reused by the background "add ticker" job. Safe to re-run (upserts)."""
+    ticker = ticker.upper().strip()
+    def report(p, s):
+        if progress_cb:
+            progress_cb(p, s)
+    report(5, f"Starting backfill for {ticker}")
+    init_db()
+    end_date = datetime.now()
+
+    if ticker in FICTIONAL_TICKERS:
+        report(100, "Synthetic ticker — nothing to fetch")
+        return {"daily": 0, "hourly": 0}
+
+    # 1) Daily history (Yahoo, full window)
+    report(15, "Fetching daily history (Yahoo)…")
+    daily_start = datetime.strptime(DAILY_HISTORY_START, "%Y-%m-%d")
+    daily_bars = fetch_yahoo_daily(ticker, daily_start, end_date)
+    db = SessionLocal()
+    daily_added = 0
+    try:
+        report(40, "Storing daily bars + indicators…")
+        daily_added, _ = _write_bars(db, DailyPrice, ticker, daily_bars, daily=True)
+    finally:
+        db.close()
+
+    # 2) Hourly recent bars (Massive, ~5y window)
+    report(30, "Fetching hourly bars (Massive)…")
+    hourly_start = end_date - timedelta(days=HOURLY_LOOKBACK_DAYS)
+    hourly_bars = fetch_massive_hourly(ticker, hourly_start, end_date)
+    db = SessionLocal()
+    hourly_added = 0
+    try:
+        report(45, "Storing hourly bars + indicators…")
+        hourly_added, _ = _write_bars(db, RecentPrice, ticker, hourly_bars, daily=False)
+    finally:
+        db.close()
+
+    # 3) LLM-score the ticker's news (the slow part — thousands of headlines via Ollama).
+    news_scored = 0
+    news_skipped = False
+    try:
+        from app.core.config import SWING_ENABLED, NEWS_LLM_START, OLLAMA_URL
+        import requests as _rq
+        ollama_up = False
+        try:
+            ollama_up = _rq.get(f"{OLLAMA_URL}/api/tags", timeout=3).status_code == 200
+        except Exception:
+            ollama_up = False
+        if SWING_ENABLED and ollama_up:
+            report(50, "Scoring news headlines with the LLM…")
+            from data_ingestion.news_llm import fetch_and_score
+            before = _count_news(ticker)
+            fetch_and_score(start=NEWS_LLM_START, tickers=[ticker],
+                            progress_cb=lambda f, note: report(50 + int(f * 49), note))
+            news_scored = _count_news(ticker) - before
+        elif not ollama_up:
+            news_skipped = True
+            report(95, "Skipped news scoring — Ollama offline")
+    except Exception as e:
+        print(f"News scoring failed for {ticker}: {e}")
+
+    total_news, latest_news = _news_coverage(ticker)
+    if news_skipped:
+        news_part = f"news scoring SKIPPED (Ollama offline) — {total_news:,} on file"
+    elif total_news:
+        news_part = f"news +{news_scored:,} new ({total_news:,} scored, latest {latest_news})"
+    else:
+        news_part = "no news found"
+    report(100, f"Done — prices +{daily_added} daily / +{hourly_added} hourly; {news_part}")
+    return {"daily": daily_added, "hourly": hourly_added, "news": news_scored,
+            "news_total": total_news, "news_latest": str(latest_news) if latest_news else None}
+
+
+def _count_news(ticker):
+    from app.database import NewsLLMScore
+    db = SessionLocal()
+    try:
+        return db.query(NewsLLMScore).filter(NewsLLMScore.ticker == ticker).count()
+    finally:
+        db.close()
+
+
+def _news_coverage(ticker):
+    """(total scored headlines, latest scored date) for a ticker — for the backfill summary."""
+    from app.database import NewsLLMScore
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        total = db.query(NewsLLMScore).filter(NewsLLMScore.ticker == ticker).count()
+        latest = db.query(func.max(NewsLLMScore.date)).filter(NewsLLMScore.ticker == ticker).scalar()
+        return total, latest
+    finally:
+        db.close()
 
 
 def _get_active_universe(db):
@@ -262,13 +433,18 @@ def _get_active_universe(db):
     return sorted(set(universe + [BENCHMARK_TICKER]))
 
 
-def _earliest_latest(db, Model, ticker):
+def _earliest_latest(db, Model, ticker, keep_time=False):
     latest = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.desc()).first()
     earliest = db.query(Model).filter(Model.ticker == ticker).order_by(Model.date.asc()).first()
 
     def to_dt(rec):
         if not rec:
             return None
+        if keep_time:
+            try:
+                return datetime.strptime(rec.date, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
         part = rec.date.split(" ")[0].split("T")[0]
         return datetime.strptime(part, "%Y-%m-%d")
     return to_dt(earliest), to_dt(latest)
@@ -316,10 +492,12 @@ def fetch_recent_prices():
 
     fetch_tasks = []
     for ticker in active_universe:
-        _, latest = _earliest_latest(db, RecentPrice, ticker)
+        if ticker in FICTIONAL_TICKERS:
+            continue
+        _, latest = _earliest_latest(db, RecentPrice, ticker, keep_time=True)
         if latest is None:
             fetch_tasks.append((ticker, hourly_start, end_date))
-        elif latest < end_date - timedelta(days=1):
+        elif latest < end_date - timedelta(minutes=5):
             fetch_tasks.append((ticker, max(hourly_start, latest), end_date))
     db.close()
 
@@ -346,6 +524,36 @@ def fetch_recent_prices():
                 continue
             added, updated = _write_bars(db, RecentPrice, ticker, bars, daily=False)
             print(f"{ticker}: +{added} new hourly bars, {updated} backfilled.")
+
+        # Synthetic SPACE hourly price generation using GE as proxy
+        active_universe = _get_active_universe(db)
+        if "SPACE" in active_universe:
+            space_count = db.query(RecentPrice).filter(RecentPrice.ticker == "SPACE").count()
+            if space_count < 100:
+                db.query(RecentPrice).filter(RecentPrice.ticker == "SPACE").delete()
+                ge_prices = db.query(RecentPrice).filter(RecentPrice.ticker == "GE").all()
+                if ge_prices:
+                    ge_latest = db.query(RecentPrice).filter(RecentPrice.ticker == "GE").order_by(RecentPrice.date.desc()).first()
+                    mult = 210.50 / ge_latest.close if ge_latest and ge_latest.close else 1.2
+                    new_space_prices = []
+                    for p in ge_prices:
+                        new_space_prices.append(RecentPrice(
+                            ticker="SPACE",
+                            date=p.date,
+                            open=p.open * mult,
+                            high=p.high * mult,
+                            low=p.low * mult,
+                            close=p.close * mult,
+                            volume=p.volume,
+                            sma_10=p.sma_10 * mult if p.sma_10 else None,
+                            sma_50=p.sma_50 * mult if p.sma_50 else None,
+                            rsi_14=p.rsi_14,
+                            macd=p.macd * mult if p.macd else None,
+                            macd_signal=p.macd_signal * mult if p.macd_signal else None
+                        ))
+                    db.bulk_save_objects(new_space_prices)
+                    db.commit()
+                    print(f"Synthesized {len(new_space_prices)} hourly prices for SPACE using GE as proxy (multiplier: {mult:.4f}).")
     finally:
         db.close()
     print("Hourly price fetch completed.\n")
@@ -367,8 +575,22 @@ def fetch_daily_history():
     print(f"Starting DAILY history fetch for {len(active_universe)} tickers "
           f"(since {DAILY_HISTORY_START})...")
 
+    # Load IPO markers to skip pre-IPO queries
+    import json
+    from app.core.config import DATA_STORAGE_DIR
+    ipo_markers_path = os.path.join(DATA_STORAGE_DIR, "ipo_markers.json")
+    ipo_markers = {}
+    if os.path.exists(ipo_markers_path):
+        try:
+            with open(ipo_markers_path, "r") as f:
+                ipo_markers = json.load(f)
+        except Exception:
+            pass
+
     fetch_tasks = []
     for ticker in active_universe:
+        if ticker in FICTIONAL_TICKERS:
+            continue
         earliest, latest = _earliest_latest(db, DailyPrice, ticker)
         if latest is None:
             fetch_tasks.append((ticker, default_start, end_date))
@@ -376,34 +598,88 @@ def fetch_daily_history():
         if latest < end_date - timedelta(days=1):
             fetch_tasks.append((ticker, latest, end_date))
         if earliest and default_start < earliest - timedelta(days=5):
+            if ticker in ipo_markers:
+                continue
             fetch_tasks.append((ticker, default_start, earliest))
     db.close()
 
     if not fetch_tasks:
         print("All tickers already up to date (daily).")
-        return
+    else:
+        print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...")
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(fetch_yahoo_daily, tk, s, e): (tk, s, e) for tk, s, e in fetch_tasks}
+            for future in as_completed(futures):
+                tk = futures[future][0]
+                try:
+                    bars = future.result()
+                    results_map.setdefault(tk, [])
+                    if bars == "PRE_IPO_LIMIT":
+                        results_map[tk] = "PRE_IPO_LIMIT"
+                    else:
+                        if isinstance(results_map[tk], list):
+                            results_map[tk].extend(bars)
+                except Exception as e:
+                    print(f"Error fetching daily {tk}: {e}")
 
-    print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...")
-    results_map = {}
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(fetch_yahoo_daily, tk, s, e): (tk, s, e) for tk, s, e in fetch_tasks}
-        for future in as_completed(futures):
-            tk = futures[future][0]
+        db = SessionLocal()
+        ipo_markers_updated = False
+        try:
+            for ticker, bars in results_map.items():
+                if bars == "PRE_IPO_LIMIT":
+                    earliest, _ = _earliest_latest(db, DailyPrice, ticker)
+                    if earliest:
+                        ipo_markers[ticker] = earliest.strftime("%Y-%m-%d")
+                        ipo_markers_updated = True
+                    continue
+                if not bars:
+                    print(f"No daily history available for {ticker} (likely delisted/renamed).")
+                    continue
+                added, updated = _write_bars(db, DailyPrice, ticker, bars, daily=True)
+                print(f"{ticker}: +{added} new daily bars, {updated} backfilled.")
+        finally:
+            db.close()
+
+        if ipo_markers_updated:
             try:
-                bars = future.result()
-                results_map.setdefault(tk, [])
-                results_map[tk].extend(bars)
+                with open(ipo_markers_path, "w") as f:
+                    json.dump(ipo_markers, f)
+                print(f"Saved IPO start markers to {ipo_markers_path}")
             except Exception as e:
-                print(f"Error fetching daily {tk}: {e}")
+                print(f"Error saving ipo_markers: {e}")
 
+    # Synthetic SPACE daily generation
     db = SessionLocal()
     try:
-        for ticker, bars in results_map.items():
-            if not bars:
-                print(f"No daily history available for {ticker} (likely delisted/renamed).")
-                continue
-            added, updated = _write_bars(db, DailyPrice, ticker, bars, daily=True)
-            print(f"{ticker}: +{added} new daily bars, {updated} backfilled.")
+        active_universe = _get_active_universe(db)
+        if "SPACE" in active_universe:
+            space_count = db.query(DailyPrice).filter(DailyPrice.ticker == "SPACE").count()
+            if space_count < 100:
+                db.query(DailyPrice).filter(DailyPrice.ticker == "SPACE").delete()
+                ge_prices = db.query(DailyPrice).filter(DailyPrice.ticker == "GE").all()
+                if ge_prices:
+                    ge_latest = db.query(DailyPrice).filter(DailyPrice.ticker == "GE").order_by(DailyPrice.date.desc()).first()
+                    mult = 210.50 / ge_latest.close if ge_latest and ge_latest.close else 1.2
+                    new_space_prices = []
+                    for p in ge_prices:
+                        new_space_prices.append(DailyPrice(
+                            ticker="SPACE",
+                            date=p.date,
+                            open=p.open * mult,
+                            high=p.high * mult,
+                            low=p.low * mult,
+                            close=p.close * mult,
+                            volume=p.volume,
+                            sma_10=p.sma_10 * mult if p.sma_10 else None,
+                            sma_50=p.sma_50 * mult if p.sma_50 else None,
+                            rsi_14=p.rsi_14,
+                            macd=p.macd * mult if p.macd else None,
+                            macd_signal=p.macd_signal * mult if p.macd_signal else None
+                        ))
+                    db.bulk_save_objects(new_space_prices)
+                    db.commit()
+                    print(f"Synthesized {len(new_space_prices)} daily prices for SPACE using GE as proxy (multiplier: {mult:.4f}).")
     finally:
         db.close()
     print("Daily history fetch completed.\n")

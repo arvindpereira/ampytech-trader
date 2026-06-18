@@ -150,7 +150,7 @@ def run_test():
         db.commit()
 
         api = MockAlpacaAPI(equity=100000.0, cash=50000.0)
-        execute_long_term_grid_trades(db, api, suggestions, "2026-06-01")
+        execute_long_term_grid_trades(db, api, suggestions, "2026-06-01", allowed_tickers={"MSFT"})
 
         # Tranche cap is 2% of 100k = $2,000. At $280/share, that is 7.14 shares.
         # Difference is (20k - 18.2k) / 280 = 6.43 shares.
@@ -177,7 +177,7 @@ def run_test():
             "long_term_allocation": [{"ticker": "MSFT", "weight": 0.05}]
         }
         api_sell = MockAlpacaAPI(equity=100000.0, cash=50000.0)
-        execute_long_term_grid_trades(db, api_sell, suggestions_low, "2026-06-01")
+        execute_long_term_grid_trades(db, api_sell, suggestions_low, "2026-06-01", allowed_tickers={"MSFT"})
 
         assert len(api_sell.submitted_orders) == 1, "Expected 1 order submitted"
         submitted_sell = api_sell.submitted_orders[0]
@@ -205,7 +205,7 @@ def run_test():
         db.commit()
 
         api_sell_skip = MockAlpacaAPI(equity=100000.0, cash=50000.0)
-        execute_long_term_grid_trades(db, api_sell_skip, suggestions_low, "2026-06-01")
+        execute_long_term_grid_trades(db, api_sell_skip, suggestions_low, "2026-06-01", allowed_tickers={"MSFT"})
 
         assert len(api_sell_skip.submitted_orders) == 0, f"Expected 0 orders submitted (skipped due to tax lock), got {len(api_sell_skip.submitted_orders)}"
         print("Passed Test 8!")
@@ -233,6 +233,36 @@ def run_test():
         shares = get_long_term_available_shares(db, "MSFT", "2026-06-01")
         assert shares == 0.0, f"Expected 0.0 long-term shares for short-term purchase_date, got {shares}"
         print("Passed Test 9!")
+
+        print("\n--- Test 10: Future orders ignored (look-ahead protection) ---")
+        # Clean MSFT orders and position first
+        db.query(VirtualPosition).filter(VirtualPosition.ticker == "MSFT").delete()
+        db.query(VirtualOrder).filter(VirtualOrder.ticker == "MSFT").delete()
+        db.commit()
+
+        # Add manual position with a long-term purchase_date (500 days ago relative to 2026-06-01)
+        long_term_date = (datetime.strptime("2026-06-01", "%Y-%m-%d") - timedelta(days=500)).strftime("%Y-%m-%d")
+        pos_lt = VirtualPosition(ticker="MSFT", quantity=50.0, entry_price=300.0, policy="rebalance", purchase_date=long_term_date)
+        db.add(pos_lt)
+
+        # Add a "future" sell order (dated 2026-06-15 relative to query date 2026-06-01)
+        future_sell = VirtualOrder(
+            id="test-future-sell",
+            ticker="MSFT",
+            qty=10.0,
+            side="sell",
+            type="market",
+            status="filled",
+            filled_price=320.0,
+            created_at="2026-06-15T10:00:00",
+            sim_date="2026-06-15"
+        )
+        db.add(future_sell)
+        db.commit()
+
+        shares = get_long_term_available_shares(db, "MSFT", "2026-06-01")
+        assert shares == 50.0, f"Expected 50.0 long-term shares (future sell ignored), got {shares}"
+        print("Passed Test 10!")
 
         print("\nALL UNIT TESTS PASSED SUCCESSFULLY! ✅")
 

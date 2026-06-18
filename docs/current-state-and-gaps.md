@@ -1,243 +1,62 @@
-# Current State, Known Gaps & Roadmap to "Trustworthy"
+# Current State, Known Gaps & Honest Assessment
 
-This is the most important doc. Your stated problem — *"it's very hard to know if the bot is doing
-anything reasonable"* — is real, and there are concrete reasons for it. This page separates **what works**
-from **what's mock or broken**, lists the bugs/discrepancies found by reading the code and DB, and gives a
-prioritized path to a system you can trust.
+The most important doc: **what's trustworthy, what's weak, and what to believe about the numbers.** It
+supersedes the earlier "mostly mock / mixed-resolution data" assessment — those data-quality issues are
+fixed. The honest concern now is subtler: the strategies *work*, but mostly in bull markets.
 
-## 1. Status at a glance
+## What's real and working
 
-```mermaid
-flowchart LR
-    subgraph Works["✅ Wired & runs"]
-        W1[Ingestion → SQLite]
-        W2[Feature build]
-        W3[3 models train + save]
-        W4[Suggestions API]
-        W5[Virtual broker + replay/sim]
-        W6[Dashboard 3 tabs]
-        W7[PyBroker backtest]
-    end
-    subgraph Suspect["⚠️ Runs but output not fully trustworthy"]
-        S1["Short-term edge small & decaying"]
-        S2["Sharpe metric prints 0.00 (G13)"]
-        S5[MPT = random search]
-        S6[Fabricated perf curve in API]
-        S7["Deep model stale vs new label (G14)"]
-    end
-    subgraph Works2["✅ Now honest"]
-        H1["Walk-forward OOS eval (G12)"]
-        H2["Triple-barrier target = executed trade"]
-    end
-    subgraph Missing["❌ Not really there yet"]
-        M1[Portfolio-level equity curve w/ capital limits]
-        M2[Validation metrics surfaced in UI]
-        M3[Real Alpaca tested]
-        M4[Confidence calibration]
-    end
-```
+- **End-to-end pipeline**: ingestion → features → models → suggestions → Alpaca **paper** execution →
+  scheduler (daily + intraday + weekly retrain) → UI. All live.
+- **Real data, point-in-time**: prices (hourly ~5y, daily 1998+), macro, and **real LLM-scored news**
+  (~226k headlines, dense from 2021). Features are *T−1*-only; news shifted +1 day. No mixed-resolution
+  leakage; sentiment has a real-vs-mock flag.
+- **Honest, look-ahead-free evaluation** (`make swing-eval`, Model Evaluation tab) with a movable
+  `oos_start`, stress windows, and explicit caveats.
+- **Per-stock strategy suggester** that is **self-validated** (following it lifted blended OOS Sharpe),
+  plus a **regime overlay** that auto-shrinks swing in defensive regimes.
+- **Capital buckets + soft caps**: execution never exceeds the user's per-strategy limits.
+- **Data safety**: commit-stamped Google-Drive DB backups with verified restore.
 
-### What genuinely works today
-- End-to-end plumbing: `fetch → train → serve → simulate/replay → dashboard` runs without manual glue.
-- Incremental, rate-limit-aware ingestion with local indicator computation and crisis-era data.
-- Three models train and persist; inference picks PyTorch→XGBoost→HMM correctly with fallbacks.
-- A faithful mock of the Alpaca REST API, so the executor code is "real-broker-ready".
-- Look-ahead discipline in the *intended* sense (feature shift(1), next-open fills, 252-row windows).
-- Dashboard tabs: **Suggestions** (signals + sentiment inspector + premium ingest), **Virtual Broker
-  Performance** (equity curve vs SPY/QQQ/BRK-B), **Universe & Portfolio Editor** (universe, cash,
-  holdings/policies, run replay/sim). A `real`/`simulated` mode toggle switches accounts.
+## The honest verdict on the strategies
 
-## 1b. Validation results
+1. **Swing + News is a bull-market amplifier, not an all-weather edge.** Out-of-sample *including the
+   2022 bear*, its Sharpe is ~0.70 (≈ market) and it lost **−25% in 2022 (worse than the S&P's −20%)**.
+   Earlier 1.1–1.75 Sharpes were an artifact of OOS windows that excluded 2022.
+2. **Long-term MPT** was genuinely bear-resilient (2022 +7%), but its **absolute backtest returns are
+   survivorship-inflated** — the universe is today's surviving winners. Trust the *relative/risk*
+   behavior, not the headline returns.
+3. **The blended, MPT-leaning book is the defensible stance** — and what the suggester + default config
+   now steer toward.
+4. **The legacy hourly short-term model is net-negative** (the threshold calibrator says "no edge").
+   Kept for comparison; not executed by default.
 
-### Triple-barrier rebuild (2026-06-15, latest)
-The short-term target is now a **triple-barrier WIN label**: 1 only if the ATR take-profit is hit *before*
-the stop within the horizon (else stop/timeout = 0). The execution brackets, the backtest time-stop
-(= horizon), and the label all share one set of params in `config.py`, so **the target equals the trade as
-executed**.
+See [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) for the tables.
 
-The target is now *correct* (it labels the trade as executed) and edge is judged by **walk-forward**
-(`run.py walkforward`): 5 expanding folds, each trained only on data **before** its test slice, predictions
-concatenated into one continuous out-of-sample series, scored by win rate **and** realised net return (after
-0.1% round-trip fees) of the trades a selective strategy would actually take.
+## Known caveats / limitations
 
-**Walk-forward OOS results (5 folds, 2023-08 → 2026-06, 297k bars):**
+- **Survivorship bias** in every backtest (a fixed current universe applied to the past) — worst
+  pre-2020, real even in 2022. Pre-2020 stress numbers are flattered.
+- **Single broad regime** of dense data (2021–2026): one real bear (2022). Small stress sample.
+- **MPT absolute returns are not a forward estimate.**
+- **HMM regime classifier** drives the overlay/scaling but hasn't been stress-validated as rigorously as
+  the swing/MPT eval — treat the overlay as a sensible guardrail, not a precise bear-timer.
+- **Ollama dependency**: swing news scoring stalls if Ollama is down (degrades gracefully to stale news).
+- **GitHub LFS**: ~1.1 GB of historical DB snapshots remain (capped; would need repo recreation to
+  reclaim). The DB is no longer tracked.
+- **Fictional `SPACE` ticker** is synthetic (GE-proxy) — not a tradeable signal.
 
-| Selection | n trades | OOS win rate | mean net ret/trade | Read |
-| :-- | :-- | :-- | :-- | :-- |
-| base rate (all bars) | — | 4.8% | ~0.000 | flat, as expected |
-| top 1% confidence | 2,977 | 10.0% | −0.0001 | break-even |
-| top 0.5% | 1,489 | 11.1% | +0.0006 | marginally positive |
-| **live BUY threshold 0.15** (≈top 0.3%) | **913** | **13.6%** | **+0.0027** | **positive edge** |
-| top 0.1% | 299 | 17.1% | +0.0093 | strongest, tiny sample |
-| Pooled OOS AUC | — | 0.689 (folds 0.64–0.73) | — | stable ranking skill |
+## Roadmap (optional, evidence-led)
 
-> **What walk-forward revealed (and corrected):**
-> 1. There **is a small, real out-of-sample edge** — but only in the most-confident tail. At the 0.15 entry
->    threshold the model wins 13.6% at a 2.5:1 payoff for **+0.27%/trade net of fees**; the top 0.1% reaches
->    +0.93%/trade. Broader selections (top 1%+) are ~break-even. So the strategy must stay **very selective**
->    (~300 signals/yr across 28 tickers).
-> 2. The earlier single 80/20 split that looked like "no edge" was just the **hardest, most-recent fold**
->    (fold 4 AUC 0.642, edge ≈ 0). The earlier "+410% backtest" and "precision 0.434" were **leaky/in-sample**
->    and are discarded.
-> 3. **The edge is fragile/decaying**: the latest fold (2025-11→2026-06) shows the top-5% net return turning
->    slightly negative. Treat this as a faint, regime-sensitive signal — not a money-printer.
+- Pressure-test the regime overlay across a real regime shift; tune `REGIME_SWING_FACTORS`.
+- Per-ticker / regime-conditional suggester refresh (v3: weekly auto-refresh with change alerts).
+- Trade-attribution on swing (is the edge concentrated in a few names/episodes?).
+- Curated X/social accounts as a secondary swing signal (deferred).
+- Broaden the universe carefully to reduce survivorship bias in future evaluations.
 
-**Bottom line:** data, labels, execution alignment, and now honest walk-forward evaluation are all in place
-and trustworthy. There is a **small, selective, somewhat-decaying OOS edge** — the first genuine positive
-signal, but far from "high-confidence money." Next is real alpha work (features, calibration,
-regime-conditioning) and a portfolio-level walk-forward equity curve with capital/overlap constraints. The
-long-term book compounds (~15%/yr) but is survivorship-biased.
+## Bottom line
 
-Also fixed during validation: a latent **feature-order bug** (XGBoost trained on unsorted columns while
-inference used sorted) that was masked by the always-preferred PyTorch path and would have broken live
-XGBoost suggestions. Training now sorts `feat_*` consistently.
-
-## 2. Known gaps & discrepancies (ranked by impact)
-
-### G1 — Mixed-resolution prices → data layer FIXED; ML rewiring is Phase 2 🟠 (was ⛔)
-**Resolved at the data layer (2026-06-15):** prices were split into two single-resolution tables that are
-never mixed — `recent_prices` (hourly, ~4.6y, Massive/Polygon, paginated) and `daily_prices` (daily, 1998→,
-Yahoo). The old single table that mixed Yahoo daily (pre-2022) with Massive hourly (post-2022) is gone.
-→ *Detail:* [data-pipeline.md §2](./data-pipeline.md#2-resolution-fixed-data-layer--two-clean-tables).
-
-**Still open (Phase 2 — ML rewiring):** the feature/model code hasn't moved yet. `features.py` windows are
-still **row counts** (now uniformly hourly, so internally consistent — but `target_3d_gain`, `sma_50`,
-`volatility_10`, the 252-"day" MPT window and 365-"day" tax rule now actually mean *hours/rows*). And the
-HMM/MPT long-term path still reads **hourly** `recent_prices` instead of the new `daily_prices`. To finish:
-(a) make short-term windows/targets explicitly hourly (e.g. a true "next-3-day" = next-~21-bar target), and
-(b) point the regime/MPT/long-term-grid code at `daily_prices`.
-
-### G2 — Sentiment: was a dead/mock input → now real news, wired correctly 🟢 (was 🟠)
-**Three problems, all fixed (2026-06-15):**
-1. Sentiment was only ever fetched for *today + yesterday* → every older training row got 0.0.
-   Added `backfill_news_sentiment` (`sentiment_fetcher.py --backfill`) which pages Polygon news
-   **~2021→now** per ticker, scores each article (publisher `insights` when present, else VADER), and
-   upserts daily `TickerSentiment(source='news', is_mock=False)` — covering the full hourly training window.
-2. Sentiment & macro silently failed to join (date vs `YYYY-MM-DD HH:MM:SS`). Now joined on a `cal_date`
-   key, so daily news/macro broadcast across each day's intraday bars. (Verified: macro join 100%.)
-3. Training now **excludes `is_mock=True`** rows, so mock Reddit/seed data no longer pollutes learning.
-
-Sentiment feeds the **short-term** model only (`combined_sentiment` = 0.6·news + 0.4·reddit, `sent_sma_3/7`,
-`sent_momentum`). The long-term/regime model is price+macro only (correct — no historical sentiment exists
-pre-2021, and none for the dot-com/2008 eras). Reddit history is unavailable (PRAW is live-only); premium
-is manual. *Remaining:* surface an "is_mock" badge in the UI; consider news decay/half-life weighting.
-
-### G3 — Held-out evaluation: added to training 🟡 (was 🟠)
-`train_models` now does a **time-ordered 80/20 split** and prints **out-of-sample ROC-AUC** and
-**precision at the BUY threshold (≥0.55) vs base rate** before fitting the production model on all data —
-an honest read on short-term signal quality. *Remaining:* persist these metrics and surface a "model
-scorecard" panel in the dashboard (still nothing in the UI), and add full walk-forward folds.
-
-### G4 — `/api/performance` fabricates an equity curve 🟠
-With `mode != live` and no logs, the endpoint returns a **random-walk curve and hard-coded metrics**
-(Sharpe 1.78, win rate 0.58) to make the UI look good. It's easy to mistake this for real performance.
-→ Return empty + an explicit "no data, run a replay" state; never fabricate.
-
-### G5 — MPT "optimizer" is a 10k-sample random search 🟡
-`calculate_optimal_weights` Monte-Carlo-samples weights rather than solving mean-variance. Fixed seed makes
-it deterministic but approximate and not truly optimal; the live path also ignores the crisis-covariance
-logic described in the README (only halves weights).
-→ Use a real solver (e.g. `cvxpy`/`PyPortfolioOpt`) and actually apply crisis covariance, or document it as
-a heuristic.
-
-### G6 — Replay/sim step per hourly bar while applying daily logic 🟡
-The sim/replay loops iterate over distinct SPY `date` values; since `recent_prices` is now **hourly** (by
-design — we want fine grain), a "6-month replay" steps through thousands of **hourly** bars. That's fine,
-*except* the per-bar logic still uses day-named units (3-row targets, 365-"day" tax holding, "next-day
-open"). Fix together with G1 Phase 2: make these units explicitly bar/time-aware.
-
-### G7 — Source/config drift vs docs 🟡 (partly resolved)
-- "Massive" is **Polygon.io** (prices/news/macro). FRED is **not** called; `fed_funds` is a 3-month
-  treasury-yield proxy. *(Now documented in [data-pipeline.md](./data-pipeline.md).)*
-- The product **README.md** still says "yfinance + FRED" and "2-year daily" — stale; this `docs/` set
-  reflects the actual code (hourly + daily two-table design). The README should be refreshed.
-- README/design mention crisis-covariance in the live allocator; not implemented in `app/main.py`.
-
-### G8 — Two unreconciled trade ledgers & global replay flag 🟡
-`executed_trades` (executor) and `virtual_orders` (broker) are separate; P&L attribution is split. The
-process-wide `sim_date.txt` can strand the server in replay mode and makes the live dashboard show replay
-data during a run (see [execution-and-simulation.md §1](./execution-and-simulation.md#1-the-virtual-alpaca-broker)).
-→ Unify the ledger; move sim-date into request scope or a dedicated replay session id.
-
-### G9 — Scheduled retrain skips the serving model 🟢
-Weekly `train_models()` retrains XGBoost+HMM only; inference prefers the PyTorch `.pth`, which goes stale.
-→ Have the weekly job also run `deep_models.py --train` (or make inference precedence explicit/configurable).
-
-### G10 — Crypto/forex in the universe → RESOLVED 🟢
-The universe was equity-only assumptions (whole shares, 365-day tax, SPY/QQQ-relative features) but
-included crypto/forex tickers. **Fixed (2026-06-15):** the universe is now equities + ETFs only (28
-survivors/leaders across the dot-com, mobile, and AI cohorts). Survivorship bias is inherent for the
-pre-2003 daily history (delisted names like SUNW/YHOO/AOL are unavailable from any source).
-
-### G11 — Short-term target now tradable (triple-barrier) ✅ DONE
-Replaced the volatility-touch breakout target with a **triple-barrier WIN label** (`triple_barrier_labels`
-in `features.py`): +1 only if the ATR take-profit is touched before the stop within the horizon, conservative
-on same-bar ambiguity, NaN on the censored tail. Label brackets, live order brackets, and the backtest
-time-stop now share `config.py` params (`SHORT_TERM_*`), so target ≈ execution. Entry threshold is
-config-driven (`SHORT_TERM_BUY_THRESHOLD=0.15`), since the old 0.55 produced 0 trades at the new ~5% base
-rate. Honest verdict comes from walk-forward (G12), not the in-sample backtest. *Remaining polish:*
-price-level feature hygiene (`feat_high/low/close` are non-stationary absolute prices — normalize or drop).
-
-### G12 — Walk-forward out-of-sample evaluation ✅ DONE (small real edge found)
-`walk_forward_evaluate()` (`run.py walkforward`): expanding folds, each trained only on data before its test
-slice; pooled OOS predictions scored by win rate **and realised net return** (the labeler now emits per-trade
-`trade_ret`). Result (see §1b): pooled AUC 0.689, and a **small but real edge in the confident tail**
-(+0.27%/trade net at the 0.15 threshold; +0.93% in the top 0.1%), break-even or worse below that, decaying in
-the latest fold. This replaces the discarded in-sample +410% as the trustworthy read.
-→ *Remaining:* a **portfolio-level walk-forward equity curve** with capital/overlap/position limits (current
-metric is per-trade expectancy, additive, ignoring that signals overlap) — the final honest P&L picture.
-
-### G13 — PyBroker Sharpe always prints 0.00 🟡
-Every short-term backtest reports `Sharpe 0.00` regardless of returns — a metrics bug (likely needs
-`StrategyConfig` bootstrap/return settings, or compute Sharpe from the equity curve ourselves).
-→ Fix so risk-adjusted performance is visible; don't trust the current value.
-
-### G14 — Deep model stale vs new label; precedence auto-prefers it 🟡
-The PyTorch `.pth` was trained on the *breakout* label and is currently **sidelined** (`saved_models/
-_old_breakout_pth/`) so the validated XGBoost serves. Inference auto-prefers PyTorch when a `.pth` exists.
-→ Retrain the deep model on the triple-barrier label, validate its own entry threshold (its prob scale
-differs), and only then restore it — or make the served model explicit/configurable.
-
-## 3. Suggested roadmap (in order)
-
-```mermaid
-flowchart TD
-    P0["P0 · Make data honest ✅ DONE<br/>two clean tables (hourly+daily)<br/>real news sentiment + fixed joins"]
-    P1["P1 · Make models use the data ✅ DONE<br/>short-term=hourly, long-term=daily<br/>held-out AUC; feature-order bug fixed"]
-    P2["P2 · Make the signal tradable ✅ DONE<br/>G11: triple-barrier target = executed trade<br/>config-driven brackets/threshold"]
-    P3["P3 · Trust the P&L ✅ DONE<br/>G12 walk-forward: small real OOS edge<br/>(per-trade expectancy)"]
-    P4["P4 · Grow the edge (NOW)<br/>feature hygiene + new features; calibration<br/>portfolio equity curve; G13 Sharpe; G14 deep model"]
-    P5["P5 · Visible quality & trustworthy execution<br/>G3 UI scorecard; G4 stop fake perf<br/>G6/G8 true replay + one ledger; G5 real MPT"]
-    P6["P6 · Go live carefully<br/>real Alpaca paper, then tiny real $<br/>monitoring + kill switch"]
-    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6
-```
-
-> **Where we are:** P0–P3 done — the bot uses the data correctly, the short-term target equals the executed
-> trade, and **walk-forward shows a small but real out-of-sample edge** in the confident tail (+0.27%/trade
-> net at the 0.15 threshold; pooled AUC 0.689) — not the discarded in-sample +410%, not "nothing." The
-> infrastructure and evaluation are now trustworthy. The edge is thin, very selective and decaying, so the
-> work shifts to **growing** it. Long-term book compounds (~15%/yr) but is survivorship-biased.
-
-**P4 — Grow the edge (now).** Feature hygiene (drop/normalize non-stationary price-level features) and new
-features; probability calibration; a portfolio-level walk-forward **equity curve** with capital/overlap
-limits (current metric is per-trade expectancy); fix the Sharpe metric (G13); retrain+validate the deep
-model on the new label (G14). Goal: lift the confident-tail edge and confirm it holds in the latest regime.
-
-**P5 — Make quality visible & execution trustworthy.** UI model scorecard (G3), stop fabricating perf (G4),
-true day-stepped replay + unified ledger (G6/G8), real MPT solver + crisis covariance (G5).
-
-**P6 — Go live carefully.** Exercise the real Alpaca paper path, add monitoring + a kill switch, then size
-up from tiny real capital only after the walk-forward edge is consistently positive in the most recent folds.
-
-## 4. Quick wins (low effort, high clarity)
-- **[done]** Split prices into clean hourly (`recent_prices`) + daily (`daily_prices`) tables → fixes the
-  G1/G10 data-layer issues. Next: the G1 Phase-2 ML rewiring (bar-aware targets; point regime/MPT at `daily_prices`).
-- Replace the fabricated `/api/performance` branch with an explicit empty state (G4).
-- Print XGBoost out-of-sample AUC and a confusion matrix at train time (G3 first step).
-- Add a banner in the UI when sentiment for shown tickers is `is_mock` (G2 transparency).
-- Empty `sim_date.txt` on server startup to avoid stranded-replay confusion (G8).
-
----
-
-*All gaps above were verified against the code and the live `trading_system.db` on 2026-06-14. As the code
-evolves, re-verify before acting on a specific line/flag reference.*
+This is a working, honestly-evaluated personal trading bot — **not a proven alpha machine**. Its
+realistic bar is *market-like-or-modestly-better returns with controllable drawdowns and limits you
+set*, leaning on MPT for resilience and swing as a smaller, regime-gated bull sleeve. Size real capital
+against the **drawdowns**, not the bull-market CAGRs.

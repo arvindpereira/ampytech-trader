@@ -32,6 +32,8 @@ TICKER_UNIVERSE = [
     "GOOGL", "NVDA", "AVGO", "NOK", "BB",
     # AI boom leaders
     "META", "TSM", "ASML", "MU", "ARM", "PLTR", "SMCI",
+    # Newly IPOed and diversified sectors
+    "SPACE", "WMT", "XOM", "JPM", "LLY", "PG", "GE", "JNJ",
 ]
 
 # Benchmark used for the long-term performance comparison (kept separate so it is always
@@ -45,6 +47,13 @@ if not DATA_STORAGE_DIR:
 
 os.makedirs(DATA_STORAGE_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_STORAGE_DIR, "trading_system.db")
+
+# --- Google Drive backup (so the DB can leave Git LFS without losing data) ----------------------
+# OAuth "Desktop app" client (Google Cloud Console → APIs & Services → Credentials, with the Drive API
+# enabled). First `make db-backup` opens a browser to consent; the token is cached in data/gdrive_token.json.
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "1v694--8X1YkvPp-3oRQ4no8hN0xmWCdY")
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 
 # Data Collection Resolution & Range
 #
@@ -85,14 +94,92 @@ SHORT_TERM_TP_MULT = float(os.getenv("SHORT_TERM_TP_MULT", "2.5"))              
 SHORT_TERM_STOP_MIN = float(os.getenv("SHORT_TERM_STOP_MIN", "0.015"))          # stop floor 1.5%
 SHORT_TERM_STOP_MAX = float(os.getenv("SHORT_TERM_STOP_MAX", "0.05"))           # stop cap 5%
 
-# Entry/exit probability thresholds on the model's P(take-profit before stop). The triple-barrier
-# target has a low (~5%) base rate, so calibrated probs are small — break-even for a 2.5:1 payoff
-# is ~0.286 ignoring timeouts. BUY only the high-confidence tail; tuned against the backtest.
-SHORT_TERM_BUY_THRESHOLD = float(os.getenv("SHORT_TERM_BUY_THRESHOLD", "0.15"))
+# Which short-term model actually serves (and is what the BUY threshold is calibrated against).
+# 'xgboost' (default) is cheap to walk-forward/calibrate; 'pytorch' is opt-in/experimental. Making this
+# explicit avoids "whatever .pth exists" silently serving an un-calibrated model (PR#2 review C6/C14).
+SERVED_MODEL = os.getenv("SERVED_MODEL", "xgboost").lower()
+
+# Entry/exit probability thresholds on the model's P(take-profit before stop). A fixed absolute threshold
+# does NOT transfer between models (different prob scales), so it is CALIBRATED per served model by
+# `calibrate_threshold()` (written to saved_models/threshold.json) to hit SHORT_TERM_SIGNAL_RATE on a
+# time-ordered holdout. SHORT_TERM_BUY_THRESHOLD is only the fallback when threshold.json is absent.
+SHORT_TERM_SIGNAL_RATE = float(os.getenv("SHORT_TERM_SIGNAL_RATE", "0.005"))  # target ~top 0.5% of bars
+SHORT_TERM_BUY_THRESHOLD = float(os.getenv("SHORT_TERM_BUY_THRESHOLD", "0.23"))
 SHORT_TERM_SELL_THRESHOLD = float(os.getenv("SHORT_TERM_SELL_THRESHOLD", "0.02"))
 
 # Long-term model rebalances on DAILY bars; covariance/return window in trading days.
 MPT_WINDOW_DAYS = int(os.getenv("MPT_WINDOW_DAYS", "252"))                  # ~1 trading year
+
+# Alternative data and hedging configurations
+# Insider data now has a REAL source (SEC EDGAR Form 4, free/no-key); Congress (STOCK Act) is still only
+# synthetic. Kept OFF by default until the real insider signal is validated by walk-forward.
+# See pr2_review_and_updates.md (C1).
+ALT_DATA_ENABLED = os.getenv("ALT_DATA_ENABLED", "False").lower() == "true"
+
+# SEC EDGAR requires a descriptive User-Agent with contact info; set SEC_USER_AGENT to your own.
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "ampytech-trader research contact@example.com")
+try:
+    INSIDER_FETCH_DAYS = int(os.getenv("INSIDER_FETCH_DAYS", "365"))   # how much Form 4 history to pull
+except ValueError:
+    INSIDER_FETCH_DAYS = 365
+try:
+    INSIDER_LOOKBACK_DAYS = int(os.getenv("INSIDER_LOOKBACK_DAYS", "30"))
+except ValueError:
+    INSIDER_LOOKBACK_DAYS = 30
+try:
+    CONGRESS_LOOKBACK_DAYS = int(os.getenv("CONGRESS_LOOKBACK_DAYS", "90"))
+except ValueError:
+    CONGRESS_LOOKBACK_DAYS = 90
+HEDGE_MODE = os.getenv("HEDGE_MODE", "none")  # 'none', 'beta_neutral', 'pair_trade'
+
+try:
+    LONGTERM_TILT_STRENGTH = float(os.getenv("LONGTERM_TILT_STRENGTH", "0.15"))
+except ValueError:
+    LONGTERM_TILT_STRENGTH = 0.15
+
+# Local LLM (Ollama) for scoring news headlines into per-ticker directional sentiment for the SWING model.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:e4b")   # local, fast, JSON-clean (qwen3.5 emits empty under json mode)
+NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2021-01-01")  # how far back to score headlines (~5y, dense from 2021)
+
+# --- Swing (multi-day) strategy ---------------------------------------------------------------
+# The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
+# features add a real portfolio-level edge (higher return/Sharpe, lower drawdown) over a technicals-only
+# baseline — the first strategy in this repo to clear that bar. Served via /api/suggestions; the bracket
+# numbers below MUST match the triple-barrier labels build_all_features used to train it.
+SWING_ENABLED = os.getenv("SWING_ENABLED", "True").lower() in ("true", "1", "yes")
+SWING_HORIZON_DAYS = int(os.getenv("SWING_HORIZON_DAYS", "5"))   # holding horizon in trading days
+SWING_ATR_STOP_MULT = float(os.getenv("SWING_ATR_STOP_MULT", "2.0"))
+SWING_TP_MULT = float(os.getenv("SWING_TP_MULT", "2.5"))
+SWING_STOP_MIN = float(os.getenv("SWING_STOP_MIN", "0.015"))
+SWING_STOP_MAX = float(os.getenv("SWING_STOP_MAX", "0.05"))
+# Cap concurrent BUYs to the highest-conviction names, matching the ≤10 open positions the portfolio
+# simulation used to validate the edge. Lower-ranked above-threshold candidates are demoted to HOLD.
+SWING_TOP_N = int(os.getenv("SWING_TOP_N", "10"))
+# Fixed fraction of equity per swing position. The portfolio sim that validated the edge used fixed 10%
+# allocations (NOT Kelly) — the model's win-prob is a ranking score, not a calibrated Kelly input, so
+# Kelly sizing would zero most positions. Keep this in lock-step with that sim.
+SWING_POSITION_PCT = float(os.getenv("SWING_POSITION_PCT", "0.10"))
+# Which strategy actually places intraday bracket trades on the broker: 'swing' (validated edge) or
+# 'short_term' (legacy hourly model — net-negative in portfolio sim, kept only for comparison).
+EXECUTION_STRATEGY = os.getenv("EXECUTION_STRATEGY", "swing").lower()
+# Whether to ALSO run the long-term MPT grid/tranche rebalancer alongside swing. Off by default: swing
+# alone targets ~100% of equity, so enabling both would deploy the long-term book on margin.
+LONGTERM_GRID_ENABLED = os.getenv("LONGTERM_GRID_ENABLED", "False").lower() in ("true", "1", "yes")
+# Re-execute swing trades intraday (hourly, market hours) right after each fresh-news signal re-run —
+# replacing exited slots and running horizon exits without waiting for the next 09:45 cycle. Only acts
+# while the market is open; with ~100% deployed it mostly fills slots freed by bracket/horizon exits.
+INTRADAY_EXECUTION_ENABLED = os.getenv("INTRADAY_EXECUTION_ENABLED", "True").lower() in ("true", "1", "yes")
+
+# Regime-aware overlay: swing was shown to AMPLIFY bear drawdowns (−25% in 2022 vs −20% S&P), so when
+# the HMM regime turns defensive, shrink the swing bucket's effective capital (freed capital becomes
+# cash — we don't force-sell, consistent with the soft-cap policy). Long-term MPT is left at its bucket.
+REGIME_OVERLAY_ENABLED = os.getenv("REGIME_OVERLAY_ENABLED", "True").lower() in ("true", "1", "yes")
+REGIME_SWING_FACTORS = {
+    "crisis": float(os.getenv("REGIME_SWING_CRISIS", "0.25")),       # crisis → swing capital ×0.25
+    "transition": float(os.getenv("REGIME_SWING_TRANSITION", "0.6")),  # transition → ×0.6
+    "growth": 1.0,
+}
 
 # How far back news sentiment can be backfilled (Polygon news history starts ~2021).
 NEWS_HISTORY_START = os.getenv("NEWS_HISTORY_START", "2021-01-01")

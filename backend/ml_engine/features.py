@@ -1,5 +1,32 @@
 import pandas as pd
 import numpy as np
+import os
+import sys
+
+from app.database import SessionLocal, CongressDisclosure, InsiderDisclosure
+from app.core.config import ALT_DATA_ENABLED, INSIDER_LOOKBACK_DAYS, CONGRESS_LOOKBACK_DAYS
+
+def load_alternative_data_from_db():
+    if not ALT_DATA_ENABLED:
+        return pd.DataFrame(), pd.DataFrame()
+    db = SessionLocal()
+    try:
+        congress = db.query(CongressDisclosure).all()
+        insider = db.query(InsiderDisclosure).all()
+        congress_df = pd.DataFrame([{
+            "ticker": c.ticker, "date": c.date, "estimated_value": c.estimated_value, "transaction_type": c.transaction_type
+        } for c in congress]) if congress else pd.DataFrame()
+        insider_df = pd.DataFrame([{
+            "ticker": i.ticker, "date": i.date, "total_value": i.total_value,
+            "transaction_type": i.transaction_type, "relationship": i.relationship,
+            "insider_name": i.insider_name,
+        } for i in insider]) if insider else pd.DataFrame()
+        return congress_df, insider_df
+    except Exception as e:
+        print(f"Error loading alternative disclosures from DB: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+    finally:
+        db.close()
 
 def compute_rsi(prices, window=14):
     """Computes the Relative Strength Index (RSI) using native pandas."""
@@ -103,7 +130,8 @@ def triple_barrier_labels(high, low, close, atr, horizon,
 
 def build_features_for_df(df, sentiment_df=None, macro_df=None,
                           target_horizon_bars=14, target_atr_stop_mult=2.0,
-                          target_tp_mult=2.5, target_stop_min=0.015, target_stop_max=0.05):
+                          target_tp_mult=2.5, target_stop_min=0.015, target_stop_max=0.05,
+                          congress_df=None, insider_df=None):
     """
     Computes all features for a single ticker's DataFrame.
     Assumes df contains columns: ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume'].
@@ -124,6 +152,10 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
     # --- Technical Indicators ---
     df['returns'] = df['close'].pct_change()
     df['volatility_10'] = df['returns'].rolling(window=10).std()
+
+    # Parkinson Volatility (10-bar window) - extreme value range volatility
+    ln_hl_sq = np.log(df['high'] / (df['low'] + 1e-9)) ** 2
+    df['parkinson_vol_10'] = np.sqrt(ln_hl_sq.rolling(window=10).sum() / (4 * np.log(2) * 10))
 
     # Moving Averages
     if 'sma_10' in df.columns and df['sma_10'].notna().sum() > 10:
@@ -159,6 +191,17 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
 
     # ATR for volatility sizing
     df['atr_14'] = compute_atr(df, window=14)
+
+    # --- Stationarity & Price-Level Normalization ---
+    df['volume_ratio'] = df['volume'] / (df['volume'].rolling(window=20).mean() + 1e-9)
+    df['atr_ratio'] = df['atr_14'] / (df['close'] + 1e-9)
+    df['close_to_sma10'] = df['close'] / (df['sma_10'] + 1e-9) - 1.0
+    df['close_to_sma50'] = df['close'] / (df['sma_50'] + 1e-9) - 1.0
+    df['high_low_ratio'] = (df['high'] - df['low']) / (df['close'] + 1e-9)
+    df['close_to_bb_mid'] = df['close'] / (df['bb_mid'] + 1e-9) - 1.0
+    df['returns_vol_adj'] = df['returns'] / (df['volatility_10'] + 1e-9)
+    df['macd_ratio'] = df['macd'] / (df['close'] + 1e-9)
+    df['macd_signal_ratio'] = df['macd_signal'] / (df['close'] + 1e-9)
 
     # --- Merge Sentiment ---
     if sentiment_df is not None and not sentiment_df.empty:
@@ -200,11 +243,14 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         df['news_mention_count'] = 0
         df['reddit_mention_count'] = 0
 
-    # Sentiment engineered features
+    # Sentiment engineered features with exponential decay (half-life of 7 bars, ~1 trading day)
     df['combined_sentiment'] = 0.6 * df['news_sentiment_score'] + 0.4 * df['reddit_sentiment_score']
-    df['sent_sma_3'] = df['combined_sentiment'].rolling(window=3).mean()
-    df['sent_sma_7'] = df['combined_sentiment'].rolling(window=7).mean()
-    df['sent_momentum'] = df['combined_sentiment'] - df['combined_sentiment'].rolling(window=10).mean().fillna(0.0)
+    half_life = 7.0
+    alpha = 1.0 - np.exp(-np.log(2.0) / half_life)
+    df['combined_sentiment_decayed'] = df['combined_sentiment'].ewm(alpha=alpha, adjust=False).mean()
+    df['sent_sma_3'] = df['combined_sentiment_decayed'].rolling(window=3).mean()
+    df['sent_sma_7'] = df['combined_sentiment_decayed'].rolling(window=7).mean()
+    df['sent_momentum'] = df['combined_sentiment_decayed'] - df['combined_sentiment_decayed'].rolling(window=10).mean().fillna(0.0)
 
     # --- Merge Macro Indicators ---
     if macro_df is not None and not macro_df.empty:
@@ -228,6 +274,90 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         df['fed_funds'] = 0.05  # Sensible historical baseline
         df['yield_spread'] = 0.01
 
+    # --- Alternative Data Features ---
+    if congress_df is None or insider_df is None:
+        c_global, i_global = load_alternative_data_from_db()
+        # Filter for the ticker of df
+        ticker = df['ticker'].iloc[0] if not df.empty and 'ticker' in df.columns else None
+        if ticker:
+            congress_df = c_global[c_global['ticker'] == ticker] if not c_global.empty else pd.DataFrame()
+            insider_df = i_global[i_global['ticker'] == ticker] if not i_global.empty else pd.DataFrame()
+        else:
+            congress_df = pd.DataFrame()
+            insider_df = pd.DataFrame()
+
+    insider_feats = ['insider_net_flow', 'insider_buy_count', 'insider_net_buyers',
+                     'insider_officer_buy', 'insider_cluster']
+    if not df.empty:
+        min_date = pd.to_datetime(df['cal_date'].min())
+        max_date = pd.to_datetime(df['cal_date'].max())
+        officer_window = 90
+        buffer_start = min_date - pd.Timedelta(days=max(INSIDER_LOOKBACK_DAYS, officer_window, CONGRESS_LOOKBACK_DAYS) + 10)
+        daily_dates = pd.date_range(start=buffer_start, end=max_date, freq='D')
+        daily_df = pd.DataFrame(index=daily_dates.strftime('%Y-%m-%d'))
+        daily_df.index.name = 'date'
+
+        # --- Insider CONVICTION features (use ALL transactions, not just the rare purchases) ---
+        for c in ['buy_val', 'sell_val', 'buy_cnt', 'dbuyers', 'dsellers', 'officer_buy_val', 'congress_val']:
+            daily_df[c] = 0.0
+
+        if insider_df is not None and not insider_df.empty:
+            ii = insider_df.copy()
+            ii['date'] = ii['date'].astype(str).str.slice(0, 10)
+            tt = ii['transaction_type'].astype(str).str.lower()
+            ii['is_buy'] = tt.eq('purchase')
+            ii['is_sell'] = tt.eq('sale')
+            rel = ii.get('relationship', pd.Series([''] * len(ii))).astype(str).str.lower()
+            ii['officer'] = rel.str.contains('chief|ceo|cfo|coo|president', regex=True, na=False)
+            name_col = 'insider_name' if 'insider_name' in ii.columns else None
+            buys = ii[ii['is_buy']]
+            sells = ii[ii['is_sell']]
+            daily_df['buy_val'] = daily_df.index.map(buys.groupby('date')['total_value'].sum()).fillna(0.0)
+            daily_df['sell_val'] = daily_df.index.map(sells.groupby('date')['total_value'].sum()).fillna(0.0)
+            daily_df['buy_cnt'] = daily_df.index.map(buys.groupby('date').size()).fillna(0.0)
+            if name_col:
+                daily_df['dbuyers'] = daily_df.index.map(buys.groupby('date')[name_col].nunique()).fillna(0.0)
+                daily_df['dsellers'] = daily_df.index.map(sells.groupby('date')[name_col].nunique()).fillna(0.0)
+            else:
+                daily_df['dbuyers'] = (daily_df['buy_cnt'] > 0).astype(float)
+            daily_df['officer_buy_val'] = daily_df.index.map(
+                buys[buys['officer']].groupby('date')['total_value'].sum()).fillna(0.0)
+
+        if congress_df is not None and not congress_df.empty:
+            cong_p = congress_df[congress_df['transaction_type'].astype(str).str.lower() == 'purchase']
+            if not cong_p.empty:
+                daily_df['congress_val'] = daily_df.index.map(cong_p.groupby('date')['estimated_value'].sum()).fillna(0.0)
+
+        W = INSIDER_LOOKBACK_DAYS
+        roll = lambda s, w: s.rolling(window=w, min_periods=1).sum()
+        daily_df['insider_net_flow'] = roll(daily_df['buy_val'] - daily_df['sell_val'], W)
+        daily_df['insider_buy_count'] = roll(daily_df['buy_cnt'], W)
+        daily_df['insider_net_buyers'] = roll(daily_df['dbuyers'] - daily_df['dsellers'], W)
+        daily_df['insider_cluster'] = roll(daily_df['dbuyers'], W)
+        daily_df['insider_officer_buy'] = roll(daily_df['officer_buy_val'], officer_window)
+        daily_df['congress_sum'] = roll(daily_df['congress_val'], CONGRESS_LOOKBACK_DAYS)
+
+        # Look-ahead protection: shift the daily series by one day before broadcasting onto bars.
+        out_cols = insider_feats + ['congress_sum']
+        for c in out_cols:
+            daily_df[c] = daily_df[c].shift(1).fillna(0.0)
+
+        daily_df = daily_df.reset_index().rename(columns={'date': 'cal_date'})
+        df = pd.merge(df, daily_df[['cal_date'] + out_cols], on='cal_date', how='left')
+        for c in out_cols:
+            df[c] = df[c].fillna(0.0)
+
+        # Normalize dollar-value features by price (stationarity); counts left as-is.
+        df['insider_net_flow'] = df['insider_net_flow'] / (df['close'] + 1e-9)
+        df['insider_officer_buy'] = df['insider_officer_buy'] / (df['close'] + 1e-9)
+        df['congress_buying_ratio'] = df['congress_sum'] / (df['close'] + 1e-9)
+        df['congress_buying_90d'] = df['congress_buying_ratio']
+    else:
+        for c in insider_feats:
+            df[c] = 0.0
+        df['congress_buying_ratio'] = 0.0
+        df['congress_buying_90d'] = 0.0
+
     # --- Target Labels Generation (triple-barrier; matches the executed trade brackets) ---
     # target_win = training label; trade_ret = realised P&L of the bracketed trade (eval only).
     df['target_win'], df['trade_ret'] = triple_barrier_outcomes(
@@ -238,14 +368,18 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
 
     # --- Strict Look-Ahead Bias Mitigation ---
     # Shift ALL feature columns by 1 to represent data available at the market CLOSE of day T-1
-    # Features shifted are technical indicators, sentiment scores, and macro factors.
+    # Note: absolute prices (open, high, low, close) are completely dropped from the training set
+    # by only shifting and prefixing the normalized stationary features.
     feature_cols = [
-        'open', 'high', 'low', 'close', 'volume', 'returns', 'volatility_10',
-        'sma_10', 'sma_50', 'ma_ratio', 'rsi_14', 'macd', 'macd_signal',
-        'bb_mid', 'bb_std', 'bb_width', 'atr_14',
+        'volume_ratio', 'returns', 'volatility_10', 'parkinson_vol_10',
+        'ma_ratio', 'rsi_14', 'bb_width', 'atr_ratio', 'atr_14',
+        'close_to_sma10', 'close_to_sma50', 'high_low_ratio', 'close_to_bb_mid',
+        'returns_vol_adj', 'macd_ratio', 'macd_signal_ratio',
         'news_sentiment_score', 'reddit_sentiment_score', 'news_mention_count', 'reddit_mention_count',
-        'combined_sentiment', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
-        'fed_funds', 'yield_spread'
+        'combined_sentiment_decayed', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
+        'fed_funds', 'yield_spread',
+        'insider_net_flow', 'insider_buy_count', 'insider_net_buyers', 'insider_officer_buy', 'insider_cluster',
+        'congress_buying_ratio', 'congress_buying_90d'
     ]
 
     # Keep original unshifted close & date for reference/labeling, but prefix feature names
@@ -254,7 +388,7 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
             df[f"feat_{col}"] = df[col].shift(1)
 
     # Drop rows that don't have enough history to compute indicators
-    df = df.dropna(subset=[f"feat_sma_50"])
+    df = df.dropna(subset=[f"feat_close_to_sma50"])
 
     return df
 
@@ -311,10 +445,14 @@ def add_cross_ticker_features(df):
     non_benchmark_mask = ~df['ticker'].isin(['SPY', 'QQQ'])
     df.loc[non_benchmark_mask, 'rank_return'] = df[non_benchmark_mask].groupby('date')['returns'].rank(pct=True)
     df.loc[non_benchmark_mask, 'rank_volatility'] = df[non_benchmark_mask].groupby('date')['volatility_10'].rank(pct=True)
+    df.loc[non_benchmark_mask, 'rank_volume_ratio'] = df[non_benchmark_mask].groupby('date')['volume_ratio'].rank(pct=True)
+    df.loc[non_benchmark_mask, 'rank_sentiment'] = df[non_benchmark_mask].groupby('date')['combined_sentiment_decayed'].rank(pct=True)
 
     # Fill benchmarks or missing rankings with neutral (0.5)
     df['rank_return'] = df['rank_return'].fillna(0.5)
     df['rank_volatility'] = df['rank_volatility'].fillna(0.5)
+    df['rank_volume_ratio'] = df['rank_volume_ratio'].fillna(0.5)
+    df['rank_sentiment'] = df['rank_sentiment'].fillna(0.5)
 
     # 4. Rolling correlation of returns vs SPY and QQQ (20 days)
     def get_rolling_corr(group):
@@ -331,7 +469,8 @@ def add_cross_ticker_features(df):
     # Fill NAs
     fill_cols = [
         'relative_return_spy', 'relative_return_qqq', 'relative_vol_spy', 'relative_vol_qqq',
-        'cum_rel_ret_spy_50', 'rank_return', 'rank_volatility', 'corr_spy_20', 'corr_qqq_20'
+        'cum_rel_ret_spy_50', 'rank_return', 'rank_volatility', 'rank_volume_ratio', 'rank_sentiment',
+        'corr_spy_20', 'corr_qqq_20'
     ]
     for col in fill_cols:
         df[col] = df[col].fillna(0.0)
@@ -352,17 +491,22 @@ def build_all_features(prices_df, sent_df, macro_df, active_universe,
     Returns a concatenated DataFrame containing all features.
     """
     processed_dfs = []
+    congress_df, insider_df = load_alternative_data_from_db()
     for ticker in active_universe:
         ticker_prices = prices_df[prices_df['ticker'] == ticker].sort_values('date')
         if len(ticker_prices) < 50:
             continue
         ticker_sent = sent_df[sent_df['ticker'] == ticker] if (sent_df is not None and not sent_df.empty) else pd.DataFrame()
+        ticker_congress = congress_df[congress_df['ticker'] == ticker] if not congress_df.empty else pd.DataFrame()
+        ticker_insider = insider_df[insider_df['ticker'] == ticker] if not insider_df.empty else pd.DataFrame()
         t_feat = build_features_for_df(ticker_prices, ticker_sent, macro_df,
                                        target_horizon_bars=target_horizon_bars,
                                        target_atr_stop_mult=target_atr_stop_mult,
                                        target_tp_mult=target_tp_mult,
                                        target_stop_min=target_stop_min,
-                                       target_stop_max=target_stop_max)
+                                       target_stop_max=target_stop_max,
+                                       congress_df=ticker_congress,
+                                       insider_df=ticker_insider)
         processed_dfs.append(t_feat)
 
     if not processed_dfs:

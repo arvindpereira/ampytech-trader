@@ -15,13 +15,33 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.config import (
     TICKER_UNIVERSE, SHORT_TERM_HORIZON_BARS, MPT_WINDOW_DAYS,
     SHORT_TERM_ATR_STOP_MULT, SHORT_TERM_TP_MULT, SHORT_TERM_STOP_MIN, SHORT_TERM_STOP_MAX,
-    SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD,
+    SHORT_TERM_BUY_THRESHOLD, SHORT_TERM_SELL_THRESHOLD, HEDGE_MODE,
+    ALT_DATA_ENABLED, LONGTERM_TILT_STRENGTH, SWING_ENABLED,
 )
 from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    SentimentSourceLog
+    SentimentSourceLog, InsiderDisclosure, NewsLLMScore, AppSetting
 )
+
+import json as _json
+STRATEGY_KEYS = ["swing", "longterm"]
+DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0}
+
+def get_strategy_buckets(db):
+    """Capital allocation per strategy bucket (fraction of equity). Defaults to all-swing."""
+    s = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
+    if s and s.value:
+        try:
+            v = _json.loads(s.value)
+            return {k: float(v.get(k, 0.0)) for k in STRATEGY_KEYS}
+        except Exception:
+            pass
+    return dict(DEFAULT_BUCKETS)
+
+def get_strategy_assignments(db):
+    """Map of ticker -> assigned strategy ('swing' | 'longterm' | 'hold')."""
+    return {t.ticker: (t.strategy or "swing") for t in db.query(UniverseTicker).all()}
 from ml_engine.features import build_features_for_df, build_all_features
 from ml_engine.models import PortfolioOptimizer
 
@@ -44,10 +64,113 @@ app.add_middleware(
 # Saved models directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVED_MODELS_DIR = os.path.join(BASE_DIR, "ml_engine", "saved_models")
+SCHEDULER_HEARTBEAT_FILE = os.path.join(BASE_DIR, "data", "scheduler_heartbeat.txt")
+
+# ---------------------------------------------------------------------------
+# Background job registry (in-process) — drives the UI progress bars for ticker
+# backfills and model retraining. UI-triggered jobs run in this API process.
+# ---------------------------------------------------------------------------
+import threading
+import uuid as _uuid
+import time as _time
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+
+def _job_new(jtype, label):
+    jid = _uuid.uuid4().hex[:8]
+    with _JOBS_LOCK:
+        _JOBS[jid] = {"id": jid, "type": jtype, "label": label, "status": "running",
+                      "progress": 0, "stage": "queued", "error": None,
+                      "started_at": _time.time(), "finished_at": None}
+    return jid
+
+def _job_update(jid, progress=None, stage=None, status=None, error=None):
+    with _JOBS_LOCK:
+        j = _JOBS.get(jid)
+        if not j:
+            return
+        if progress is not None:
+            j["progress"] = int(progress)
+        if stage is not None:
+            j["stage"] = stage
+        if error is not None:
+            j["error"] = error
+        if status is not None:
+            j["status"] = status
+            if status in ("done", "error"):
+                j["finished_at"] = _time.time()
+
+def _jobs_snapshot():
+    """Active jobs + jobs finished in the last 60s; prune anything older."""
+    now = _time.time()
+    with _JOBS_LOCK:
+        for jid in [k for k, v in _JOBS.items()
+                    if v["finished_at"] and now - v["finished_at"] > 120]:
+            _JOBS.pop(jid, None)
+        return sorted(_JOBS.values(), key=lambda x: x["started_at"], reverse=True)
+
+def _start_backfill(ticker):
+    """Spawn a backfill job+thread for `ticker`, but only if one isn't already running.
+    Returns the (existing or new) job id. Single entry point so we never spawn duplicate
+    threads/progress bars for the same ticker (e.g. suggestions auto-heal firing on every poll)."""
+    label = f"Backfilling {ticker}"
+    with _JOBS_LOCK:
+        for job in _JOBS.values():
+            if job["type"] == "backfill" and job["label"] == label and job["status"] == "running":
+                return job["id"]  # already in flight — reuse it, don't spawn another
+        jid = _uuid.uuid4().hex[:8]
+        _JOBS[jid] = {"id": jid, "type": "backfill", "label": label, "status": "running",
+                      "progress": 0, "stage": "queued", "error": None,
+                      "started_at": _time.time(), "finished_at": None}
+    threading.Thread(target=_run_backfill_job, args=(jid, ticker), daemon=True).start()
+    return jid
 
 @app.on_event("startup")
 def startup_event():
     init_db()
+
+@app.get("/api/jobs")
+def get_jobs():
+    """Active + recently-finished background jobs (ticker backfills, retraining) for UI progress bars."""
+    return {"jobs": _jobs_snapshot()}
+
+_EVAL_RESULTS = {}
+_SUGGEST_RESULTS = {}
+_VALIDATE_RESULTS = {}
+
+def _run_suggest_job(jid, oos_start):
+    try:
+        from ml_engine.strategy_suggester import suggest_strategies
+        res = suggest_strategies(oos_start=oos_start,
+                                 progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        _SUGGEST_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
+def _run_validate_job(jid, oos_start):
+    try:
+        from ml_engine.strategy_suggester import validate_assignments
+        res = validate_assignments(oos_start=oos_start,
+                                   progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        _VALIDATE_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
+def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start):
+    try:
+        from ml_engine.evaluate import run_evaluation
+        res = run_evaluation(strategies, horizon=horizon, splits=splits, allocation=allocation,
+                             start_date=start_date, end_date=end_date, oos_start=oos_start,
+                             progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
+        _EVAL_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
 
 def get_latest_data(db, end_date=None, mode="real"):
     """Utility to load recent prices and indicators for inference."""
@@ -120,25 +243,134 @@ def get_daily_data(db, end_date=None, lookback_days=600):
     return prices_df, macro_df
 
 
+_regime_cache = {"regime": None, "ts": None}
+
+def compute_current_regime(db):
+    """Current HMM market regime ('growth'|'transition'|'crisis') on daily SPY + macro. Cached 5 min."""
+    import time as _t
+    now = _t.time()
+    if _regime_cache["regime"] and _regime_cache["ts"] and now - _regime_cache["ts"] < 300:
+        return _regime_cache["regime"]
+    try:
+        hmm_path = os.path.join(SAVED_MODELS_DIR, "hmm_model.pkl")
+        meta_path = os.path.join(SAVED_MODELS_DIR, "hmm_metadata.pkl")
+        if not (os.path.exists(hmm_path) and os.path.exists(meta_path)):
+            return "growth"
+        with open(hmm_path, "rb") as f:
+            hmm = pickle.load(f)
+        with open(meta_path, "rb") as f:
+            sm = pickle.load(f)["state_mapping"]
+        dp, dm = get_daily_data(db)
+        spy = dp[dp["ticker"] == "SPY"].sort_values("date").copy() if not dp.empty else pd.DataFrame()
+        if spy.empty:
+            return "growth"
+        feats = build_features_for_df(spy, sentiment_df=None, macro_df=dm)
+        cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
+        last = feats[cols].tail(1)
+        if last.isna().any().any():
+            return "growth"
+        regime = sm.get(hmm.predict(last.values)[0], "growth")
+        _regime_cache.update(regime=regime, ts=now)
+        return regime
+    except Exception as e:
+        print(f"Regime detection failed: {e}")
+        return "growth"
+
+
 _suggestions_cache = {}
+_last_on_demand_fetch_time = 0.0
 
 def clear_suggestions_cache():
     global _suggestions_cache
     _suggestions_cache.clear()
     print("Suggestions cache cleared successfully.")
 
+def background_update_prices_and_signals():
+    try:
+        from data_ingestion.price_fetcher import fetch_recent_prices
+        from app.database import SessionLocal
+        print("Background Task: Fetching recent prices...")
+        fetch_recent_prices()
+        clear_suggestions_cache()
+        db = SessionLocal()
+        try:
+            get_daily_suggestions(date=None, db=db)
+        finally:
+            db.close()
+        print("Background Task: Price update and cache pre-population complete.")
+    except Exception as e:
+        print(f"Background Task: Price update failed: {e}")
+
 @app.get("/api/suggestions")
-def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Depends(get_db)):
+def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
+                          hedge_mode: Optional[str] = None,
+                          background_tasks: BackgroundTasks = None,
+                          db=Depends(get_db)):
     """Computes daily trading suggestions (Short-Term and Long-Term) using our trained models."""
     global _suggestions_cache
+
+    # Resolve hedge mode (query param overrides the config default; validate against known modes).
+    from execution.hedging import compute_hedge, VALID_MODES
+    effective_hedge_mode = hedge_mode if hedge_mode in VALID_MODES else HEDGE_MODE
+    if effective_hedge_mode not in VALID_MODES:
+        effective_hedge_mode = "none"
+
+    # Reconcile positions/cash with Alpaca broker if in real mode and not viewing historical date
+    if mode == "real" and not date:
+        from execution.executor import get_alpaca_api, sync_broker_positions
+        try:
+            api = get_alpaca_api()
+            if api:
+                sync_broker_positions(db, api)
+        except Exception as e:
+            print(f"Failed to reconcile Alpaca positions during suggestions fetch: {e}")
 
     # Load stock universe dynamically from DB to establish part of cache key
     db_tickers = db.query(UniverseTicker).all()
     active_universe = sorted([t.ticker for t in db_tickers]) if db_tickers else sorted(TICKER_UNIVERSE)
 
+    # Auto-heal: Check if any active universe tickers are missing price data
+    if not date:
+        for ticker in active_universe:
+            has_data = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).first() is not None
+            if not has_data:
+                # _start_backfill is a no-op if one is already in flight, so polling is safe.
+                print(f"Suggestions Auto-Heal: Ticker {ticker} is missing price records. Ensuring backfill...")
+                _start_backfill(ticker)
+
     # Establish latest dates/states as part of cache key
     latest_price = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()
     latest_price_date = latest_price.date if latest_price else "none"
+
+    # Check if we should trigger an on-demand background fetch of prices (only for live updates in real mode)
+    if mode == "real" and not date:
+        # Determine if scheduler is running
+        scheduler_running = False
+        if os.path.exists(SCHEDULER_HEARTBEAT_FILE):
+            try:
+                age = _time.time() - os.path.getmtime(SCHEDULER_HEARTBEAT_FILE)
+                scheduler_running = age < 150
+            except Exception:
+                pass
+
+        if not scheduler_running:
+            # Check if latest price in DB is older than 5 minutes (300 seconds)
+            global _last_on_demand_fetch_time
+            now = _time.time()
+            if now - _last_on_demand_fetch_time > 300:
+                is_stale = True
+                if latest_price:
+                    try:
+                        latest_dt = datetime.strptime(latest_price.date, "%Y-%m-%d %H:%M:%S")
+                        if datetime.now() - latest_dt < timedelta(minutes=5):
+                            is_stale = False
+                    except Exception:
+                        pass
+
+                if is_stale and background_tasks:
+                    _last_on_demand_fetch_time = now
+                    print("API Suggestions: Latest price is stale (>5m) and scheduler is offline. Triggering background update...")
+                    background_tasks.add_task(background_update_prices_and_signals)
 
     latest_sent = db.query(TickerSentiment).order_by(TickerSentiment.date.desc()).first()
     latest_sent_date = latest_sent.date if latest_sent else "none"
@@ -147,13 +379,23 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     prices_count = db.query(RecentPrice).count()
     sent_count = db.query(TickerSentiment).count()
 
+    insider_count = db.query(InsiderDisclosure).count() if ALT_DATA_ENABLED else 0
+    latest_insider = db.query(InsiderDisclosure).order_by(InsiderDisclosure.date.desc()).first() if ALT_DATA_ENABLED else None
+    latest_insider_date = latest_insider.date if latest_insider else "none"
+
+    news_llm_count = db.query(NewsLLMScore).count() if SWING_ENABLED else 0
+
     cache_key = (
         date or "live",
         mode,
+        effective_hedge_mode,
         latest_price_date,
         latest_sent_date,
         prices_count,
         sent_count,
+        insider_count,
+        latest_insider_date,
+        news_llm_count,
         tuple(active_universe)
     )
 
@@ -173,7 +415,11 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     scaler_metadata = None
     st_model = None
 
-    if os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
+    from app.core.config import SERVED_MODEL
+    from ml_engine.models import load_buy_threshold
+    buy_threshold = load_buy_threshold()  # calibrated per served model (falls back to config)
+
+    if SERVED_MODEL == "pytorch" and os.path.exists(deep_model_path) and os.path.exists(deep_metadata_path):
         import torch
         from ml_engine.deep_models import LightTemporalAttentionNet
         try:
@@ -240,7 +486,14 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     if full_features_df.empty:
         raise HTTPException(status_code=500, detail="Insufficient price data to generate prediction features.")
 
-    feature_cols = sorted([col for col in full_features_df.columns if col.startswith("feat_")])
+    feature_cols = sorted([col for col in full_features_df.columns if col.startswith("feat_") and col != "feat_atr_14"])
+
+    # Inputs for sizing the example trade plan (advisory): latest price per ticker + account equity.
+    latest_close = prices_df.sort_values("date").groupby("ticker")["close"].last().to_dict()
+    acc_id = 2 if mode == "real" else 1
+    _acc = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
+    equity_for_sizing = float(_acc.equity) if (_acc and _acc.equity) else 100000.0
+    POSITION_PCT = 0.10  # example long size = 10% of equity (matches backtest/executor convention)
 
     for ticker in active_universe:
         t_feat = full_features_df[full_features_df["ticker"] == ticker]
@@ -297,10 +550,10 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         confidence = prob
         reasoning = "Technicals and sentiment are in a balanced range."
 
-        # Buy the high-confidence tail (thresholds are config-driven, tuned to the label's base rate).
-        if prob >= SHORT_TERM_BUY_THRESHOLD:
+        # Buy the high-confidence tail (threshold calibrated per served model, see threshold.json).
+        if prob >= buy_threshold:
             action = "BUY"
-            reasoning = f"Win probability ({prob*100:.1f}%) exceeds the entry threshold ({SHORT_TERM_BUY_THRESHOLD*100:.0f}%), supported by a sentiment score of {sentiment_score:.2f}."
+            reasoning = f"Win probability ({prob*100:.1f}%) exceeds the entry threshold ({buy_threshold*100:.1f}%), supported by a sentiment score of {sentiment_score:.2f}."
         elif prob <= SHORT_TERM_SELL_THRESHOLD:
             action = "SELL"
             reasoning = f"Very low win probability ({prob*100:.1f}%) indicates poor risk/reward."
@@ -347,16 +600,63 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         # Same brackets used to LABEL training data (triple-barrier) — keeps target ≈ execution.
         stop_loss_pct = min(SHORT_TERM_STOP_MAX, max(SHORT_TERM_STOP_MIN, (SHORT_TERM_ATR_STOP_MULT * atr) / current_close))
         take_profit_pct = stop_loss_pct * SHORT_TERM_TP_MULT
+        stop_price = current_close * (1.0 - stop_loss_pct) if action == "BUY" else None
+        target_price = current_close * (1.0 + take_profit_pct) if action == "BUY" else None
+
+        # --- Build an explicit, executable trade plan (works for manual Robinhood or Alpaca) ---
+        hedge = None
+        action_plan = None
+        if action == "BUY":
+            long_notional = POSITION_PCT * equity_for_sizing
+            long_shares = long_notional / current_close if current_close > 0 else 0.0
+            plan = (f"BUY {ticker}: ~{long_shares:.0f} sh @ ${current_close:,.2f} "
+                    f"(≈{POSITION_PCT*100:.0f}% equity = ${long_notional:,.0f}). "
+                    f"Stop ${stop_price:,.2f} (-{stop_loss_pct*100:.1f}%), "
+                    f"target ${target_price:,.2f} (+{take_profit_pct*100:.1f}%). "
+                    f"Win-prob {prob*100:.0f}%.")
+
+            if effective_hedge_mode in ("beta_neutral", "pair_trade"):
+                def _f(col, dflt):
+                    v = last_row.get(col, dflt)
+                    try:
+                        v = float(v)
+                        return dflt if np.isnan(v) else v
+                    except (TypeError, ValueError):
+                        return dflt
+                hsym, beta = compute_hedge(
+                    ticker, effective_hedge_mode,
+                    corr_spy=_f("feat_corr_spy_20", 0.8), corr_qqq=_f("feat_corr_qqq_20", 0.8),
+                    rel_vol_spy=_f("feat_relative_vol_spy", 1.0), rel_vol_qqq=_f("feat_relative_vol_qqq", 1.0),
+                    universe=active_universe,
+                )
+                if hsym and hsym != ticker:
+                    hprice = latest_close.get(hsym)
+                    hedge_notional = beta * long_notional
+                    hedge_shares = (hedge_notional / hprice) if hprice else None
+                    hedge = {
+                        "mode": effective_hedge_mode,
+                        "symbol": hsym,
+                        "ratio": round(beta, 2),
+                        "price": round(float(hprice), 2) if hprice else None,
+                        "notional": round(hedge_notional, 2),
+                        "shares": round(hedge_shares, 1) if hedge_shares else None,
+                    }
+                    if hedge_shares and hprice:
+                        plan += (f" HEDGE: SHORT {hsym} ~{hedge_shares:.0f} sh @ ${hprice:,.2f} "
+                                 f"(≈{beta:.2f}x the long, ${hedge_notional:,.0f}) to offset market risk.")
+            action_plan = plan
 
         suggestions.append({
             "ticker": ticker,
             "close": current_close,
             "action": action,
             "confidence": confidence,
-            "stop_loss": current_close * (1.0 - stop_loss_pct) if action == "BUY" else None,
-            "take_profit": current_close * (1.0 + take_profit_pct) if action == "BUY" else None,
+            "stop_loss": stop_price,
+            "take_profit": target_price,
             "reasoning": reasoning,
-            "audit": audit_data
+            "audit": audit_data,
+            "hedge": hedge,
+            "action_plan": action_plan
         })
 
 
@@ -369,13 +669,46 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
         t_data['returns'] = t_data['close'].pct_change()
         returns_list.append(t_data[['date', 'returns']].rename(columns={'returns': ticker}))
 
+    scores_dict = {}
+    expected_return_tilt = None
+    if ALT_DATA_ENABLED:
+        try:
+            feat_universe = sorted(set(active_universe + ["SPY", "QQQ"]))
+            daily_features_df = build_all_features(daily_prices_df, None, daily_macro_df, feat_universe)
+            if not daily_features_df.empty:
+                equities = [t for t in active_universe if t not in ["SPY", "QQQ"] and not t.startswith(("X:", "C:"))]
+                eq_df = daily_features_df[daily_features_df["ticker"].isin(equities)].copy()
+                if not eq_df.empty:
+                    latest_feat_date = eq_df["date"].max()
+                    latest_eq_df = eq_df[eq_df["date"] == latest_feat_date].copy()
+
+                    insf = [c for c in ["feat_insider_officer_buy", "feat_insider_buy_count", "feat_insider_cluster"]
+                            if c in latest_eq_df.columns]
+                    if insf:
+                        # Calculate z-scores cross-sectionally for the latest date
+                        for c in insf:
+                            vals = latest_eq_df[c]
+                            mean_val = vals.mean()
+                            std_val = vals.std()
+                            latest_eq_df[c + "_z"] = (vals - mean_val) / (std_val + 1e-9)
+
+                        latest_eq_df["ins_score"] = latest_eq_df[[c + "_z" for c in insf]].mean(axis=1).fillna(0.0)
+                        scores_dict = latest_eq_df.set_index("ticker")["ins_score"].to_dict()
+                        expected_return_tilt = {
+                            t: float(LONGTERM_TILT_STRENGTH * scores_dict.get(t, 0.0))
+                            for t in equities
+                        }
+                        print(f"Computed expected return tilt on date {latest_feat_date}: {expected_return_tilt}")
+        except Exception as e:
+            print(f"Error computing expected return tilt in Suggestions API: {e}")
+
     if returns_list:
         returns_df = returns_list[0]
         for r in returns_list[1:]:
             returns_df = pd.merge(returns_df, r, on='date', how='outer')
         returns_df = returns_df.sort_values('date').tail(MPT_WINDOW_DAYS)
 
-        opt_weights = PortfolioOptimizer.calculate_optimal_weights(returns_df, current_regime)
+        opt_weights = PortfolioOptimizer.calculate_optimal_weights(returns_df, current_regime, expected_return_tilt=expected_return_tilt)
     else:
         opt_weights = {}
 
@@ -385,21 +718,128 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real", db=Dep
     scaled_weights = {t: float(w * regime_scalar) for t, w in opt_weights.items()}
     cash_allocation = 1.0 - sum(scaled_weights.values())
 
+    # Load virtual account and current positions for rebalancing action calculation
+    acc_id = 2 if mode == "real" else 1
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
+    portfolio_equity = float(account.equity) if account else 100000.0
+
+    positions = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
+
+    def get_ticker_price(tk):
+        if prices_df.empty:
+            return 0.0
+        tk_df = prices_df[prices_df["ticker"] == tk]
+        if tk_df.empty:
+            return 0.0
+        return float(tk_df.sort_values("date", ascending=False).iloc[0]["close"])
+
+    buckets = get_strategy_buckets(db)
+    budget_fraction = buckets.get("longterm", 0.0)
+
     long_term_allocation = []
-    for ticker, weight in scaled_weights.items():
-        if weight > 0.01: # Filter out trace allocations
-            long_term_allocation.append({
-                "ticker": ticker,
-                "weight": weight,
-                "shares_multiplier": 1.0
-            })
-    long_term_allocation.append({"ticker": "CASH", "weight": cash_allocation})
+    # Combine active universe tickers and currently held tickers (with quantity > 0)
+    all_rebalance_tickers = sorted(list(set(active_universe) | {t for t, p in positions.items() if p.quantity > 0.01}))
+
+    for ticker in all_rebalance_tickers:
+        weight = scaled_weights.get(ticker, 0.0)
+        cur_price = get_ticker_price(ticker)
+        pos = positions.get(ticker)
+        current_shares = pos.quantity if pos else 0.0
+
+        # Skip if trace weight AND no shares held
+        if weight <= 0.01 and current_shares <= 0.01:
+            continue
+
+        entry_price = pos.entry_price if pos else 0.0
+        current_value = current_shares * cur_price
+
+        target_value = portfolio_equity * weight * budget_fraction
+        target_shares = target_value / cur_price if cur_price > 0 else 0.0
+
+        suggested_action = "Hold"
+        price_dev = 0.0
+        if entry_price > 0.0:
+            price_dev = (cur_price - entry_price) / entry_price
+
+        # Check policy overrides first
+        if pos and pos.policy == "lock":
+            suggested_action = "Hold: Position policy is set to LOCK (trades disabled)."
+        elif pos and pos.policy == "liquidate":
+            suggested_action = f"SELL: Position policy is set to LIQUIDATE. Close all {current_shares:.1f} shares."
+        elif weight == 0.0 and current_shares > 0.0:
+            # Ticker held but not in the target active universe
+            suggested_action = f"SELL: Liquidate position. Ticker is not in active target universe."
+        else:
+            diff_shares = target_shares - current_shares
+
+            if diff_shares > 0.01:
+                # Underweight
+                if current_shares == 0.0:
+                    suggested_action = f"BUY: Target {target_shares:.1f} shares. Position is new."
+                elif price_dev <= -0.03:
+                    suggested_action = f"BUY: Scaled grid tranche. Price ({cur_price:.2f}) fell {abs(price_dev)*100:.1f}% below cost basis ({entry_price:.2f})."
+                else:
+                    trigger_price = entry_price * 0.97
+                    suggested_action = f"Hold: Wait for price to drop below {trigger_price:.2f} (currently {price_dev*100:+.1f}% from cost basis)."
+            elif diff_shares < -0.01:
+                # Overweight
+                if price_dev >= 0.05:
+                    from execution.executor import get_long_term_available_shares
+                    sim_date_str = date or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    lt_shares = get_long_term_available_shares(db, ticker, sim_date_str)
+                    if lt_shares > 0.01:
+                        suggested_action = f"SELL: Lock profit. Price ({cur_price:.2f}) is up {price_dev*100:.1f}% from cost basis ({entry_price:.2f}). {lt_shares:.1f} long-term shares eligible."
+                    else:
+                        suggested_action = f"Hold: Overweight, but 0 shares qualify as long-term (>365 days held). Skipping to avoid short-term tax."
+                else:
+                    suggested_action = f"Hold: Overweight by {abs(diff_shares):.1f} shares. Price is only up {price_dev*100:+.1f}% (wait for +5% profit lock target)."
+
+        long_term_allocation.append({
+            "ticker": ticker,
+            "weight": weight,
+            "shares_multiplier": 1.0,
+            "insider_tilt_score": float(scores_dict.get(ticker, 0.0)),
+            "current_shares": float(current_shares),
+            "entry_price": float(entry_price),
+            "current_price": float(cur_price),
+            "current_value": float(current_value),
+            "target_shares": float(target_shares),
+            "target_value": float(target_value),
+            "suggested_action": suggested_action
+        })
+
+    # Remaining cash
+    total_allocated_value = sum(a["current_value"] for a in long_term_allocation)
+    cash_alloc_val = portfolio_equity * cash_allocation
+    long_term_allocation.append({
+        "ticker": "CASH",
+        "weight": cash_allocation,
+        "insider_tilt_score": 0.0,
+        "current_shares": 0.0,
+        "entry_price": 1.0,
+        "current_price": 1.0,
+        "current_value": float(portfolio_equity - total_allocated_value),
+        "target_shares": float(cash_alloc_val),
+        "target_value": float(cash_alloc_val),
+        "suggested_action": "Hold cash buffer"
+    })
+
+    # --- Swing (multi-day) signals — daily prices + LLM-scored news (validated portfolio edge) ---
+    swing_suggestions = []
+    if SWING_ENABLED:
+        try:
+            from ml_engine.swing_alpha import build_swing_signals
+            swing_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, active_universe)
+        except Exception as e:
+            print(f"Error computing swing signals: {e}")
 
     res = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "regime": current_regime,
+        "hedge_mode": effective_hedge_mode,
         "short_term_suggestions": suggestions,
-        "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True)
+        "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True),
+        "swing_suggestions": swing_suggestions
     }
     _suggestions_cache[cache_key] = res
     return res
@@ -439,61 +879,14 @@ def get_backtest_performance(mode: str = "live", db=Depends(get_db)):
     logs = db.query(BrokerPerformanceLog).filter(BrokerPerformanceLog.mode == mode).order_by(BrokerPerformanceLog.date.asc()).all()
 
     if not logs:
-        if mode == "live":
-            # Real/Live mode: do not return mock performance data!
-            return {
-                "metrics": {
-                    "total_return": 0.0,
-                    "sharpe_ratio": 0.0,
-                    "max_drawdown": 0.0,
-                    "win_rate": 0.0
-                },
-                "equity_curve": []
-            }
-        # Fallback to simulated data if db is empty so the UI looks beautiful
-        # Generate 100 days of mock data
-        dates = pd.date_range(end=datetime.now(), periods=100, freq='D')
-        portfolio_val = 100000.0
-        spy_val = 100000.0
-        qqq_val = 100000.0
-        brk_val = 100000.0
-
-        rng = np.random.default_rng(42)
-        equity_curve = []
-        for i, d in enumerate(dates):
-            if i == 0:
-                p_ret, s_ret, q_ret, b_ret = 0.0, 0.0, 0.0, 0.0
-            else:
-                s_ret = rng.normal(0.0003, 0.012)
-                q_ret = s_ret * 1.2 + rng.normal(0.0001, 0.005)
-                b_ret = s_ret * 0.7 + rng.normal(0.0002, 0.004)
-                p_ret = s_ret * 0.8 + rng.normal(0.0008, 0.007)
-                if s_ret < -0.02:
-                    p_ret = s_ret * 0.3 + rng.normal(0.0, 0.002)
-
-            portfolio_val *= (1.0 + p_ret)
-            spy_val *= (1.0 + s_ret)
-            qqq_val *= (1.0 + q_ret)
-            brk_val *= (1.0 + b_ret)
-
-            equity_curve.append({
-                "date": d.strftime("%Y-%m-%d"),
-                "portfolio": portfolio_val,
-                "spy": spy_val,
-                "qqq": qqq_val,
-                "brk": brk_val
-            })
-
-        metrics = {
-            "total_return": (portfolio_val / 100000.0) - 1.0,
-            "sharpe_ratio": 1.78,
-            "max_drawdown": -0.114,
-            "win_rate": 0.58
-        }
-
         return {
-            "metrics": metrics,
-            "equity_curve": equity_curve
+            "metrics": {
+                "total_return": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "win_rate": 0.0
+            },
+            "equity_curve": []
         }
 
     equity_curve = []
@@ -905,6 +1298,293 @@ def update_universe(req: UniverseRequest, db=Depends(get_db)):
     clear_suggestions_cache()
     return {"status": "success", "tickers": req.tickers}
 
+@app.get("/api/strategy/config")
+def get_strategy_config(db=Depends(get_db)):
+    """Bucket capital allocations + per-ticker strategy assignments + the live regime overlay."""
+    from app.core.config import REGIME_OVERLAY_ENABLED, REGIME_SWING_FACTORS
+    buckets = get_strategy_buckets(db)
+    regime = compute_current_regime(db) if REGIME_OVERLAY_ENABLED else "growth"
+    factor = REGIME_SWING_FACTORS.get(regime, 1.0) if REGIME_OVERLAY_ENABLED else 1.0
+    return {
+        "buckets": buckets,
+        "cash": round(max(0.0, 1.0 - sum(buckets.values())), 4),
+        "assignments": get_strategy_assignments(db),
+        "strategies": STRATEGY_KEYS,
+        "regime": regime,
+        "overlay_enabled": REGIME_OVERLAY_ENABLED,
+        "swing_factor": factor,
+        "effective_swing": round(buckets.get("swing", 0.0) * factor, 4),
+        "overlay_active": factor < 1.0,
+    }
+
+class BucketsRequest(BaseModel):
+    swing: float
+    longterm: float
+
+@app.post("/api/strategy/buckets")
+def set_strategy_buckets(req: BucketsRequest, db=Depends(get_db)):
+    """Set the capital fraction per strategy bucket. Rejected if they sum to more than 100%."""
+    swing = max(0.0, float(req.swing))
+    longterm = max(0.0, float(req.longterm))
+    if swing + longterm > 1.0001:
+        raise HTTPException(status_code=400, detail="Bucket weights cannot exceed 100% of equity.")
+    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4)})
+    row = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
+    if row:
+        row.value = payload
+    else:
+        db.add(AppSetting(key="bucket_allocations", value=payload))
+    db.commit()
+    clear_suggestions_cache()
+    return {"status": "success", "buckets": {"swing": swing, "longterm": longterm}}
+
+class TickerStrategyRequest(BaseModel):
+    ticker: str
+    strategy: str
+
+@app.post("/api/strategy/ticker")
+def set_ticker_strategy(req: TickerStrategyRequest, db=Depends(get_db)):
+    """Assign which strategy manages a given ticker ('swing' | 'longterm' | 'hold')."""
+    ticker = req.ticker.upper().strip()
+    strat = req.strategy.strip().lower()
+    if strat not in ("swing", "longterm", "hold"):
+        raise HTTPException(status_code=400, detail="strategy must be swing, longterm, or hold")
+    row = db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first()
+    if not row:
+        row = UniverseTicker(ticker=ticker, strategy=strat)
+        db.add(row)
+    else:
+        row.strategy = strat
+    db.commit()
+    clear_suggestions_cache()
+    return {"status": "success", "ticker": ticker, "strategy": strat}
+
+class EvaluateRequest(BaseModel):
+    strategies: List[str] = ["swing", "longterm"]
+    horizon: int = 5
+    splits: int = 4
+    use_allocation: bool = True
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    oos_start: Optional[str] = None
+
+@app.post("/api/evaluate")
+def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
+    """Kick off a look-ahead-free backtest of the chosen strategies (+ benchmarks) as a background job."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "evaluate" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    allocation = None
+    if req.use_allocation:
+        buckets = get_strategy_buckets(db)
+        assignments = get_strategy_assignments(db)
+        lt_tickers = [t for t, s in assignments.items() if s == "longterm"]
+        allocation = {"swing": buckets.get("swing", 0.0), "longterm": buckets.get("longterm", 0.0),
+                      "longterm_tickers": lt_tickers or None}
+    jid = _job_new("evaluate", "Evaluating strategies")
+    threading.Thread(target=_run_eval_job,
+                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date, req.end_date, req.oos_start),
+                     daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/evaluate/result")
+def get_evaluation_result(job_id: str):
+    """Poll an evaluation job: returns the curves+metrics when done, else the running progress."""
+    if job_id in _EVAL_RESULTS:
+        return {"status": "done", "result": _EVAL_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.post("/api/strategy/suggest")
+def start_strategy_suggest(oos_start: str = "2022-01-01"):
+    """Kick off the per-ticker strategy suggester (swing vs longterm vs hold) as a background job."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "suggest" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("suggest", "Suggesting strategies")
+    threading.Thread(target=_run_suggest_job, args=(jid, oos_start), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/strategy/suggest/result")
+def get_strategy_suggest_result(job_id: str):
+    """Poll the strategy-suggester job: per-ticker recommendations when done, else running progress."""
+    if job_id in _SUGGEST_RESULTS:
+        return {"status": "done", "result": _SUGGEST_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.post("/api/strategy/validate")
+def start_strategy_validate(oos_start: str = "2022-01-01"):
+    """Backtest current vs suggested per-ticker assignments (blended OOS) to see if the suggestions help."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "validate" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("validate", "Validating suggestions")
+    threading.Thread(target=_run_validate_job, args=(jid, oos_start), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/strategy/validate/result")
+def get_strategy_validate_result(job_id: str):
+    """Poll the validation job: scheme comparison + verdict when done, else running progress."""
+    if job_id in _VALIDATE_RESULTS:
+        return {"status": "done", "result": _VALIDATE_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+class TickerRequest(BaseModel):
+    ticker: str
+
+def _run_backfill_job(jid, ticker):
+    """Background worker: backfill a newly-added ticker's price history, updating job progress."""
+    try:
+        from data_ingestion.price_fetcher import backfill_ticker
+        res = backfill_ticker(ticker, progress_cb=lambda p, s: _job_update(jid, progress=p, stage=s))
+        total = (res or {}).get("news_total", 0) or 0
+        latest = (res or {}).get("news_latest")
+        summary = (f"Complete — prices +{(res or {}).get('daily', 0)} daily / "
+                   f"+{(res or {}).get('hourly', 0)} hourly; "
+                   f"news +{(res or {}).get('news', 0)} new ({total:,} scored"
+                   + (f", latest {latest}" if latest else "") + ")")
+        _job_update(jid, progress=100, stage=summary, status="done")
+        clear_suggestions_cache()
+        global _price_summary_cache
+        _price_summary_cache = {"data": None, "timestamp": None}
+    except Exception as e:
+        _job_update(jid, status="error", error=str(e)[:200])
+
+@app.post("/api/universe/add")
+def add_universe_ticker(req: TickerRequest, db=Depends(get_db)):
+    """Add a single ticker to the monitored universe and kick off a background data backfill."""
+    ticker = req.ticker.upper().strip()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker required")
+    if db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first():
+        return {"status": "exists", "ticker": ticker}
+    db.add(UniverseTicker(ticker=ticker))
+    db.commit()
+    clear_suggestions_cache()
+    jid = _start_backfill(ticker)
+    return {"status": "added", "ticker": ticker, "job_id": jid}
+
+@app.post("/api/universe/backfill")
+def backfill_universe_ticker(req: TickerRequest, db=Depends(get_db)):
+    """(Re)run the data + news backfill for an already-monitored ticker (e.g. to pull news that wasn't
+    scored when it was first added). Starts a background job with a progress bar."""
+    ticker = req.ticker.upper().strip()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker required")
+    if not db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first():
+        db.add(UniverseTicker(ticker=ticker))
+        db.commit()
+    jid = _start_backfill(ticker)
+    return {"status": "started", "ticker": ticker, "job_id": jid}
+
+@app.post("/api/universe/remove")
+def remove_universe_ticker(req: TickerRequest, db=Depends(get_db)):
+    """Stop monitoring a ticker (remove from the universe). Intended for tickers with no open position."""
+    ticker = req.ticker.upper().strip()
+    row = db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first()
+    if row:
+        db.delete(row)
+        db.commit()
+        clear_suggestions_cache()
+    return {"status": "removed", "ticker": ticker}
+
+class LiquidateRequest(BaseModel):
+    ticker: str
+    shares: float
+
+@app.post("/api/positions/liquidate")
+def liquidate_position(req: LiquidateRequest, mode: str = "real", db=Depends(get_db)):
+    """Sell a chosen number of shares of an open position (partial or full). Real mode closes via Alpaca
+    (which cancels the bracket OCO); simulated mode reduces the local virtual position."""
+    ticker = req.ticker.upper().strip()
+    shares = float(req.shares)
+    if shares <= 0:
+        raise HTTPException(status_code=400, detail="Shares to sell must be positive")
+
+    if mode == "real":
+        try:
+            from execution.executor import get_alpaca_api
+            api = get_alpaca_api()
+            try:
+                pos = api.get_position(ticker)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"No open position in {ticker}")
+            held = float(pos.qty)
+            sell_qty = min(shares, held)
+            if sell_qty >= held - 1e-9:
+                order = api.close_position(ticker)
+                sold = held
+            else:
+                order = api.close_position(ticker, qty=str(int(sell_qty)))
+                sold = float(int(sell_qty))
+            clear_suggestions_cache()
+            return {"status": "submitted", "ticker": ticker, "shares_sold": sold,
+                    "order_id": getattr(order, "id", None)}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)[:200])
+
+    # Simulated mode: reduce the local virtual position
+    pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "replay").first()
+    if not pos or pos.quantity <= 0:
+        raise HTTPException(status_code=400, detail=f"No simulated position in {ticker}")
+    sold = min(shares, pos.quantity)
+    pos.quantity -= sold
+    if pos.quantity <= 1e-6:
+        db.delete(pos)
+    db.commit()
+    return {"status": "submitted", "ticker": ticker, "shares_sold": sold}
+
+def _run_training_job(jid):
+    """Background worker: retrain the served models (XGBoost + HMM, then the swing model)."""
+    try:
+        _job_update(jid, progress=10, stage="Training XGBoost + HMM…")
+        from ml_engine.models import train_models
+        train_models()
+        _job_update(jid, progress=65, stage="Training swing model…")
+        try:
+            from ml_engine.swing_alpha import train_and_save
+            train_and_save()
+        except Exception as e:
+            print(f"Swing retrain skipped: {e}")
+        _job_update(jid, progress=100, stage="Complete", status="done")
+        clear_suggestions_cache()
+    except Exception as e:
+        _job_update(jid, status="error", error=str(e)[:200])
+
+@app.post("/api/train/start")
+def start_training():
+    """Kick off model retraining in the background (idempotent: refuses if one is already running)."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "train" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("train", "Retraining models")
+    threading.Thread(target=_run_training_job, args=(jid,), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/train/status")
+def training_status():
+    """Last-trained time per served model (file mtime) + the current retrain job, if any."""
+    files = {"short_term": "short_term_model.json", "regime_hmm": "hmm_model.pkl", "swing": "swing_model.json"}
+    models = {}
+    for key, fn in files.items():
+        path = os.path.join(SAVED_MODELS_DIR, fn)
+        models[key] = {
+            "last_trained": (datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+                             if os.path.exists(path) else None)
+        }
+    active = [j for j in _jobs_snapshot() if j["type"] == "train"]
+    return {"models": models, "training": active[0] if active else None}
+
 class HoldingRequest(BaseModel):
     ticker: str
     quantity: float
@@ -1130,6 +1810,273 @@ def trigger_reconciliation(db=Depends(get_db)):
         return {"status": "success", "message": "Positions and orders synchronized successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/news/llm")
+def get_llm_news(ticker: Optional[str] = None, limit: int = 50, db=Depends(get_db)):
+    """The LLM-scored news headlines that drive the swing model, latest first.
+
+    Optional `ticker` filter; otherwise the whole universe interleaved by recency. Each item carries the
+    raw directional score (-1..1), the relevance (0..1, how materially the headline is about the ticker),
+    and the publish time so the scoring can be spot-checked for quality."""
+    q = db.query(NewsLLMScore)
+    if ticker:
+        q = q.filter(NewsLLMScore.ticker == ticker.upper().strip())
+    rows = q.order_by(NewsLLMScore.published_utc.desc()).limit(min(max(limit, 1), 200)).all()
+    return {"articles": [{
+        "ticker": r.ticker, "title": r.title, "score": r.llm_score, "relevance": r.llm_relevance,
+        "weighted": round((r.llm_score or 0.0) * (r.llm_relevance or 0.0), 3),
+        "published_utc": r.published_utc, "date": r.date, "model": r.model,
+    } for r in rows]}
+
+@app.get("/api/portfolio")
+def get_portfolio(mode: str = "real", db=Depends(get_db)):
+    """Current state of every held asset: shares, cost basis, live price, market value, and unrealized
+    P&L ($ and %), plus account totals (cost, value, P&L, cash, equity).
+
+    In real mode the broker (Alpaca) is the source of truth — its live positions + account are read on
+    each call, so the UI refresh button recalculates against the latest prices and reflects ALL open
+    positions (not the periodically-synced local table). The local trade policy is merged in by ticker.
+    Falls back to the local VirtualPosition records + stored closes when the broker is unavailable
+    (or in simulated mode)."""
+    pos_mode = "real" if mode == "real" else "replay"
+    local = {p.ticker: p for p in db.query(VirtualPosition).filter(
+        VirtualPosition.mode == pos_mode, VirtualPosition.quantity > 0).all()}
+
+    holdings, total_cost, total_value = [], 0.0, 0.0
+    source, cash = "local", None
+
+    if mode == "real":
+        try:
+            from execution.executor import get_alpaca_api
+            api = get_alpaca_api()
+            broker_positions = api.list_positions()
+            for p in broker_positions:
+                cost = float(p.cost_basis)
+                value = float(p.market_value)
+                total_cost += cost
+                total_value += value
+                holdings.append({
+                    "ticker": p.symbol, "shares": round(float(p.qty), 4),
+                    "entry_price": round(float(p.avg_entry_price), 2),
+                    "current_price": round(float(p.current_price), 2),
+                    "cost_basis": round(cost, 2), "market_value": round(value, 2),
+                    "unrealized_pl": round(float(p.unrealized_pl), 2),
+                    "unrealized_pl_pct": round(float(p.unrealized_plpc) * 100.0, 2),
+                    "policy": local[p.symbol].policy if p.symbol in local else "rebalance",
+                    "is_live": True, "purchase_date": local[p.symbol].purchase_date if p.symbol in local else None,
+                })
+            cash = float(api.get_account().cash)
+            source = "broker"
+        except Exception as e:
+            print(f"Portfolio: broker unavailable, falling back to local records: {e}")
+
+    if source != "broker":
+        def latest_close(tk):
+            rec = db.query(RecentPrice).filter(RecentPrice.ticker == tk).order_by(RecentPrice.date.desc()).first()
+            if not rec:
+                rec = db.query(DailyPrice).filter(DailyPrice.ticker == tk).order_by(DailyPrice.date.desc()).first()
+            return rec.close if rec else None
+        for p in local.values():
+            cur = latest_close(p.ticker) or p.entry_price
+            cost = p.quantity * p.entry_price
+            value = p.quantity * cur
+            total_cost += cost
+            total_value += value
+            holdings.append({
+                "ticker": p.ticker, "shares": round(p.quantity, 4), "entry_price": round(p.entry_price, 2),
+                "current_price": round(cur, 2), "cost_basis": round(cost, 2), "market_value": round(value, 2),
+                "unrealized_pl": round(value - cost, 2),
+                "unrealized_pl_pct": round(((value - cost) / cost * 100.0) if cost else 0.0, 2),
+                "policy": p.policy, "is_live": False, "purchase_date": p.purchase_date,
+            })
+
+    assignments = get_strategy_assignments(db)
+    for h in holdings:
+        h["strategy"] = assignments.get(h["ticker"], "swing")
+    holdings.sort(key=lambda x: -x["market_value"])
+    if cash is None:
+        acc = db.query(VirtualAccount).filter(VirtualAccount.id == (2 if mode == "real" else 1)).first()
+        cash = float(acc.cash) if acc and acc.cash is not None else 0.0
+    total_pl = total_value - total_cost
+    return {
+        "holdings": holdings,
+        "totals": {
+            "cost_basis": round(total_cost, 2), "market_value": round(total_value, 2),
+            "unrealized_pl": round(total_pl, 2),
+            "unrealized_pl_pct": round((total_pl / total_cost * 100.0) if total_cost else 0.0, 2),
+            "cash": round(cash, 2), "equity": round(total_value + cash, 2),
+        },
+        "source": source,
+        "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+_health_cache = {"data": None, "timestamp": None}
+
+@app.get("/api/health")
+def get_health(db=Depends(get_db)):
+    """Health/status of the moving parts: API, DB, Ollama (LLM), Alpaca broker, the scheduler daemon,
+    and LLM-news freshness. Each service reports up / stale / down + a short human detail. Cached 12s."""
+    import time as _time
+    import requests as _requests
+    global _health_cache
+    now = datetime.now()
+    if (_health_cache["data"] and _health_cache["timestamp"]
+            and now - _health_cache["timestamp"] < timedelta(seconds=12)):
+        return _health_cache["data"]
+
+    from app.core.config import OLLAMA_URL, LLM_MODEL, EXECUTION_STRATEGY
+    svc = {"api": {"status": "up", "detail": "serving"}}
+
+    try:
+        db.query(UniverseTicker).first()
+        svc["database"] = {"status": "up", "detail": "connected"}
+    except Exception as e:
+        svc["database"] = {"status": "down", "detail": str(e)[:100]}
+
+    try:
+        r = _requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+        names = [m.get("name", "") for m in r.json().get("models", [])] if r.status_code == 200 else []
+        has_model = any(LLM_MODEL.split(":")[0] in n for n in names)
+        svc["ollama"] = {"status": "up" if r.status_code == 200 else "down",
+                         "detail": (f"{LLM_MODEL} ready" if has_model else f"{len(names)} models")}
+    except Exception:
+        svc["ollama"] = {"status": "down", "detail": "unreachable"}
+
+    try:
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api()
+        clock = api.get_clock()
+        acct = api.get_account()
+        svc["alpaca"] = {"status": "up", "market_open": bool(clock.is_open),
+                         "detail": f"{'market open' if clock.is_open else 'market closed'} · ${float(acct.equity):,.0f}"}
+    except Exception as e:
+        svc["alpaca"] = {"status": "down", "detail": str(e)[:100]}
+
+    try:
+        if os.path.exists(SCHEDULER_HEARTBEAT_FILE):
+            age = _time.time() - os.path.getmtime(SCHEDULER_HEARTBEAT_FILE)
+            svc["scheduler"] = {"status": "up" if age < 150 else "stale",
+                                "detail": (f"{int(age)}s ago" if age < 3600 else f"{int(age/3600)}h ago")}
+        else:
+            svc["scheduler"] = {"status": "down", "detail": "not running"}
+    except Exception:
+        svc["scheduler"] = {"status": "down", "detail": "unknown"}
+
+    try:
+        from sqlalchemy import func as _func
+        latest = db.query(NewsLLMScore).order_by(NewsLLMScore.published_utc.desc()).first()
+        cnt = db.query(NewsLLMScore).count()
+        earliest = db.query(_func.min(NewsLLMScore.date)).scalar()
+        latest_d = (latest.published_utc or "")[:10] if latest else "none"
+        svc["news_llm"] = {"status": "up" if latest else "down", "count": cnt,
+                           "earliest": earliest, "latest": latest_d,
+                           "detail": (f"{earliest} → {latest_d} · {cnt:,} scored" if latest else "none")}
+    except Exception:
+        svc["news_llm"] = {"status": "down", "detail": "unknown"}
+
+    # Fetch latest dates in DB for prices, sentiment, macro, and news
+    last_refreshed = {}
+    try:
+        latest_recent = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()
+        last_refreshed["prices_hourly"] = latest_recent.date if latest_recent else "none"
+    except Exception:
+        last_refreshed["prices_hourly"] = "error"
+
+    try:
+        latest_daily = db.query(DailyPrice).order_by(DailyPrice.date.desc()).first()
+        last_refreshed["prices_daily"] = latest_daily.date if latest_daily else "none"
+    except Exception:
+        last_refreshed["prices_daily"] = "error"
+
+    try:
+        latest_macro = db.query(MacroIndicator).order_by(MacroIndicator.date.desc()).first()
+        last_refreshed["macro"] = latest_macro.date if latest_macro else "none"
+    except Exception:
+        last_refreshed["macro"] = "error"
+
+    try:
+        latest_sent = db.query(TickerSentiment).order_by(TickerSentiment.date.desc()).first()
+        last_refreshed["sentiment"] = latest_sent.date if latest_sent else "none"
+    except Exception:
+        last_refreshed["sentiment"] = "error"
+
+    try:
+        latest_news_llm = db.query(NewsLLMScore).order_by(NewsLLMScore.published_utc.desc()).first()
+        last_refreshed["news_llm"] = latest_news_llm.published_utc[:16].replace("T", " ") if latest_news_llm and latest_news_llm.published_utc else "none"
+    except Exception:
+        last_refreshed["news_llm"] = "error"
+
+    res = {
+        "services": svc,
+        "execution_strategy": EXECUTION_STRATEGY,
+        "as_of": now.strftime("%H:%M:%S"),
+        "last_refreshed": last_refreshed
+    }
+    _health_cache = {"data": res, "timestamp": now}
+    return res
+
+_price_summary_cache = {"data": None, "timestamp": None}
+
+@app.get("/api/prices/summary")
+def get_price_summary(db=Depends(get_db)):
+    """Per-ticker current price + 1D/1W/1M/1Y % change for the active universe.
+
+    Current price is the live Alpaca trade when available (one batched call), else the latest stored
+    daily close. Timeframe changes are measured off the stored daily closes. Cached for 60s."""
+    global _price_summary_cache
+    now = datetime.now()
+    if (_price_summary_cache["data"] is not None and _price_summary_cache["timestamp"]
+            and now - _price_summary_cache["timestamp"] < timedelta(seconds=60)):
+        return _price_summary_cache["data"]
+
+    db_tickers = db.query(UniverseTicker).all()
+    universe = [t.ticker for t in db_tickers] if db_tickers else list(TICKER_UNIVERSE)
+
+    start = (now - timedelta(days=420)).strftime("%Y-%m-%d")
+    rows = db.query(DailyPrice.ticker, DailyPrice.date, DailyPrice.close).filter(
+        DailyPrice.date >= start, DailyPrice.ticker.in_(universe)).all()
+    from collections import defaultdict
+    series = defaultdict(list)
+    for tk, d, c in rows:
+        series[tk].append((d, c))
+
+    # Live prices in one batched Alpaca call; degrade gracefully to the latest daily close.
+    live = {}
+    try:
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api()
+        trades = api.get_latest_trades(universe)
+        for tk, tr in trades.items():
+            live[tk] = float(tr.price)
+    except Exception as e:
+        print(f"Live price fetch unavailable, using daily closes: {e}")
+
+    def pct(cur, base):
+        return round((cur / base - 1.0) * 100.0, 2) if base else None
+
+    out = []
+    for tk in universe:
+        s = sorted(series.get(tk, []), key=lambda x: x[0])
+        closes = [c for _, c in s if c]
+        if not closes:
+            continue
+        is_live = tk in live
+        cur = live.get(tk, closes[-1])
+        o = 0 if is_live else 1   # when live, closes[-1] is the prior session; else cur == closes[-1]
+
+        def base(k):
+            idx = k + o
+            return closes[-idx] if len(closes) >= idx else closes[0]
+
+        out.append({
+            "ticker": tk, "price": round(cur, 2), "is_live": is_live,
+            "d1": pct(cur, base(1)), "w1": pct(cur, base(5)),
+            "m1": pct(cur, base(21)), "y1": pct(cur, base(252)),
+        })
+    out.sort(key=lambda x: x["ticker"])
+    res = {"prices": out, "as_of": now.strftime("%Y-%m-%d %H:%M")}
+    _price_summary_cache = {"data": res, "timestamp": now}
+    return res
 
 # In-memory cache for screener results to keep response quick
 _volatile_screener_cache = {

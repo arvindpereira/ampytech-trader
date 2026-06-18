@@ -138,12 +138,12 @@ def prepare_sequences(df, feature_cols, seq_len=10, fit_scaler=False, scaler_met
     return np.array(sequences), np.array(targets), np.array(weights), scaler_metadata
 
 
-def train_temporal_attention_model(seq_len=10, epochs=30, batch_size=128):
+def train_temporal_attention_model(seq_len=10, epochs=20, batch_size=128):
     """Loads DB data, constructs sequences, trains LightTemporalAttentionNet, and saves it."""
     print("Loading data from database...")
     df = load_data_from_db()
 
-    feature_cols = sorted([col for col in df.columns if col.startswith("feat_")])
+    feature_cols = sorted([col for col in df.columns if col.startswith("feat_") and col != "feat_atr_14"])
     target_col = "target_win"
 
     print("Preparing training sequences...")
@@ -210,7 +210,7 @@ def train_temporal_attention_model(seq_len=10, epochs=30, batch_size=128):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PyTorch Short-Term Sequence Forecasting Trainer")
     parser.add_argument("--train", action="store_true", help="Train the model")
-    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs")
     args = parser.parse_args()
 
     if args.train:

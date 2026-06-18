@@ -639,7 +639,7 @@ def fetch_sentiment():
         reddit_fetched = fetch_reddit_sentiment(db, date_str)
 
         if not news_fetched or not reddit_fetched:
-            generate_mock_sentiment(db, date_str)
+            print(f"Warning: News or Reddit API sentiment fetch was incomplete/failed for {date_str}. Mock fallback is disabled.")
 
     db.close()
     print("\nSentiment processing completed.\n")

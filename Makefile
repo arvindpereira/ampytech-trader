@@ -1,11 +1,23 @@
-.PHONY: help default install fetch backfill-news train walkforward backtest \
-        simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint
+.PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+        db-backup db-backup-list db-restore db-restore-commit \
+        simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
 EPOCHS ?= 100
 DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
+HORIZON ?= 21
+SWING_HORIZON ?= 5
+STRENGTH ?= 0.10
+# Full LLM-news window: matches NEWS_LLM_START so `make news-llm` backfills everything to 2021.
+START ?= 2021-01-01
+NEWS_START ?= $(START)
+LLM_MODEL ?= gemma4:e4b
+TICKER   ?=
+TICKERS  ?=
+BACKUP_KEEP ?= 10
+RESTORE  ?=
 VENV_PY := venv/bin/python3
 
 # Default target: print help
@@ -22,10 +34,21 @@ help:
 	@echo "Data:"
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
+	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
+	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 TICKERS=AAPL,NVDA]"
+	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
+	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
+	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
+	@echo "  make db-restore-commit - Restore the newest DB backup matching the current git commit"
 	@echo ""
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
 	@echo "  make walkforward       - Honest out-of-sample edge check (expanding folds) [SPLITS=$(SPLITS)]"
+	@echo "  make calibrate         - Calibrate the served-model BUY threshold (-> threshold.json)"
+	@echo "  make longterm-eval     - Test insider buying at the daily 1-3 month horizon [HORIZON=21]"
+	@echo "  make longterm-tilt     - A/B backtest the insider-buy MPT tilt [STRENGTH=0.10]"
+	@echo "  make swing-eval        - Swing model walk-forward + portfolio sim, WITH vs WITHOUT LLM news [SWING_HORIZON=5]"
+	@echo "  make swing-train       - Train + save the production swing model served in the UI [SWING_HORIZON=5]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -37,6 +60,8 @@ help:
 	@echo "  make serve-backend     - Launch only the FastAPI backend (:8008)"
 	@echo "  make serve-frontend    - Launch only the Next.js frontend (:3002)"
 	@echo "  make schedule          - Run the APScheduler daemon (unattended fetch/train/execute)"
+	@echo "  make popular-tickers   - Find trending, active, gainer, and loser stocks"
+	@echo "  make add-ticker TICKER=SYMBOL - Add a new symbol to your trading universe"
 	@echo "  make lint              - Strip trailing whitespace / normalize line endings"
 	@echo "========================================================================"
 
@@ -49,7 +74,7 @@ install:
 	cd frontend && npm install
 	@echo "✅ Install complete."
 
-bootstrap: fetch train
+bootstrap: popular-tickers add-ticker fetch train
 	@echo "✅ Bootstrap complete. Run 'make serve' to start the app."
 
 # ----------------------------------------------------------------------------
@@ -69,6 +94,13 @@ backfill-news:
 	cd backend && $(VENV_PY) data_ingestion/sentiment_fetcher.py --backfill
 	@echo "✅ News sentiment backfill complete."
 
+insider:
+	@echo "========================================================================"
+	@echo "🏛️  Fetching REAL SEC EDGAR Form 4 insider transactions (set SEC_USER_AGENT)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/alternative_fetcher.py
+	@echo "✅ Insider Form 4 ingest complete (enable ALT_DATA_ENABLED to use in features)."
+
 # ----------------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------------
@@ -84,6 +116,60 @@ walkforward:
 	@echo "🔬 Walk-forward out-of-sample evaluation ($(SPLITS) expanding folds) — the honest edge check..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py walkforward --splits $(SPLITS)
+
+calibrate:
+	@echo "========================================================================"
+	@echo "🎯 Calibrating the served-model BUY threshold (writes saved_models/threshold.json)..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py calibrate
+
+longterm-eval:
+	@echo "========================================================================"
+	@echo "🔭 Long-term insider-alpha walk-forward (daily, ~1-3 month horizon) [HORIZON=$(HORIZON)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py longterm-eval --horizon $(HORIZON)
+
+news-llm:
+	@echo "========================================================================"
+	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) $(if $(TICKERS),--tickers $(TICKERS))
+
+db-backup:
+	@echo "========================================================================"
+	@echo "☁️  Backing up the trading DB to Google Drive (keeps newest $(BACKUP_KEEP))..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) scripts/db_backup.py --keep $(BACKUP_KEEP)
+
+db-backup-list:
+	cd backend && $(VENV_PY) scripts/db_backup.py --list
+
+db-verify:
+	cd backend && $(VENV_PY) scripts/db_backup.py --verify $(RESTORE)
+
+db-restore:
+	cd backend && $(VENV_PY) scripts/db_backup.py --restore $(RESTORE)
+
+db-restore-commit:
+	cd backend && $(VENV_PY) scripts/db_backup.py --restore-commit
+
+swing-eval:
+	@echo "========================================================================"
+	@echo "🪁 Swing walk-forward + portfolio sim — WITH vs WITHOUT LLM news [SWING_HORIZON=$(SWING_HORIZON)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py swing-eval --horizon $(SWING_HORIZON) --splits $(SPLITS)
+
+swing-train:
+	@echo "========================================================================"
+	@echo "🪁 Training + saving the production swing model [SWING_HORIZON=$(SWING_HORIZON)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py swing-train --horizon $(SWING_HORIZON)
+
+longterm-tilt:
+	@echo "========================================================================"
+	@echo "🪙 Long-term MPT insider-buy tilt A/B backtest [STRENGTH=$(STRENGTH)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py longterm-tilt --tilt-strength $(STRENGTH)
 
 backtest:
 	@echo "========================================================================"
@@ -138,3 +224,16 @@ lint:
 	@echo "========================================================================"
 	python3 backend/lint.py
 	@echo "✅ Formatting complete. Ready to review and commit!"
+
+popular-tickers:
+	@echo "========================================================================"
+	@echo "🔥 Fetching trending, active, gainer, and loser stocks..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py popular-tickers
+
+add-ticker:
+	@echo "========================================================================"
+	@echo "➕ Adding ticker $(TICKER) to the database..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py add-ticker --symbol "$(TICKER)"
+
