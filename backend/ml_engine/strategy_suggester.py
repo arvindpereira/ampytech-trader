@@ -157,34 +157,40 @@ def suggest_strategies(horizon=5, n_splits=5, oos_start="2022-01-01", progress_c
             "counts": {k: sum(1 for o in out if o["recommended"] == k) for k in ("swing", "longterm", "hold")}}
 
 
-def _blended_curve(oos, prices_df, swing_tickers, lt_tickers, swing_w, lt_w, oos_start, horizon):
-    """Blended OOS $-curve for one assignment: swing sleeve restricted to `swing_tickers` + long-term
-    sleeve restricted to `lt_tickers`, combined by bucket weights (remainder = cash @ 0%)."""
+def _blended_curve(oos, prices_df, swing_tickers, lt_tickers, swing_w, lt_w, oos_start, horizon,
+                   hr_tickers=None, hr_w=0.0):
+    """Blended OOS $-curve for one assignment: core swing sleeve (`swing_tickers`) + long-term sleeve
+    (`lt_tickers`) + a small high-risk sleeve (`hr_tickers`, the aggressive model on speculative names),
+    combined by bucket weights (remainder = cash @ 0%)."""
     import pandas as pd
     from ml_engine.models import simulate_portfolio_chronological
     from ml_engine.longterm_alpha import backtest_longterm_curve
     from ml_engine.evaluate import _curve_to_daily
     from ml_engine.swing_alpha import SWING_STOP_MAX, SWING_STOP_MIN, SWING_ATR_STOP_MULT, SWING_TP_MULT
 
-    sw = pd.Series(dtype=float)
-    sig = oos[oos["ticker"].isin(swing_tickers)]
-    if not sig.empty and swing_w > 0:
+    def _swing_sleeve(tickers):
+        sig = oos[oos["ticker"].isin(tickers)]
+        if sig.empty:
+            return pd.Series(dtype=float)
         c, _ = simulate_portfolio_chronological(sig, prices_df, horizon=horizon, stop_max=SWING_STOP_MAX,
                                                 stop_min=SWING_STOP_MIN, atr_mult=SWING_ATR_STOP_MULT, tp_mult=SWING_TP_MULT)
-        sw = _curve_to_daily(c)
+        return _curve_to_daily(c)
+
+    sw = _swing_sleeve(swing_tickers) if swing_w > 0 else pd.Series(dtype=float)
+    hr = _swing_sleeve(hr_tickers) if (hr_tickers and hr_w > 0) else pd.Series(dtype=float)
     lt = pd.Series(dtype=float)
     if lt_tickers and lt_w > 0:
         c2, _ = backtest_longterm_curve(start_date=oos_start, allowed_tickers=set(lt_tickers))
         lt = _curve_to_daily(c2)
 
-    idx = sorted(set(sw.index) | set(lt.index))
+    idx = sorted(set(sw.index) | set(lt.index) | set(hr.index))
     if not idx:
         return pd.Series(dtype=float)
-    sw = sw.reindex(idx).ffill()
-    lt = lt.reindex(idx).ffill()
+    sw, lt, hr = sw.reindex(idx).ffill(), lt.reindex(idx).ffill(), hr.reindex(idx).ffill()
     sw_ret = sw.pct_change().fillna(0.0) if len(sw.dropna()) else pd.Series(0.0, index=idx)
     lt_ret = lt.pct_change().fillna(0.0) if len(lt.dropna()) else pd.Series(0.0, index=idx)
-    blended_ret = swing_w * sw_ret + lt_w * lt_ret
+    hr_ret = hr.pct_change().fillna(0.0) if len(hr.dropna()) else pd.Series(0.0, index=idx)
+    blended_ret = swing_w * sw_ret + lt_w * lt_ret + hr_w * hr_ret
     return (1.0 + blended_ret).cumprod() * 100000.0
 
 
@@ -221,10 +227,14 @@ def validate_assignments(horizon=5, n_splits=5, oos_start="2022-01-01", progress
     buckets = get_strategy_buckets(db)
     db.close()
     sw_w, lt_w = float(buckets.get("swing", 0.0)), float(buckets.get("longterm", 0.0))
+    hr_w = min(float(buckets.get("high_risk", 0.0)), 0.05)
+    from ml_engine.swing_alpha import tickers_for_tiers, HIGH_RISK_TIERS
+    spec_set = set(tickers_for_tiers(HIGH_RISK_TIERS))
     eq = [t for t in equities if t not in NON_EQUITY]
 
     def split(assign):
-        return ([t for t in eq if assign.get(t, "swing") == "swing"],
+        # core swing sleeve excludes speculative names — those go to the high-risk sleeve instead.
+        return ([t for t in eq if assign.get(t, "swing") == "swing" and t not in spec_set],
                 [t for t in eq if assign.get(t, "swing") == "longterm"])
 
     scheme_defs = [
@@ -234,11 +244,14 @@ def validate_assignments(horizon=5, n_splits=5, oos_start="2022-01-01", progress
     ]
     report(68, "Blended backtests…")
     results = {}
+    hr_tk = [t for t in eq if t in spec_set]
     for i, (name, assign, w_s, w_l) in enumerate(scheme_defs):
         sw_tk, lt_tk = split(assign)
-        curve = _blended_curve(oos, prices_df, set(sw_tk), set(lt_tk), w_s, w_l, oos_start, horizon)
+        curve = _blended_curve(oos, prices_df, set(sw_tk), set(lt_tk), w_s, w_l, oos_start, horizon,
+                               hr_tickers=set(hr_tk), hr_w=hr_w)
         results[name] = {"metrics": _metrics(curve), "n_swing": len(sw_tk), "n_longterm": len(lt_tk),
-                         "buckets": {"swing": round(w_s, 2), "longterm": round(w_l, 2)}}
+                         "n_high_risk": len(hr_tk),
+                         "buckets": {"swing": round(w_s, 2), "longterm": round(w_l, 2), "high_risk": round(hr_w, 2)}}
         report(68 + int((i + 1) / len(scheme_defs) * 28), "Blended backtests…")
 
     cm, sm = results["current"]["metrics"], results["suggested"]["metrics"]
@@ -248,5 +261,5 @@ def validate_assignments(horizon=5, n_splits=5, oos_start="2022-01-01", progress
                else "No clear improvement at your current buckets — see the 30/60 variant.")
     n_changes = sum(1 for t in eq if cur.get(t, "swing") != rec.get(t, cur.get(t, "swing")))
     report(100, "Complete")
-    return {"schemes": results, "live_buckets": {"swing": sw_w, "longterm": lt_w},
+    return {"schemes": results, "live_buckets": {"swing": sw_w, "longterm": lt_w, "high_risk": hr_w},
             "oos_start": oos_start, "verdict": verdict, "n_changes": n_changes}

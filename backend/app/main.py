@@ -25,8 +25,10 @@ from app.database import (
 )
 
 import json as _json
-STRATEGY_KEYS = ["swing", "longterm"]
-DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0}
+# high_risk = small opt-in sleeve driven by the AGGRESSIVE swing model on speculative-tier names.
+from app.core.config import HIGH_RISK_CAP
+STRATEGY_KEYS = ["swing", "longterm", "high_risk"]
+DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
 
 def get_strategy_buckets(db):
     """Capital allocation per strategy bucket (fraction of equity). Defaults to all-swing."""
@@ -841,11 +843,23 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     })
 
     # --- Swing (multi-day) signals — daily prices + LLM-scored news (validated portfolio edge) ---
-    swing_suggestions = []
+    # CORE book uses the core model on core+quality_growth names; the small HIGH-RISK sleeve uses the
+    # aggressive model restricted to speculative-tier names.
+    swing_suggestions, high_risk_suggestions = [], []
     if SWING_ENABLED:
         try:
-            from ml_engine.swing_alpha import build_swing_signals
-            swing_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, active_universe)
+            from ml_engine.swing_alpha import (build_swing_signals, load_swing_model,
+                                               tickers_for_tiers, CORE_TIERS, HIGH_RISK_TIERS)
+            core_names = set(tickers_for_tiers(CORE_TIERS, include_unrated=True))
+            spec_names = set(tickers_for_tiers(HIGH_RISK_TIERS))
+            core_uni = [t for t in active_universe if t in core_names] or active_universe
+            swing_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, core_uni)
+            hr_uni = [t for t in active_universe if t in spec_names]
+            if hr_uni:
+                agg_m, agg_meta = load_swing_model(aggressive=True)
+                if agg_m is not None:
+                    high_risk_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, hr_uni,
+                                                                model=agg_m, meta=agg_meta, top_n=3)
         except Exception as e:
             print(f"Error computing swing signals: {e}")
 
@@ -855,7 +869,8 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         "hedge_mode": effective_hedge_mode,
         "short_term_suggestions": suggestions,
         "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True),
-        "swing_suggestions": swing_suggestions
+        "swing_suggestions": swing_suggestions,
+        "high_risk_suggestions": high_risk_suggestions
     }
     _suggestions_cache[cache_key] = res
     return res
@@ -1336,15 +1351,18 @@ def get_strategy_config(db=Depends(get_db)):
 class BucketsRequest(BaseModel):
     swing: float
     longterm: float
+    high_risk: float = 0.0
 
 @app.post("/api/strategy/buckets")
 def set_strategy_buckets(req: BucketsRequest, db=Depends(get_db)):
     """Set the capital fraction per strategy bucket. Rejected if they sum to more than 100%."""
     swing = max(0.0, float(req.swing))
     longterm = max(0.0, float(req.longterm))
-    if swing + longterm > 1.0001:
+    high_risk = min(HIGH_RISK_CAP, max(0.0, float(req.high_risk)))   # hard-cap the high-risk sleeve
+    if swing + longterm + high_risk > 1.0001:
         raise HTTPException(status_code=400, detail="Bucket weights cannot exceed 100% of equity.")
-    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4)})
+    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4),
+                           "high_risk": round(high_risk, 4)})
     row = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
     if row:
         row.value = payload
@@ -1397,6 +1415,7 @@ def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
         assignments = get_strategy_assignments(db)
         lt_tickers = [t for t, s in assignments.items() if s == "longterm"]
         allocation = {"swing": buckets.get("swing", 0.0), "longterm": buckets.get("longterm", 0.0),
+                      "high_risk": min(buckets.get("high_risk", 0.0), HIGH_RISK_CAP),
                       "longterm_tickers": lt_tickers or None}
     jid = _job_new("evaluate", "Evaluating strategies")
     threading.Thread(target=_run_eval_job,
@@ -1414,6 +1433,46 @@ def get_evaluation_result(job_id: str):
     if j:
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
+
+class TierOverrideRequest(BaseModel):
+    ticker: str
+    tier: Optional[str] = None   # core | quality_growth | speculative | value_trap; null = clear override
+
+@app.post("/api/classification/override")
+def set_tier_override(req: TierOverrideRequest, db=Depends(get_db)):
+    """Manually override a ticker's tier (wins over the computed one); null clears it. Re-derives all
+    effective tiers (respecting overrides) so routing/serving update immediately."""
+    from app.database import TickerClassification
+    tk = req.ticker.upper().strip()
+    if req.tier not in (None, "core", "quality_growth", "speculative", "value_trap"):
+        raise HTTPException(status_code=400, detail="Invalid tier.")
+    row = db.query(TickerClassification).filter(TickerClassification.ticker == tk).first()
+    if not row:
+        row = TickerClassification(ticker=tk)
+        db.add(row)
+    row.tier_override = req.tier
+    if req.tier:
+        row.tier = req.tier                       # immediate effect
+    db.commit()
+    try:
+        from ml_engine.classify import classify_universe   # re-derive effective tiers (no LLM, fast)
+        classify_universe(run_llm=False)
+    except Exception as e:
+        print(f"Reclassify after override failed: {e}")
+    clear_suggestions_cache()
+    return {"status": "ok", "ticker": tk, "tier_override": req.tier}
+
+@app.get("/api/classification")
+def get_classification(db=Depends(get_db)):
+    """Per-ticker risk × fundamental-quality tier (for the UI badges). Returns {ticker: {tier, quality,
+    volatility, dd_2022, distressed, verdict}}."""
+    from app.database import TickerClassification
+    out = {}
+    for c in db.query(TickerClassification).all():
+        out[c.ticker] = {"tier": c.tier, "quality": c.quality, "volatility": c.volatility,
+                         "dd_2022": c.dd_2022, "distressed": c.distressed, "verdict": c.llm_verdict,
+                         "overridden": bool(c.tier_override)}
+    return out
 
 @app.get("/api/premium/value")
 def premium_value():

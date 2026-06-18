@@ -36,8 +36,31 @@ NON_EQUITY = {"SPY", "QQQ", "XLK", "XLF", "XLE", "XLV", "XLP", "SPACE"}
 LLM_FEATURES = ["feat_llm_news", "feat_llm_news_intensity", "feat_llm_news_today"]
 
 SAVED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_models")
-SWING_MODEL_PATH = os.path.join(SAVED_DIR, "swing_model.json")
+SWING_MODEL_PATH = os.path.join(SAVED_DIR, "swing_model.json")             # CORE model (primary book)
 SWING_META_PATH = os.path.join(SAVED_DIR, "swing_metadata.pkl")
+SWING_AGG_MODEL_PATH = os.path.join(SAVED_DIR, "swing_aggressive_model.json")   # AGGRESSIVE (high-risk bucket)
+SWING_AGG_META_PATH = os.path.join(SAVED_DIR, "swing_aggressive_metadata.pkl")
+
+# Tiers (ticker_classification.tier) the CORE model is allowed to train/trade on. Speculative +
+# value_trap are excluded from core (they go to the aggressive model's small high-risk bucket).
+CORE_TIERS = ("core", "quality_growth")
+HIGH_RISK_TIERS = ("speculative",)   # value_trap is avoided entirely (not even traded aggressively)
+
+
+def tickers_for_tiers(tiers, include_unrated=False):
+    """Universe tickers whose classification tier is in `tiers`. `include_unrated` also returns tickers
+    with no classification yet (no fundamentals, e.g. foreign ADRs) — folded into the core book."""
+    from app.database import TickerClassification, UniverseTicker
+    db = SessionLocal()
+    try:
+        cls = {c.ticker: c.tier for c in db.query(TickerClassification).all()}
+        uni = [t.ticker for t in db.query(UniverseTicker).all()]
+    finally:
+        db.close()
+    out = [t for t in uni if cls.get(t) in tiers]
+    if include_unrated:
+        out += [t for t in uni if t not in cls]
+    return sorted(set(out))
 
 
 def load_llm_news_daily(exclude_premium=False):
@@ -194,13 +217,15 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
 
 
 def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
-                    exclude_premium=False):
+                    exclude_premium=False, allowed_tickers=None):
     """Walk-forward → the pooled out-of-sample signal frame, shared by the backtest and the suggester.
 
     Returns (oos_df, prices_df, equities) where oos_df has [date, ticker, close, atr_14, target_win,
     trade_ret, prob, selected_threshold] — every held-out prediction. `oos_start` (YYYY-MM-DD) fixes
     where OOS testing begins (first fold trains only before it); else it starts after `warmup_frac`."""
     full, equities, prices_df, first_llm_date = load_swing_data(horizon, exclude_premium=exclude_premium)
+    if allowed_tickers is not None:
+        equities = [t for t in equities if t in set(allowed_tickers)]
     df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
     feat_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
@@ -239,11 +264,12 @@ def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, prog
 
 
 def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
-                         exclude_premium=False, regime_gated=True):
+                         exclude_premium=False, regime_gated=True, allowed_tickers=None):
     """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics).
-    `regime_gated` applies the live regime overlay (crisis-shrink) so the backtest matches execution."""
+    `regime_gated` applies the live regime overlay (crisis-shrink) so the backtest matches execution.
+    `allowed_tickers` restricts the tradable set (e.g. speculative names for the aggressive sleeve)."""
     oos, prices_df, _ = swing_oos_frame(horizon, n_splits, warmup_frac, oos_start, progress_cb,
-                                        exclude_premium=exclude_premium)
+                                        exclude_premium=exclude_premium, allowed_tickers=allowed_tickers)
     if oos is None or oos.empty:
         return [], {}
     from ml_engine.models import compute_regime_series
@@ -255,16 +281,17 @@ def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None,
     return curve, metrics
 
 
-def train_and_save(horizon=None):
-    """Trains the production swing model on ALL available data (LLM-active window) and persists it.
-
-    Saves the XGBoost model + a metadata pkl holding the exact feature columns, the calibrated BUY
-    threshold (via the same nested find_optimal_threshold used in walk-forward), and the horizon — so
-    inference reproduces training exactly."""
+def train_and_save(horizon=None, allowed_tickers=None, model_path=SWING_MODEL_PATH,
+                   meta_path=SWING_META_PATH, label="core"):
+    """Train a swing model on the LLM-active window and persist it. `allowed_tickers` restricts the
+    TRAINING universe (None = all equities) — used to train the CORE model on core+quality_growth names
+    only, vs the AGGRESSIVE model on the full universe. Metadata records the columns / threshold / horizon
+    / allowed tickers so inference reproduces training exactly."""
     horizon = horizon or SWING_HORIZON_DAYS
-    print(f"Training production swing model (horizon={horizon}d)...")
     full, equities, prices_df, first_llm_date = load_swing_data(horizon)
-    df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
+    universe = [t for t in equities if (allowed_tickers is None or t in set(allowed_tickers))]
+    print(f"Training {label} swing model (horizon={horizon}d) on {len(universe)} tickers...")
+    df = full[full["ticker"].isin(universe)].dropna(subset=["target_win", "trade_ret"]).copy()
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
     feat_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
     df = df.dropna(subset=feat_all)
@@ -272,8 +299,8 @@ def train_and_save(horizon=None):
         df = df[df["date"] >= first_llm_date]
     df = df.sort_values("dt").reset_index(drop=True)
     if len(df) < 1000:
-        print(f"Only {len(df)} samples in the LLM-active window — score more news first (make news-llm).")
-        return
+        print(f"Only {len(df)} samples for {label} — score more news first (make news-llm).")
+        return False
 
     w = np.exp(-((df["dt"].max() - df["dt"]).dt.days) / (5.0 * 365.25))
     model = xgb.XGBClassifier(n_estimators=120, max_depth=4, learning_rate=0.05,
@@ -282,24 +309,39 @@ def train_and_save(horizon=None):
     thr = find_optimal_threshold(df, feat_all, target_col="target_win", fallback_default=0.2)
 
     os.makedirs(SAVED_DIR, exist_ok=True)
-    model.save_model(SWING_MODEL_PATH)
+    model.save_model(model_path)
     meta = {"feature_cols": feat_all, "llm_features": [c for c in LLM_FEATURES if c in feat_all],
             "threshold": float(thr), "horizon": int(horizon), "n_samples": int(len(df)),
+            "label": label, "allowed_tickers": sorted(universe),
             "window": [str(df["date"].min()), str(df["date"].max())],
             "trained_at": datetime.now().isoformat()}
-    with open(SWING_META_PATH, "wb") as f:
+    with open(meta_path, "wb") as f:
         pickle.dump(meta, f)
-    print(f"Saved swing model → {SWING_MODEL_PATH}")
-    print(f"  features={len(feat_all)} (incl. {meta['llm_features']}) | threshold={thr:.3f} | "
-          f"samples={len(df)} | window={meta['window'][0]}..{meta['window'][1]}")
+    print(f"  saved {label} → {os.path.basename(model_path)} | {len(universe)} tickers | "
+          f"threshold={thr:.3f} | samples={len(df)} | window={meta['window'][0]}..{meta['window'][1]}")
+    return True
 
 
-def load_swing_model():
-    if not (os.path.exists(SWING_MODEL_PATH) and os.path.exists(SWING_META_PATH)):
+def train_both(horizon=None):
+    """Train the CORE model (core+quality_growth+unrated, the primary book) and the AGGRESSIVE model
+    (full universe incl. speculative, drives the small high-risk bucket)."""
+    core_tickers = tickers_for_tiers(CORE_TIERS, include_unrated=True)
+    if not core_tickers:
+        print("No classification yet — training core on the full universe (run `make classify` first to split tiers).")
+        core_tickers = None
+    train_and_save(horizon, allowed_tickers=core_tickers, model_path=SWING_MODEL_PATH,
+                   meta_path=SWING_META_PATH, label="core")
+    train_and_save(horizon, allowed_tickers=None, model_path=SWING_AGG_MODEL_PATH,
+                   meta_path=SWING_AGG_META_PATH, label="aggressive")
+
+
+def load_swing_model(aggressive=False):
+    mp, xp = (SWING_AGG_MODEL_PATH, SWING_AGG_META_PATH) if aggressive else (SWING_MODEL_PATH, SWING_META_PATH)
+    if not (os.path.exists(mp) and os.path.exists(xp)):
         return None, None
     m = xgb.XGBClassifier()
-    m.load_model(SWING_MODEL_PATH)
-    with open(SWING_META_PATH, "rb") as f:
+    m.load_model(mp)
+    with open(xp, "rb") as f:
         meta = pickle.load(f)
     return m, meta
 
@@ -390,9 +432,15 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Swing model with LLM-news features")
     ap.add_argument("--horizon", type=int, default=5, help="swing holding horizon in trading days")
     ap.add_argument("--splits", type=int, default=4)
-    ap.add_argument("--train", action="store_true", help="train + save the production swing model")
+    ap.add_argument("--train", action="store_true", help="train + save the core + aggressive swing models")
+    ap.add_argument("--core-only", action="store_true", help="train only the core model")
     a = ap.parse_args()
     if a.train:
-        train_and_save(horizon=a.horizon)
+        if a.core_only:
+            from ml_engine.swing_alpha import tickers_for_tiers, CORE_TIERS
+            train_and_save(horizon=a.horizon,
+                           allowed_tickers=tickers_for_tiers(CORE_TIERS, include_unrated=True) or None)
+        else:
+            train_both(horizon=a.horizon)
     else:
         walk_forward_swing(horizon=a.horizon, n_splits=a.splits)

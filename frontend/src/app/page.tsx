@@ -141,6 +141,8 @@ export default function Home() {
   const [newUniverseTicker, setNewUniverseTicker] = useState<string>('');
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [classification, setClassification] = useState<Record<string, any>>({});
+  const [tierMenu, setTierMenu] = useState<{ ticker: string; x: number; y: number } | null>(null);
   const [portfolio, setPortfolio] = useState<any>(null);
   const [refreshingPortfolio, setRefreshingPortfolio] = useState<boolean>(false);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -150,14 +152,14 @@ export default function Home() {
   const [addStockTicker, setAddStockTicker] = useState<string>('');
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [strategyConfig, setStrategyConfig] = useState<any>(null);
-  const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string }>({ swing: '', longterm: '' });
+  const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string; high_risk: string }>({ swing: '', longterm: '', high_risk: '' });
   const [suggestRunning, setSuggestRunning] = useState<boolean>(false);
   const [suggestProgress, setSuggestProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [suggestData, setSuggestData] = useState<any>(null);
   const [validateRunning, setValidateRunning] = useState<boolean>(false);
   const [validateProgress, setValidateProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [validateData, setValidateData] = useState<any>(null);
-  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
+  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean; high_risk: boolean }>({ swing: true, longterm: true, high_risk: false });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
   const [evalExcludePremium, setEvalExcludePremium] = useState<boolean>(false);
@@ -271,7 +273,7 @@ export default function Home() {
       if (res.ok) {
         const d = await res.json();
         setStrategyConfig(d);
-        setBucketEdit({ swing: String(Math.round((d.buckets.swing || 0) * 100)), longterm: String(Math.round((d.buckets.longterm || 0) * 100)) });
+        setBucketEdit({ swing: String(Math.round((d.buckets.swing || 0) * 100)), longterm: String(Math.round((d.buckets.longterm || 0) * 100)), high_risk: String(Math.round((d.buckets.high_risk || 0) * 100)) });
       }
     } catch (err) { /* offline */ }
   };
@@ -348,11 +350,13 @@ export default function Home() {
   const handleSaveBuckets = async () => {
     const s = (parseFloat(bucketEdit.swing) || 0) / 100;
     const l = (parseFloat(bucketEdit.longterm) || 0) / 100;
-    if (s + l > 1.0001) { alert('Buckets cannot exceed 100% of equity.'); return; }
+    let h = (parseFloat(bucketEdit.high_risk) || 0) / 100;
+    if (h > 0.05) { alert('High-risk sleeve is capped at 5% of equity.'); return; }
+    if (s + l + h > 1.0001) { alert('Buckets cannot exceed 100% of equity.'); return; }
     setActionBusy(true);
     try {
       const res = await fetch(`http://localhost:8008/api/strategy/buckets`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ swing: s, longterm: l }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ swing: s, longterm: l, high_risk: h }),
       });
       if (!res.ok) { const e = await res.json(); alert(e.detail || 'Failed'); }
       else fetchStrategyConfig();
@@ -369,13 +373,48 @@ export default function Home() {
   };
 
   const EVAL_SERIES: { key: string; name: string; color: string }[] = [
-    { key: 'swing', name: 'Swing + News', color: '#00F2FE' },
+    { key: 'swing', name: 'Swing + News (core)', color: '#00F2FE' },
     { key: 'longterm', name: 'Long-term (MPT)', color: '#10B981' },
+    { key: 'high_risk', name: 'High-risk (aggressive)', color: '#EF4444' },
     { key: 'blended', name: 'Blended (your allocation)', color: '#F59E0B' },
     { key: 'spy', name: 'S&P 500', color: '#94A3B8' },
     { key: 'qqq', name: 'QQQ', color: '#A78BFA' },
     { key: 'brk', name: 'Berkshire (BRK-B)', color: '#FB923C' },
   ];
+
+  // Risk × fundamental-quality tiers, with at-a-glance names/icons/colors for the ticker badges.
+  const TIER_META: Record<string, { label: string; icon: string; color: string; blurb: string }> = {
+    quality_growth: { label: 'Hot', icon: '🔥', color: '#10B981', blurb: 'Strong fundamentals, volatile — accumulate dips, hold long-term' },
+    core: { label: 'Solid', icon: '🛡️', color: '#38BDF8', blurb: 'Solid fundamentals, calmer — the core book' },
+    speculative: { label: 'Long-shot', icon: '🎲', color: '#EF4444', blurb: 'Weak/volatile — high-risk gamble, small bets only' },
+    value_trap: { label: 'Cold', icon: '🧊', color: '#94A3B8', blurb: 'Weak fundamentals, low upside — avoid' },
+  };
+  const tierMeta = (t: string) => { const tier = classification[t]?.tier; return tier ? TIER_META[tier] : null; };
+  const setTierOverride = async (ticker: string, tier: string | null) => {
+    setTierMenu(null);
+    try {
+      await fetch('http://localhost:8008/api/classification/override', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker, tier }),
+      });
+      const r = await fetch('http://localhost:8008/api/classification');
+      if (r.ok) setClassification(await r.json());
+    } catch (err) { console.error(err); }
+  };
+  // Polished tier pill (tinted bg + icon + colored symbol). Click to override the tier; hover for detail.
+  const TickerTag = ({ t, size = 13, bold = true }: { t: string; size?: number; bold?: boolean }) => {
+    const m = tierMeta(t); const c = classification[t];
+    const detail = m ? `${m.label} — ${m.blurb}${c?.quality != null ? ` · quality ${Math.round(c.quality * 100)}%` : ''}${c?.overridden ? ' · (manual override)' : ''} · click to change`
+                     : `${t}: unrated (no fundamentals) · click to set tier`;
+    const base: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: bold ? 700 : 600, fontSize: size, cursor: 'pointer', borderRadius: '6px', padding: '1px 7px', lineHeight: 1.7 };
+    const styled: React.CSSProperties = m
+      ? { ...base, color: m.color, background: `${m.color}1A`, border: `1px solid ${m.color}44` }
+      : { ...base, color: 'var(--text-primary)', border: '1px dashed var(--border-glass)' };
+    return (
+      <span title={detail} onClick={(e) => { e.stopPropagation(); setTierMenu({ ticker: t, x: e.clientX, y: e.clientY }); }} style={styled}>
+        {m && <span style={{ fontSize: size - 2 }}>{m.icon}</span>}{t}{c?.overridden && <span style={{ fontSize: size - 3, opacity: 0.7 }}>✎</span>}
+      </span>
+    );
+  };
 
   const handleRunEval = async () => {
     const strategies = (Object.entries(evalStrategies) as [string, boolean][]).filter(([, v]) => v).map(([k]) => k);
@@ -632,6 +671,12 @@ export default function Home() {
 
       // 9. Fetch strategy assignments + bucket allocations
       fetchStrategyConfig();
+
+      // 10. Per-ticker risk × quality tier (for the badges)
+      try {
+        const clsRes = await fetch('http://localhost:8008/api/classification');
+        if (clsRes.ok) setClassification(await clsRes.json());
+      } catch { /* non-fatal */ }
 
     } catch (err) {
       console.warn("FastAPI backend is offline.");
@@ -1114,6 +1159,17 @@ export default function Home() {
                       </span>
                     )}
                   </div>
+                  {Object.keys(classification).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', margin: '0 0 12px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      {(['quality_growth', 'core', 'speculative', 'value_trap'] as const).map(k => (
+                        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} title={TIER_META[k].blurb}>
+                          <span>{TIER_META[k].icon}</span>
+                          <span style={{ color: TIER_META[k].color, fontWeight: 600 }}>{TIER_META[k].label}</span>
+                        </span>
+                      ))}
+                      <span style={{ opacity: 0.7 }}>· hover a ticker for details</span>
+                    </div>
+                  )}
                   <div style={{ overflowX: 'auto' }}>
                     <table className="trade-table">
                       <thead>
@@ -1131,7 +1187,7 @@ export default function Home() {
                         {suggestions.map((item, idx) => (
                           <React.Fragment key={idx}>
                           <tr>
-                            <td style={{ fontWeight: 600 }}>{item.ticker}</td>
+                            <td><TickerTag t={item.ticker} /></td>
                             <td>${item.close.toFixed(2)}</td>
                             <td>
                               <span className={`badge badge-${item.action.toLowerCase()}`}>
@@ -1217,7 +1273,7 @@ export default function Home() {
                       <tbody>
                         {swingSuggestions.map((item, idx) => (
                           <tr key={idx}>
-                            <td style={{ fontWeight: 600 }}>{item.ticker}</td>
+                            <td><TickerTag t={item.ticker} /></td>
                             <td>${item.close.toFixed(2)}</td>
                             <td>
                               <span className={`badge badge-${item.action.toLowerCase()}`}>
@@ -1274,7 +1330,7 @@ export default function Home() {
                                 transition: 'transform 0.2s',
                                 transform: isExpanded ? 'rotate(90deg)' : 'none'
                               }}>▶</span>
-                              <span style={{ fontWeight: 600 }}>{item.ticker}</span>
+                              <TickerTag t={item.ticker} bold={false} />
                               {item.suggested_action && (
                                 <span className={`badge badge-${item.suggested_action.includes('BUY') ? 'buy' : item.suggested_action.includes('SELL') ? 'sell' : 'hold'}`} style={{ fontSize: '10px', padding: '2px 6px', fontWeight: 700 }}>
                                   {item.suggested_action.includes('BUY') ? 'BUY' : item.suggested_action.includes('SELL') ? 'SELL' : 'HOLD'}
@@ -1447,7 +1503,7 @@ export default function Home() {
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <span style={{ fontWeight: 700, fontSize: '14px' }}>{p.ticker}</span>
+                                  <TickerTag t={p.ticker} size={14} />
                                   {p.is_live && (
                                     <span title="Live price" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-buy)', display: 'inline-block' }} />
                                   )}
@@ -1615,7 +1671,7 @@ export default function Home() {
                           >
                             <div>
                               <div style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                {item.ticker}
+                                <TickerTag t={item.ticker} size={14} />
                                 <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400 }}>
                                   ({item.mentions} mentions)
                                 </span>
@@ -1841,6 +1897,9 @@ export default function Home() {
                     </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
                       <input type="checkbox" checked={evalStrategies.longterm} onChange={(e) => setEvalStrategies({ ...evalStrategies, longterm: e.target.checked })} /> Long-term (MPT)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }} title="Aggressive model on speculative-tier names (small high-risk sleeve)">
+                      <input type="checkbox" checked={evalStrategies.high_risk} onChange={(e) => setEvalStrategies({ ...evalStrategies, high_risk: e.target.checked })} /> High-risk (aggressive)
                     </label>
                   </div>
                 </div>
@@ -2280,37 +2339,44 @@ export default function Home() {
                 {(() => {
                   const s = parseFloat(bucketEdit.swing) || 0;
                   const l = parseFloat(bucketEdit.longterm) || 0;
-                  const cash = Math.max(0, 100 - s - l);
-                  const over = s + l > 100;
-                  const field = (label: string, key: 'swing' | 'longterm', color: string) => (
+                  const h = parseFloat(bucketEdit.high_risk) || 0;
+                  const cash = Math.max(0, 100 - s - l - h);
+                  const hrOver = h > 5;
+                  const over = s + l + h > 100 || hrOver;
+                  const field = (label: string, key: 'swing' | 'longterm' | 'high_risk', color: string, max = 100) => (
                     <div style={{ flex: 1 }}>
                       <label style={{ display: 'block', fontSize: '12px', color, marginBottom: '6px', fontWeight: 600 }}>{label}</label>
                       <div style={{ position: 'relative' }}>
-                        <input type="number" min="0" max="100" value={bucketEdit[key]}
+                        <input type="number" min="0" max={max} value={bucketEdit[key]}
                           onChange={(e) => setBucketEdit({ ...bucketEdit, [key]: e.target.value })}
-                          style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '9px 26px 9px 12px', fontSize: '14px' }} />
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${key === 'high_risk' && hrOver ? 'var(--color-sell)' : 'var(--border-glass)'}`, borderRadius: '8px', color: 'var(--text-primary)', padding: '9px 26px 9px 12px', fontSize: '14px' }} />
                         <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '13px' }}>%</span>
                       </div>
                     </div>
                   );
                   return (
                     <>
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '14px' }}>
-                        {field('Swing + News', 'swing', 'var(--color-buy)')}
+                      <div style={{ display: 'flex', gap: '12px', marginBottom: '6px' }}>
+                        {field('Swing + News (core)', 'swing', 'var(--color-buy)')}
                         {field('Long-term (MPT)', 'longterm', 'var(--color-accent)')}
+                        {field('High-risk (≤5%)', 'high_risk', '#EF4444', 5)}
                         <div style={{ flex: 1 }}>
                           <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: 600 }}>Cash (rest)</label>
                           <div style={{ padding: '9px 12px', fontSize: '14px', fontWeight: 600, color: over ? 'var(--color-sell)' : 'var(--text-primary)' }}>{over ? '—' : `${cash}%`}</div>
                         </div>
                       </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                        High-risk = the aggressive model on speculative-tier names (BYND, RGTI…); capped at 5% — you accept big drawdowns there for upside.
+                      </div>
                       {/* stacked allocation bar */}
                       <div style={{ display: 'flex', height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.06)', marginBottom: '14px' }}>
                         <div style={{ width: `${Math.min(s, 100)}%`, background: 'var(--color-buy)' }} />
                         <div style={{ width: `${Math.min(l, 100 - Math.min(s, 100))}%`, background: 'var(--color-accent)' }} />
+                        <div style={{ width: `${Math.min(h, Math.max(0, 100 - s - l))}%`, background: '#EF4444' }} />
                       </div>
                       <button onClick={handleSaveBuckets} disabled={actionBusy || over}
                         style={{ background: over ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)', border: `1px solid ${over ? 'var(--color-sell)' : 'var(--color-gold)'}`, borderRadius: '8px', color: over ? 'var(--color-sell)' : 'var(--color-gold)', padding: '8px 18px', cursor: over ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '13px' }}>
-                        {over ? 'Exceeds 100%' : 'Save Allocation'}
+                        {hrOver ? 'High-risk > 5%' : over ? 'Exceeds 100%' : 'Save Allocation'}
                       </button>
                     </>
                   );
@@ -2371,16 +2437,16 @@ export default function Home() {
                           </div>
                         )}
                         <table className="trade-table" style={{ fontSize: '12px' }}>
-                          <thead><tr><th>Scheme</th><th>Buckets (sw/lt)</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>Stocks (sw/lt)</th></tr></thead>
+                          <thead><tr><th>Scheme</th><th>Buckets (sw/lt/hr)</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>Stocks (sw/lt/hr)</th></tr></thead>
                           <tbody>
                             {rows.map(([name, r]: any) => (
                               <tr key={name}>
                                 <td style={{ fontWeight: name === 'suggested' ? 700 : 400 }}>{noChange && name === 'current' ? 'Current (= Suggested)' : (labels[name] || name)}</td>
-                                <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}</td>
+                                <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}/{Math.round((r.buckets.high_risk || 0) * 100)}</td>
                                 <td className={r.metrics.total_return >= 0 ? 'text-green' : 'text-red'}>{r.metrics.total_return >= 0 ? '+' : ''}{(r.metrics.total_return * 100).toFixed(1)}%</td>
                                 <td>{r.metrics.sharpe_ratio.toFixed(2)}</td>
                                 <td className="text-red">{(r.metrics.max_drawdown * 100).toFixed(1)}%</td>
-                                <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}</td>
+                                <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}/{r.n_high_risk ?? 0}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -3019,6 +3085,26 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tier-override popover (click a ticker badge) */}
+      {tierMenu && (
+        <>
+          <div onClick={() => setTierMenu(null)} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
+          <div style={{ position: 'fixed', left: Math.min(tierMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 200), top: tierMenu.y + 8, zIndex: 201, background: 'rgba(16,20,38,0.98)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '6px', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', minWidth: '180px' }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '4px 8px 6px' }}>Set <strong style={{ color: 'var(--text-primary)' }}>{tierMenu.ticker}</strong> tier</div>
+            {(['quality_growth', 'core', 'speculative', 'value_trap'] as const).map(k => (
+              <button key={k} onClick={() => setTierOverride(tierMenu.ticker, k)}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '7px 8px', background: classification[tierMenu.ticker]?.tier === k ? `${TIER_META[k].color}1A` : 'none', border: 'none', color: TIER_META[k].color, fontSize: '13px', fontWeight: 600, cursor: 'pointer', borderRadius: '6px', textAlign: 'left' }}>
+                <span>{TIER_META[k].icon}</span> {TIER_META[k].label}
+              </button>
+            ))}
+            <button onClick={() => setTierOverride(tierMenu.ticker, null)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '7px 8px', marginTop: '2px', borderTop: '1px solid var(--border-glass)', background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '12.5px', cursor: 'pointer', borderRadius: '6px', textAlign: 'left' }}>
+              ↺ Auto (clear override)
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
