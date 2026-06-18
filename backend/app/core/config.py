@@ -168,7 +168,9 @@ PREMIUM_SKIP_SUBJECTS = os.getenv(
     "Top Posts Today,The Briefing,Monday Readout,Weekend Readout,The Information Finance")
 PREMIUM_LLM_MODEL = os.getenv("PREMIUM_LLM_MODEL", "")   # "" -> OPENAI_MODEL (key set) else LLM_MODEL
 PREMIUM_BODY_CHARS = int(os.getenv("PREMIUM_BODY_CHARS", "8000"))    # chars of article body sent to LLM
-PREMIUM_REL_MIN = float(os.getenv("PREMIUM_REL_MIN", "0.2"))         # drop low-relevance mentions
+PREMIUM_REL_MIN = float(os.getenv("PREMIUM_REL_MIN", "0.3"))         # drop low-relevance mentions
+PREMIUM_ABS_MIN = float(os.getenv("PREMIUM_ABS_MIN", "0.15"))        # drop near-neutral (no direction) mentions
+PREMIUM_MAX_MENTIONS = int(os.getenv("PREMIUM_MAX_MENTIONS", "3"))   # cap tickers per article (top by rel*|s|)
 
 # A more powerful model writes the plain-English "expert interpretation" of evaluation runs (Model
 # Evaluation tab). Configurable so you can point it at whatever strong model you have access to.

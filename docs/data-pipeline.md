@@ -42,8 +42,9 @@ Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempo
 **Signals & news**
 - `ticker_sentiments` — per-(ticker,date,source) aggregate VADER sentiment (`is_mock`).
 - `sentiment_source_logs` — individual articles/posts with scores + URLs (`is_mock`).
-- `news_llm_scores` — **`(ticker, article_id)` PK**, `date`, `published_utc`, `title`, `llm_score`
-  (−1..1), `llm_relevance` (0..1), `model`. The LLM-scored news driving the swing strategy.
+- `news_llm_scores` — **`(ticker, article_id)` PK**, `date`, `published_utc` (full ISO timestamp), `title`,
+  `llm_score` (−1..1), `llm_relevance` (0..1), `model` (the scoring LLM), `source` (`polygon` headlines vs
+  `premium:the-information` newsletter — lets models filter/weight premium news separately). Drives swing.
 - `insider_disclosures`, `congress_disclosures` — SEC Form 4 / congressional trades (alt-data, off by default).
 
 **Universe, strategy & settings**

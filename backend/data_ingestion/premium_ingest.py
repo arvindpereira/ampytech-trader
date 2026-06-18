@@ -109,10 +109,13 @@ def _save_state(seen):
 
 
 def _msg_date(msg):
+    """Return (calendar_date 'YYYY-MM-DD', full_iso_timestamp) from an email's Date header."""
     try:
-        return parsedate_to_datetime(msg.get("Date")).strftime("%Y-%m-%d")
+        dt = parsedate_to_datetime(msg.get("Date"))
+        return dt.strftime("%Y-%m-%d"), dt.isoformat()
     except Exception:
-        return datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        return now.strftime("%Y-%m-%d"), now.isoformat()
 
 
 def ingest_file(path):
@@ -120,16 +123,20 @@ def ingest_file(path):
     raw = open(path, "rb").read()
     if path.lower().endswith(".eml"):
         msg = email.message_from_bytes(raw)
-        title, body, date = _decode(msg.get("Subject", os.path.basename(path))), _email_body(msg), _msg_date(msg)
+        title, body = _decode(msg.get("Subject", os.path.basename(path))), _email_body(msg)
+        date, ts = _msg_date(msg)
     else:
         text = raw.decode("utf-8", errors="replace")
         body = _html_to_text(text) if path.lower().endswith((".html", ".htm")) else text
         title = os.path.splitext(os.path.basename(path))[0].replace("_", " ")
-        date = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d")
+        dt = datetime.fromtimestamp(os.path.getmtime(path))
+        date, ts = dt.strftime("%Y-%m-%d"), dt.isoformat()
     print(f"📄 {title} ({date})")
-    accepted = ingest_article(title, body, date, f"file:{os.path.basename(path)}", PREMIUM_SOURCE_TAG)
+    accepted = ingest_article(title, body, date, f"file:{os.path.basename(path)}", PREMIUM_SOURCE_TAG,
+                              published_utc=ts)
     for m in accepted:
-        print(f"   • {m['ticker']}: s={m['s']:+.2f} rel={m['rel']:.2f}  {m.get('why','')}")
+        tag = "direct" if m.get("direct") else "indirect"
+        print(f"   • {m['ticker']} [{tag}]: s={m['s']:+.2f} rel={m['rel']:.2f}  {m.get('why','')}")
     print(f"✅ {len(accepted)} ticker score(s) stored." if accepted else "   (no tradeable tickers matched)")
     return accepted
 
@@ -157,7 +164,8 @@ def ingest_imap(days=7, dry_run=False):
         mid = msg.get("Message-ID") or f"{msg.get('Date','')}|{msg.get('Subject','')}"
         if mid in seen:
             continue
-        subject, date = _decode(msg.get("Subject", "(no subject)")), _msg_date(msg)
+        subject = _decode(msg.get("Subject", "(no subject)"))
+        date, ts = _msg_date(msg)
         if _is_skipped(subject):
             skipped += 1
             if dry_run:
@@ -168,9 +176,10 @@ def ingest_imap(days=7, dry_run=False):
             continue
         body = _email_body(msg)
         print(f"📄 {date}  {subject[:90]}")
-        accepted = ingest_article(subject, body, date, f"imap:{mid}", PREMIUM_SOURCE_TAG)
+        accepted = ingest_article(subject, body, date, f"imap:{mid}", PREMIUM_SOURCE_TAG, published_utc=ts)
         for m in accepted:
-            print(f"      • {m['ticker']}: s={m['s']:+.2f} rel={m['rel']:.2f}  {m.get('why','')}")
+            tag = "direct" if m.get("direct") else "indirect"
+            print(f"      • {m['ticker']} [{tag}]: s={m['s']:+.2f} rel={m['rel']:.2f}  {m.get('why','')}")
         seen.add(mid)
         new_count += 1
         total_scores += len(accepted)

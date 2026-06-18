@@ -228,7 +228,8 @@ class NewsLLMScore(Base):
     title = Column(String, nullable=True)
     llm_score = Column(Float, nullable=False, default=0.0)
     llm_relevance = Column(Float, nullable=False, default=0.0)
-    model = Column(String, nullable=True)
+    model = Column(String, nullable=True)                    # the LLM that scored it (gpt-4o-mini, gemma4:e4b)
+    source = Column(String, nullable=True, default="polygon")  # 'polygon' (headlines) | 'premium:the-information' | …
 
     __table_args__ = (
         PrimaryKeyConstraint("ticker", "article_id", name="pk_news_llm_scores"),
