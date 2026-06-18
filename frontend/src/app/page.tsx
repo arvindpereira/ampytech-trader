@@ -2052,31 +2052,46 @@ export default function Home() {
                       </div>
                     </div>
                   )}
-                  {validateData?.schemes && (
-                    <div style={{ marginTop: '14px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '14px' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                        Validation (blended OOS, 2022 bear included) — {validateData.n_changes} assignment change(s)
+                  {validateData?.schemes && (() => {
+                    const noChange = (validateData.n_changes || 0) === 0;
+                    const labels: Record<string, string> = { current: 'Current', suggested: 'Suggested', 'suggested @ 30/60': 'Suggested + 30/60 buckets' };
+                    const rows = (Object.entries(validateData.schemes) as [string, any][]).filter(([n]) => !(noChange && n === 'suggested'));
+                    return (
+                      <div style={{ marginTop: '14px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '14px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+                          Strategy validation — blended out-of-sample (incl. the 2022 bear)
+                        </div>
+                        {noChange ? (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12.5px', color: 'var(--color-buy)', marginBottom: '10px' }}>
+                            <span style={{ flexShrink: 0 }}>✓</span>
+                            <span>Your assignments already match the recommendation — nothing to change. Re-run &ldquo;Suggest per-stock strategies&rdquo; if you&rsquo;ve changed the universe or retrained.</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '12px', color: validateData.verdict?.startsWith('Suggested beats') ? 'var(--color-buy)' : 'var(--color-gold)', marginBottom: '10px' }}>
+                            {validateData.n_changes} change(s) suggested. {validateData.verdict}
+                          </div>
+                        )}
+                        <table className="trade-table" style={{ fontSize: '12px' }}>
+                          <thead><tr><th>Scheme</th><th>Buckets (sw/lt)</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>Stocks (sw/lt)</th></tr></thead>
+                          <tbody>
+                            {rows.map(([name, r]: any) => (
+                              <tr key={name}>
+                                <td style={{ fontWeight: name === 'suggested' ? 700 : 400 }}>{noChange && name === 'current' ? 'Current (= Suggested)' : (labels[name] || name)}</td>
+                                <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}</td>
+                                <td className={r.metrics.total_return >= 0 ? 'text-green' : 'text-red'}>{r.metrics.total_return >= 0 ? '+' : ''}{(r.metrics.total_return * 100).toFixed(1)}%</td>
+                                <td>{r.metrics.sharpe_ratio.toFixed(2)}</td>
+                                <td className="text-red">{(r.metrics.max_drawdown * 100).toFixed(1)}%</td>
+                                <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <p style={{ fontSize: '10.5px', color: 'var(--text-secondary)', marginTop: '8px', lineHeight: '1.45' }}>
+                          &ldquo;Buckets&rdquo; = % of equity allocated to swing / long-term (rest cash). &ldquo;Stocks&rdquo; = how many stocks each strategy manages. The &ldquo;30/60&rdquo; row shows what happens if you also shift more capital to long-term. Absolute returns are bull-inflated — trust the Sharpe / drawdown comparison, not the headline %.
+                        </p>
                       </div>
-                      <div style={{ fontSize: '12px', color: validateData.verdict?.startsWith('Suggested beats') ? 'var(--color-buy)' : 'var(--color-gold)', marginBottom: '10px' }}>
-                        {validateData.verdict}
-                      </div>
-                      <table className="trade-table" style={{ fontSize: '12px' }}>
-                        <thead><tr><th>Scheme</th><th>Buckets</th><th>Total</th><th>Sharpe</th><th>Max DD</th><th>swing/lt</th></tr></thead>
-                        <tbody>
-                          {Object.entries(validateData.schemes).map(([name, r]: any) => (
-                            <tr key={name}>
-                              <td style={{ fontWeight: name === 'suggested' ? 700 : 400 }}>{name}</td>
-                              <td>{Math.round(r.buckets.swing * 100)}/{Math.round(r.buckets.longterm * 100)}</td>
-                              <td className={r.metrics.total_return >= 0 ? 'text-green' : 'text-red'}>{r.metrics.total_return >= 0 ? '+' : ''}{(r.metrics.total_return * 100).toFixed(1)}%</td>
-                              <td>{r.metrics.sharpe_ratio.toFixed(2)}</td>
-                              <td className="text-red">{(r.metrics.max_drawdown * 100).toFixed(1)}%</td>
-                              <td style={{ color: 'var(--text-secondary)' }}>{r.n_swing}/{r.n_longterm}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                    );
+                  })()}
                   {suggestRunning && (
                     <div style={{ marginTop: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
