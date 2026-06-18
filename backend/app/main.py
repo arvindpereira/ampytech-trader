@@ -160,11 +160,13 @@ def _run_validate_job(jid, oos_start):
         import traceback; traceback.print_exc()
         _job_update(jid, status="error", error=str(e)[:200])
 
-def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start):
+def _run_eval_job(jid, strategies, horizon, splits, allocation, start_date, end_date, oos_start,
+                  exclude_premium=False):
     try:
         from ml_engine.evaluate import run_evaluation
         res = run_evaluation(strategies, horizon=horizon, splits=splits, allocation=allocation,
                              start_date=start_date, end_date=end_date, oos_start=oos_start,
+                             exclude_premium=exclude_premium,
                              progress_cb=lambda p, note: _job_update(jid, progress=p, stage=note))
         # Final step: a powerful model writes a plain-English, honest interpretation of the results.
         from app.core.config import EXPERT_INTERP_ENABLED, OPENAI_API_KEY, OPENAI_EXPERT_MODEL
@@ -1375,6 +1377,7 @@ class EvaluateRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     oos_start: Optional[str] = None
+    exclude_premium: bool = False
 
 @app.post("/api/evaluate")
 def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
@@ -1391,7 +1394,8 @@ def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
                       "longterm_tickers": lt_tickers or None}
     jid = _job_new("evaluate", "Evaluating strategies")
     threading.Thread(target=_run_eval_job,
-                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date, req.end_date, req.oos_start),
+                     args=(jid, req.strategies, req.horizon, req.splits, allocation, req.start_date,
+                           req.end_date, req.oos_start, req.exclude_premium),
                      daemon=True).start()
     return {"status": "started", "job_id": jid}
 
@@ -1404,6 +1408,13 @@ def get_evaluation_result(job_id: str):
     if j:
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
+
+@app.get("/api/premium/value")
+def premium_value():
+    """Forward predictive value of premium-newsletter signals (e.g. The Information): coverage + a
+    hit-rate / directional-edge study over closed forward windows. Populates as data accumulates."""
+    from ml_engine.premium_eval import premium_value_report
+    return premium_value_report()
 
 @app.get("/api/llm/usage")
 def llm_usage(since: str = None):

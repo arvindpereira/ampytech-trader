@@ -26,7 +26,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  Newspaper
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -159,6 +160,8 @@ export default function Home() {
   const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
+  const [evalExcludePremium, setEvalExcludePremium] = useState<boolean>(false);
+  const [premiumValue, setPremiumValue] = useState<any>(null);
   const [evalRunning, setEvalRunning] = useState<boolean>(false);
   const [evalProgress, setEvalProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [evalResult, setEvalResult] = useState<any>(null);
@@ -388,7 +391,7 @@ export default function Home() {
     try {
       const res = await fetch(`http://localhost:8008/api/evaluate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos }),
+        body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos, exclude_premium: evalExcludePremium }),
       });
       const { job_id } = await res.json();
       setEvalJobId(job_id);
@@ -443,7 +446,13 @@ export default function Home() {
       else { setCalMsg(`Calibrated ${d.model}: ×${d.factor} (est $${d.est_cost_before} → set to $${d.actual_cost})`); setCalCost(''); fetchLlmUsage(); }
     } catch (err) { console.error(err); setCalMsg('Calibration failed.'); }
   };
-  useEffect(() => { if (activeTab === 'virtual_perf') fetchLlmUsage(llmSince); /* eslint-disable-next-line */ }, [activeTab, llmSince]);
+  const fetchPremiumValue = async () => {
+    try {
+      const r = await fetch('http://localhost:8008/api/premium/value');
+      setPremiumValue(await r.json());
+    } catch (err) { console.error(err); }
+  };
+  useEffect(() => { if (activeTab === 'virtual_perf') { fetchLlmUsage(llmSince); fetchPremiumValue(); } /* eslint-disable-next-line */ }, [activeTab, llmSince]);
 
   const handleAddStock = async () => {
     const t = addStockTicker.toUpperCase().trim();
@@ -1870,6 +1879,9 @@ export default function Home() {
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
                   <input type="checkbox" checked={evalUseAlloc} onChange={(e) => setEvalUseAlloc(e.target.checked)} /> Use my current allocation (blended curve)
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }} title="A/B: re-run the swing walk-forward with premium-newsletter news excluded, to isolate its effect. Only meaningful once premium news spans the OOS window.">
+                  <input type="checkbox" checked={evalExcludePremium} onChange={(e) => setEvalExcludePremium(e.target.checked)} /> Exclude premium news (A/B)
+                </label>
                 <button onClick={handleRunEval} disabled={evalRunning}
                   style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--color-buy)', border: 'none', borderRadius: '8px', color: '#06121f', padding: '10px 22px', fontWeight: 700, fontSize: '14px', cursor: evalRunning ? 'default' : 'pointer', opacity: evalRunning ? 0.6 : 1 }}>
                   {evalRunning ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
@@ -2032,6 +2044,61 @@ export default function Home() {
                   </p>
                 </div>
               </>
+            )}
+
+            {/* Value of The Information (premium news) widget */}
+            {premiumValue && premiumValue.coverage && (
+              <div className="glass-card" style={{ marginTop: '24px', border: '1px solid rgba(139,92,246,0.3)' }}>
+                <h2 style={{ margin: '0 0 6px' }}><Newspaper size={20} color="#a78bfa" /> Value of The Information</h2>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginTop: 0 }}>
+                  Does the newsletter's calls predict moves? For each premium score we check the ticker's
+                  forward return once that window closes — <b>hit-rate</b> = direction matched; <b>avg edge</b> =
+                  return from going long on bullish calls / short on bearish ones.
+                </p>
+                {premiumValue.coverage.scores > 0 ? (
+                  <>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '8px 0 14px' }}>
+                      <b style={{ color: 'var(--text-primary)' }}>{premiumValue.coverage.scores}</b> scores from{' '}
+                      <b style={{ color: 'var(--text-primary)' }}>{premiumValue.coverage.articles}</b> articles ·{' '}
+                      {premiumValue.coverage.tickers} tickers · {premiumValue.coverage.date_min} → {premiumValue.coverage.date_max} ·{' '}
+                      {premiumValue.coverage.high_conviction} high-conviction (rel≥0.6)
+                      {premiumValue.coverage.top_tickers && premiumValue.coverage.top_tickers.length > 0 && (
+                        <> · top: {premiumValue.coverage.top_tickers.slice(0, 5).map((t: any[]) => `${t[0]}(${t[1]})`).join(', ')}</>
+                      )}
+                    </div>
+                    {!premiumValue.enough_data && (
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '13px', color: 'var(--color-gold)', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '8px', padding: '10px 12px', marginBottom: '14px' }}>
+                        <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '1px' }} />
+                        <span>Accumulating — need ≥{premiumValue.min_n} closed samples per horizon for any confidence, and most forward windows are still open. This becomes a real read after a few weeks of premium news; treat current numbers as noise.</span>
+                      </div>
+                    )}
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="trade-table">
+                        <thead>
+                          <tr><th>Horizon</th><th>Closed</th><th>Pending</th><th>Hit-rate</th><th>Avg edge</th><th>High-conviction (n · hit · edge)</th></tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(premiumValue.horizons).map(([h, v]: [string, any]) => (
+                            <tr key={h}>
+                              <td style={{ fontWeight: 600 }}>{h}d</td>
+                              <td>{v.n || 0}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{v.pending || 0}</td>
+                              <td>{v.n ? `${(v.hit_rate * 100).toFixed(0)}%` : '—'}</td>
+                              <td className={v.n ? (v.avg_edge >= 0 ? 'text-green' : 'text-red') : ''}>{v.n ? `${v.avg_edge >= 0 ? '+' : ''}${(v.avg_edge * 100).toFixed(2)}%` : '—'}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{v.high_conviction && v.high_conviction.n ? `${v.high_conviction.n} · ${(v.high_conviction.hit_rate * 100).toFixed(0)}% · ${v.high_conviction.avg_edge >= 0 ? '+' : ''}${(v.high_conviction.avg_edge * 100).toFixed(2)}%` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '12px', lineHeight: 1.5 }}>
+                      For the swing-model A/B, tick <b>“Exclude premium news (A/B)”</b> above and compare a run to a normal one — but it only diverges once premium news spans the out-of-sample window (currently {premiumValue.coverage.date_min}→{premiumValue.coverage.date_max}). The forward study above is the near-term meter for whether the subscription pays for itself.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No premium news ingested yet — run <code>make premium-ingest</code>.</p>
+                )}
+              </div>
             )}
 
             {/* LLM usage + cost widget */}

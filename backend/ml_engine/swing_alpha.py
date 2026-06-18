@@ -40,10 +40,14 @@ SWING_MODEL_PATH = os.path.join(SAVED_DIR, "swing_model.json")
 SWING_META_PATH = os.path.join(SAVED_DIR, "swing_metadata.pkl")
 
 
-def load_llm_news_daily():
-    """Per (ticker, date) relevance-weighted news aggregates from the LLM scores."""
+def load_llm_news_daily(exclude_premium=False):
+    """Per (ticker, date) relevance-weighted news aggregates from the LLM scores.
+    `exclude_premium` drops premium-newsletter rows (source like 'premium:%') for A/B comparisons."""
     db = SessionLocal()
-    rows = db.query(NewsLLMScore).all()
+    q = db.query(NewsLLMScore)
+    if exclude_premium:
+        q = q.filter((NewsLLMScore.source.is_(None)) | (~NewsLLMScore.source.like("premium:%")))
+    rows = q.all()
     db.close()
     if not rows:
         return pd.DataFrame()
@@ -83,7 +87,7 @@ def add_llm_features(feat_df, llm_daily, decay_days=3):
     return df, first_llm_date
 
 
-def load_swing_data(horizon=5):
+def load_swing_data(horizon=5, exclude_premium=False):
     """Daily features (technicals + macro) + LLM-news features + a `horizon`-day triple-barrier target."""
     db = SessionLocal()
     db_tickers = db.query(UniverseTicker).all()
@@ -105,7 +109,7 @@ def load_swing_data(horizon=5):
                              for m in macro]) if macro else pd.DataFrame()
 
     full = build_all_features(prices_df, None, macro_df, feat_universe, target_horizon_bars=horizon)
-    full, first_llm_date = add_llm_features(full, load_llm_news_daily())
+    full, first_llm_date = add_llm_features(full, load_llm_news_daily(exclude_premium=exclude_premium))
     return full, equities, prices_df, first_llm_date
 
 
@@ -189,13 +193,14 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
     print("\nVerdict: LLM news helps iff WITH beats WITHOUT on portfolio Sharpe / return.\n")
 
 
-def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None):
+def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
+                    exclude_premium=False):
     """Walk-forward → the pooled out-of-sample signal frame, shared by the backtest and the suggester.
 
     Returns (oos_df, prices_df, equities) where oos_df has [date, ticker, close, atr_14, target_win,
     trade_ret, prob, selected_threshold] — every held-out prediction. `oos_start` (YYYY-MM-DD) fixes
     where OOS testing begins (first fold trains only before it); else it starts after `warmup_frac`."""
-    full, equities, prices_df, first_llm_date = load_swing_data(horizon)
+    full, equities, prices_df, first_llm_date = load_swing_data(horizon, exclude_premium=exclude_premium)
     df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
     feat_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
@@ -233,9 +238,11 @@ def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, prog
     return pd.concat(frames).sort_values("date"), prices_df, equities
 
 
-def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None):
+def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
+                         exclude_premium=False):
     """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics)."""
-    oos, prices_df, _ = swing_oos_frame(horizon, n_splits, warmup_frac, oos_start, progress_cb)
+    oos, prices_df, _ = swing_oos_frame(horizon, n_splits, warmup_frac, oos_start, progress_cb,
+                                        exclude_premium=exclude_premium)
     if oos is None or oos.empty:
         return [], {}
     curve, metrics = simulate_portfolio_chronological(oos, prices_df, horizon=horizon,
