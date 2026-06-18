@@ -1434,6 +1434,17 @@ def get_evaluation_result(job_id: str):
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
 
+@app.get("/api/classification")
+def get_classification(db=Depends(get_db)):
+    """Per-ticker risk × fundamental-quality tier (for the UI badges). Returns {ticker: {tier, quality,
+    volatility, dd_2022, distressed, verdict}}."""
+    from app.database import TickerClassification
+    out = {}
+    for c in db.query(TickerClassification).all():
+        out[c.ticker] = {"tier": c.tier, "quality": c.quality, "volatility": c.volatility,
+                         "dd_2022": c.dd_2022, "distressed": c.distressed, "verdict": c.llm_verdict}
+    return out
+
 @app.get("/api/premium/value")
 def premium_value():
     """Forward predictive value of premium-newsletter signals (e.g. The Information): coverage + a

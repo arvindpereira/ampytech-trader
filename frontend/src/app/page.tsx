@@ -141,6 +141,7 @@ export default function Home() {
   const [newUniverseTicker, setNewUniverseTicker] = useState<string>('');
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [classification, setClassification] = useState<Record<string, any>>({});
   const [portfolio, setPortfolio] = useState<any>(null);
   const [refreshingPortfolio, setRefreshingPortfolio] = useState<boolean>(false);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -379,6 +380,25 @@ export default function Home() {
     { key: 'qqq', name: 'QQQ', color: '#A78BFA' },
     { key: 'brk', name: 'Berkshire (BRK-B)', color: '#FB923C' },
   ];
+
+  // Risk × fundamental-quality tiers, with at-a-glance names/icons/colors for the ticker badges.
+  const TIER_META: Record<string, { label: string; icon: string; color: string; blurb: string }> = {
+    quality_growth: { label: 'Hot', icon: '🔥', color: '#10B981', blurb: 'Strong fundamentals, volatile — accumulate dips, hold long-term' },
+    core: { label: 'Solid', icon: '🛡️', color: '#38BDF8', blurb: 'Solid fundamentals, calmer — the core book' },
+    speculative: { label: 'Long-shot', icon: '🎲', color: '#EF4444', blurb: 'Weak/volatile — high-risk gamble, small bets only' },
+    value_trap: { label: 'Cold', icon: '🧊', color: '#94A3B8', blurb: 'Weak fundamentals, low upside — avoid' },
+  };
+  const tierMeta = (t: string) => { const tier = classification[t]?.tier; return tier ? TIER_META[tier] : null; };
+  // Colored ticker symbol + tier icon (hover shows the tier + quality).
+  const TickerTag = ({ t, size = 13, bold = true }: { t: string; size?: number; bold?: boolean }) => {
+    const m = tierMeta(t); const c = classification[t];
+    const title = m ? `${m.label} — ${m.blurb}${c?.quality != null ? ` · quality ${Math.round(c.quality * 100)}%` : ''}` : `${t}: unrated (no fundamentals)`;
+    return (
+      <span title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: bold ? 700 : 600, fontSize: size, color: m?.color || 'var(--text-primary)' }}>
+        {m && <span style={{ fontSize: size - 1 }}>{m.icon}</span>}{t}
+      </span>
+    );
+  };
 
   const handleRunEval = async () => {
     const strategies = (Object.entries(evalStrategies) as [string, boolean][]).filter(([, v]) => v).map(([k]) => k);
@@ -635,6 +655,12 @@ export default function Home() {
 
       // 9. Fetch strategy assignments + bucket allocations
       fetchStrategyConfig();
+
+      // 10. Per-ticker risk × quality tier (for the badges)
+      try {
+        const clsRes = await fetch('http://localhost:8008/api/classification');
+        if (clsRes.ok) setClassification(await clsRes.json());
+      } catch { /* non-fatal */ }
 
     } catch (err) {
       console.warn("FastAPI backend is offline.");
@@ -1117,6 +1143,17 @@ export default function Home() {
                       </span>
                     )}
                   </div>
+                  {Object.keys(classification).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', margin: '0 0 12px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      {(['quality_growth', 'core', 'speculative', 'value_trap'] as const).map(k => (
+                        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }} title={TIER_META[k].blurb}>
+                          <span>{TIER_META[k].icon}</span>
+                          <span style={{ color: TIER_META[k].color, fontWeight: 600 }}>{TIER_META[k].label}</span>
+                        </span>
+                      ))}
+                      <span style={{ opacity: 0.7 }}>· hover a ticker for details</span>
+                    </div>
+                  )}
                   <div style={{ overflowX: 'auto' }}>
                     <table className="trade-table">
                       <thead>
@@ -1134,7 +1171,7 @@ export default function Home() {
                         {suggestions.map((item, idx) => (
                           <React.Fragment key={idx}>
                           <tr>
-                            <td style={{ fontWeight: 600 }}>{item.ticker}</td>
+                            <td><TickerTag t={item.ticker} /></td>
                             <td>${item.close.toFixed(2)}</td>
                             <td>
                               <span className={`badge badge-${item.action.toLowerCase()}`}>
@@ -1220,7 +1257,7 @@ export default function Home() {
                       <tbody>
                         {swingSuggestions.map((item, idx) => (
                           <tr key={idx}>
-                            <td style={{ fontWeight: 600 }}>{item.ticker}</td>
+                            <td><TickerTag t={item.ticker} /></td>
                             <td>${item.close.toFixed(2)}</td>
                             <td>
                               <span className={`badge badge-${item.action.toLowerCase()}`}>
@@ -1277,7 +1314,7 @@ export default function Home() {
                                 transition: 'transform 0.2s',
                                 transform: isExpanded ? 'rotate(90deg)' : 'none'
                               }}>▶</span>
-                              <span style={{ fontWeight: 600 }}>{item.ticker}</span>
+                              <TickerTag t={item.ticker} bold={false} />
                               {item.suggested_action && (
                                 <span className={`badge badge-${item.suggested_action.includes('BUY') ? 'buy' : item.suggested_action.includes('SELL') ? 'sell' : 'hold'}`} style={{ fontSize: '10px', padding: '2px 6px', fontWeight: 700 }}>
                                   {item.suggested_action.includes('BUY') ? 'BUY' : item.suggested_action.includes('SELL') ? 'SELL' : 'HOLD'}
@@ -1450,7 +1487,7 @@ export default function Home() {
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <span style={{ fontWeight: 700, fontSize: '14px' }}>{p.ticker}</span>
+                                  <TickerTag t={p.ticker} size={14} />
                                   {p.is_live && (
                                     <span title="Live price" style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-buy)', display: 'inline-block' }} />
                                   )}
@@ -1618,7 +1655,7 @@ export default function Home() {
                           >
                             <div>
                               <div style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                {item.ticker}
+                                <TickerTag t={item.ticker} size={14} />
                                 <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 400 }}>
                                   ({item.mentions} mentions)
                                 </span>
