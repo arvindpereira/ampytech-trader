@@ -10,9 +10,12 @@ SPLITS ?= 5
 HORIZON ?= 21
 SWING_HORIZON ?= 5
 STRENGTH ?= 0.10
-NEWS_START ?= 2024-01-01
+# Full LLM-news window: matches NEWS_LLM_START so `make news-llm` backfills everything to 2021.
+START ?= 2021-01-01
+NEWS_START ?= $(START)
 LLM_MODEL ?= gemma4:e4b
 TICKER   ?=
+TICKERS  ?=
 BACKUP_KEEP ?= 10
 RESTORE  ?=
 VENV_PY := venv/bin/python3
@@ -32,7 +35,7 @@ help:
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
-	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2024-01-01]"
+	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 TICKERS=AAPL,NVDA]"
 	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
 	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
@@ -128,9 +131,9 @@ longterm-eval:
 
 news-llm:
 	@echo "========================================================================"
-	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)]..."
+	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)$(if $(TICKERS), TICKERS=$(TICKERS))]..."
 	@echo "========================================================================"
-	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START)
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) $(if $(TICKERS),--tickers $(TICKERS))
 
 db-backup:
 	@echo "========================================================================"
