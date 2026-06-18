@@ -1209,10 +1209,10 @@ export default function Home() {
                                 }}
                               ></div>
                               {ownedPct > 100 && (
-                                <div 
-                                  style={{ 
-                                    height: '100%', 
-                                    background: 'var(--color-gold)', 
+                                <div
+                                  style={{
+                                    height: '100%',
+                                    background: 'var(--color-gold)',
                                     width: `${Math.min(ownedPct - 100, 100)}%`,
                                     transition: 'width 0.3s ease'
                                   }}
