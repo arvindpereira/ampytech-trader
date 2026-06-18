@@ -217,13 +217,15 @@ def walk_forward_swing(horizon=5, n_splits=4, warmup_frac=0.4):
 
 
 def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
-                    exclude_premium=False):
+                    exclude_premium=False, allowed_tickers=None):
     """Walk-forward → the pooled out-of-sample signal frame, shared by the backtest and the suggester.
 
     Returns (oos_df, prices_df, equities) where oos_df has [date, ticker, close, atr_14, target_win,
     trade_ret, prob, selected_threshold] — every held-out prediction. `oos_start` (YYYY-MM-DD) fixes
     where OOS testing begins (first fold trains only before it); else it starts after `warmup_frac`."""
     full, equities, prices_df, first_llm_date = load_swing_data(horizon, exclude_premium=exclude_premium)
+    if allowed_tickers is not None:
+        equities = [t for t in equities if t in set(allowed_tickers)]
     df = full[full["ticker"].isin(equities)].dropna(subset=["target_win", "trade_ret"]).copy()
     df["dt"] = pd.to_datetime(df["date"], format="mixed")
     feat_all = sorted([c for c in df.columns if c.startswith("feat_") and c != "feat_atr_14"])
@@ -262,11 +264,12 @@ def swing_oos_frame(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, prog
 
 
 def backtest_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4, oos_start=None, progress_cb=None,
-                         exclude_premium=False, regime_gated=True):
+                         exclude_premium=False, regime_gated=True, allowed_tickers=None):
     """Walk-forward, look-ahead-free swing backtest → (dated equity_curve, metrics).
-    `regime_gated` applies the live regime overlay (crisis-shrink) so the backtest matches execution."""
+    `regime_gated` applies the live regime overlay (crisis-shrink) so the backtest matches execution.
+    `allowed_tickers` restricts the tradable set (e.g. speculative names for the aggressive sleeve)."""
     oos, prices_df, _ = swing_oos_frame(horizon, n_splits, warmup_frac, oos_start, progress_cb,
-                                        exclude_premium=exclude_premium)
+                                        exclude_premium=exclude_premium, allowed_tickers=allowed_tickers)
     if oos is None or oos.empty:
         return [], {}
     from ml_engine.models import compute_regime_series

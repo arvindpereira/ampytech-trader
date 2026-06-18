@@ -26,9 +26,9 @@ from app.database import (
 
 import json as _json
 # high_risk = small opt-in sleeve driven by the AGGRESSIVE swing model on speculative-tier names.
+from app.core.config import HIGH_RISK_CAP
 STRATEGY_KEYS = ["swing", "longterm", "high_risk"]
 DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
-HIGH_RISK_CAP = 0.05   # never let the high-risk sleeve exceed 5% of equity
 
 def get_strategy_buckets(db):
     """Capital allocation per strategy bucket (fraction of equity). Defaults to all-swing."""
@@ -1351,15 +1351,18 @@ def get_strategy_config(db=Depends(get_db)):
 class BucketsRequest(BaseModel):
     swing: float
     longterm: float
+    high_risk: float = 0.0
 
 @app.post("/api/strategy/buckets")
 def set_strategy_buckets(req: BucketsRequest, db=Depends(get_db)):
     """Set the capital fraction per strategy bucket. Rejected if they sum to more than 100%."""
     swing = max(0.0, float(req.swing))
     longterm = max(0.0, float(req.longterm))
-    if swing + longterm > 1.0001:
+    high_risk = min(HIGH_RISK_CAP, max(0.0, float(req.high_risk)))   # hard-cap the high-risk sleeve
+    if swing + longterm + high_risk > 1.0001:
         raise HTTPException(status_code=400, detail="Bucket weights cannot exceed 100% of equity.")
-    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4)})
+    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4),
+                           "high_risk": round(high_risk, 4)})
     row = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
     if row:
         row.value = payload
@@ -1412,6 +1415,7 @@ def start_evaluation(req: EvaluateRequest, db=Depends(get_db)):
         assignments = get_strategy_assignments(db)
         lt_tickers = [t for t, s in assignments.items() if s == "longterm"]
         allocation = {"swing": buckets.get("swing", 0.0), "longterm": buckets.get("longterm", 0.0),
+                      "high_risk": min(buckets.get("high_risk", 0.0), HIGH_RISK_CAP),
                       "longterm_tickers": lt_tickers or None}
     jid = _job_new("evaluate", "Evaluating strategies")
     threading.Thread(target=_run_eval_job,

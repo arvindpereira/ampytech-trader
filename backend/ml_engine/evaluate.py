@@ -95,6 +95,17 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
             "the 2022 bear), switch to Walk-forward mode and set \"OOS test starts\" to that date — that "
             f"keeps it look-ahead-free. Swing's LLM-scored news covers {earliest_news or 'recent dates'} onward.")
 
+    if "high_risk" in strategies and not windowed:
+        report(50, "High-risk (aggressive) walk-forward…")
+        from ml_engine.swing_alpha import backtest_swing_curve, tickers_for_tiers, HIGH_RISK_TIERS
+        spec = tickers_for_tiers(HIGH_RISK_TIERS)
+        if spec:
+            curve, _ = backtest_swing_curve(horizon=horizon, n_splits=splits, oos_start=oos_start,
+                                            exclude_premium=exclude_premium, allowed_tickers=spec,
+                                            progress_cb=lambda f: report(50 + int(f * 4), "High-risk walk-forward…"))
+            if curve:
+                raw["high_risk"] = _curve_to_daily(curve)
+
     ref_start = start_date if windowed else (raw["swing"].index[0] if "swing" in raw and len(raw["swing"]) else "2023-06-16")
 
     if "longterm" in strategies:
@@ -137,9 +148,11 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
         if allocation and "swing" in raw:
             sw = allocation.get("swing", 0.0)
             lt = allocation.get("longterm", 0.0)
+            hr = min(allocation.get("high_risk", 0.0), 0.05)   # high-risk sleeve hard-capped at 5%
             swing_ret = raw["swing"].pct_change().fillna(0.0)
             lt_ret = raw["longterm"].pct_change().fillna(0.0) if "longterm" in raw else pd.Series(0.0, index=all_dates)
-            raw["blended"] = (1.0 + (sw * swing_ret + lt * lt_ret)).cumprod() * 100000.0
+            hr_ret = raw["high_risk"].pct_change().fillna(0.0) if "high_risk" in raw else pd.Series(0.0, index=all_dates)
+            raw["blended"] = (1.0 + (sw * swing_ret + lt * lt_ret + hr * hr_ret)).cumprod() * 100000.0
 
         report(85, "Loading benchmarks (SPY / QQQ / BRK-B)…")
         for sym, key in BENCHMARKS:

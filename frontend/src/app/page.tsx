@@ -150,14 +150,14 @@ export default function Home() {
   const [addStockTicker, setAddStockTicker] = useState<string>('');
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [strategyConfig, setStrategyConfig] = useState<any>(null);
-  const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string }>({ swing: '', longterm: '' });
+  const [bucketEdit, setBucketEdit] = useState<{ swing: string; longterm: string; high_risk: string }>({ swing: '', longterm: '', high_risk: '' });
   const [suggestRunning, setSuggestRunning] = useState<boolean>(false);
   const [suggestProgress, setSuggestProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [suggestData, setSuggestData] = useState<any>(null);
   const [validateRunning, setValidateRunning] = useState<boolean>(false);
   const [validateProgress, setValidateProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [validateData, setValidateData] = useState<any>(null);
-  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean }>({ swing: true, longterm: true });
+  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean; high_risk: boolean }>({ swing: true, longterm: true, high_risk: false });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
   const [evalExcludePremium, setEvalExcludePremium] = useState<boolean>(false);
@@ -271,7 +271,7 @@ export default function Home() {
       if (res.ok) {
         const d = await res.json();
         setStrategyConfig(d);
-        setBucketEdit({ swing: String(Math.round((d.buckets.swing || 0) * 100)), longterm: String(Math.round((d.buckets.longterm || 0) * 100)) });
+        setBucketEdit({ swing: String(Math.round((d.buckets.swing || 0) * 100)), longterm: String(Math.round((d.buckets.longterm || 0) * 100)), high_risk: String(Math.round((d.buckets.high_risk || 0) * 100)) });
       }
     } catch (err) { /* offline */ }
   };
@@ -348,11 +348,13 @@ export default function Home() {
   const handleSaveBuckets = async () => {
     const s = (parseFloat(bucketEdit.swing) || 0) / 100;
     const l = (parseFloat(bucketEdit.longterm) || 0) / 100;
-    if (s + l > 1.0001) { alert('Buckets cannot exceed 100% of equity.'); return; }
+    let h = (parseFloat(bucketEdit.high_risk) || 0) / 100;
+    if (h > 0.05) { alert('High-risk sleeve is capped at 5% of equity.'); return; }
+    if (s + l + h > 1.0001) { alert('Buckets cannot exceed 100% of equity.'); return; }
     setActionBusy(true);
     try {
       const res = await fetch(`http://localhost:8008/api/strategy/buckets`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ swing: s, longterm: l }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ swing: s, longterm: l, high_risk: h }),
       });
       if (!res.ok) { const e = await res.json(); alert(e.detail || 'Failed'); }
       else fetchStrategyConfig();
@@ -369,8 +371,9 @@ export default function Home() {
   };
 
   const EVAL_SERIES: { key: string; name: string; color: string }[] = [
-    { key: 'swing', name: 'Swing + News', color: '#00F2FE' },
+    { key: 'swing', name: 'Swing + News (core)', color: '#00F2FE' },
     { key: 'longterm', name: 'Long-term (MPT)', color: '#10B981' },
+    { key: 'high_risk', name: 'High-risk (aggressive)', color: '#EF4444' },
     { key: 'blended', name: 'Blended (your allocation)', color: '#F59E0B' },
     { key: 'spy', name: 'S&P 500', color: '#94A3B8' },
     { key: 'qqq', name: 'QQQ', color: '#A78BFA' },
@@ -1842,6 +1845,9 @@ export default function Home() {
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
                       <input type="checkbox" checked={evalStrategies.longterm} onChange={(e) => setEvalStrategies({ ...evalStrategies, longterm: e.target.checked })} /> Long-term (MPT)
                     </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }} title="Aggressive model on speculative-tier names (small high-risk sleeve)">
+                      <input type="checkbox" checked={evalStrategies.high_risk} onChange={(e) => setEvalStrategies({ ...evalStrategies, high_risk: e.target.checked })} /> High-risk (aggressive)
+                    </label>
                   </div>
                 </div>
                 <div>
@@ -2280,37 +2286,44 @@ export default function Home() {
                 {(() => {
                   const s = parseFloat(bucketEdit.swing) || 0;
                   const l = parseFloat(bucketEdit.longterm) || 0;
-                  const cash = Math.max(0, 100 - s - l);
-                  const over = s + l > 100;
-                  const field = (label: string, key: 'swing' | 'longterm', color: string) => (
+                  const h = parseFloat(bucketEdit.high_risk) || 0;
+                  const cash = Math.max(0, 100 - s - l - h);
+                  const hrOver = h > 5;
+                  const over = s + l + h > 100 || hrOver;
+                  const field = (label: string, key: 'swing' | 'longterm' | 'high_risk', color: string, max = 100) => (
                     <div style={{ flex: 1 }}>
                       <label style={{ display: 'block', fontSize: '12px', color, marginBottom: '6px', fontWeight: 600 }}>{label}</label>
                       <div style={{ position: 'relative' }}>
-                        <input type="number" min="0" max="100" value={bucketEdit[key]}
+                        <input type="number" min="0" max={max} value={bucketEdit[key]}
                           onChange={(e) => setBucketEdit({ ...bucketEdit, [key]: e.target.value })}
-                          style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '9px 26px 9px 12px', fontSize: '14px' }} />
+                          style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${key === 'high_risk' && hrOver ? 'var(--color-sell)' : 'var(--border-glass)'}`, borderRadius: '8px', color: 'var(--text-primary)', padding: '9px 26px 9px 12px', fontSize: '14px' }} />
                         <span style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', fontSize: '13px' }}>%</span>
                       </div>
                     </div>
                   );
                   return (
                     <>
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '14px' }}>
-                        {field('Swing + News', 'swing', 'var(--color-buy)')}
+                      <div style={{ display: 'flex', gap: '12px', marginBottom: '6px' }}>
+                        {field('Swing + News (core)', 'swing', 'var(--color-buy)')}
                         {field('Long-term (MPT)', 'longterm', 'var(--color-accent)')}
+                        {field('High-risk (≤5%)', 'high_risk', '#EF4444', 5)}
                         <div style={{ flex: 1 }}>
                           <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: 600 }}>Cash (rest)</label>
                           <div style={{ padding: '9px 12px', fontSize: '14px', fontWeight: 600, color: over ? 'var(--color-sell)' : 'var(--text-primary)' }}>{over ? '—' : `${cash}%`}</div>
                         </div>
                       </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                        High-risk = the aggressive model on speculative-tier names (BYND, RGTI…); capped at 5% — you accept big drawdowns there for upside.
+                      </div>
                       {/* stacked allocation bar */}
                       <div style={{ display: 'flex', height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,0.06)', marginBottom: '14px' }}>
                         <div style={{ width: `${Math.min(s, 100)}%`, background: 'var(--color-buy)' }} />
                         <div style={{ width: `${Math.min(l, 100 - Math.min(s, 100))}%`, background: 'var(--color-accent)' }} />
+                        <div style={{ width: `${Math.min(h, Math.max(0, 100 - s - l))}%`, background: '#EF4444' }} />
                       </div>
                       <button onClick={handleSaveBuckets} disabled={actionBusy || over}
                         style={{ background: over ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)', border: `1px solid ${over ? 'var(--color-sell)' : 'var(--color-gold)'}`, borderRadius: '8px', color: over ? 'var(--color-sell)' : 'var(--color-gold)', padding: '8px 18px', cursor: over ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '13px' }}>
-                        {over ? 'Exceeds 100%' : 'Save Allocation'}
+                        {hrOver ? 'High-risk > 5%' : over ? 'Exceeds 100%' : 'Save Allocation'}
                       </button>
                     </>
                   );
