@@ -253,3 +253,64 @@ class LLMUsage(Base):
     completion_tokens = Column(Integer, nullable=False, default=0)
     batch = Column(Boolean, nullable=False, default=False)  # OpenAI Batch API (50% off)
     est_cost = Column(Float, nullable=True)          # snapshot estimate at write time (USD)
+
+
+class TickerFundamental(Base):
+    """Per-period company financials (Polygon/Massive vX/reference/financials) + derived ratios.
+    Feeds the fundamental-quality signal that separates strong-fundamentals dips (accumulate long-term)
+    from weak-fundamentals volatility (speculative). One row per (ticker, period end)."""
+    __tablename__ = "ticker_fundamentals"
+
+    ticker = Column(String, nullable=False)
+    end_date = Column(String, nullable=False)            # fiscal period end (YYYY-MM-DD)
+    fiscal_period = Column(String, nullable=True)        # Q1/Q2/Q3/Q4/FY
+    fiscal_year = Column(String, nullable=True)
+    # raw key line items (USD)
+    revenues = Column(Float, nullable=True)
+    gross_profit = Column(Float, nullable=True)
+    operating_income = Column(Float, nullable=True)
+    net_income = Column(Float, nullable=True)
+    op_cash_flow = Column(Float, nullable=True)
+    capex = Column(Float, nullable=True)
+    total_assets = Column(Float, nullable=True)
+    total_liabilities = Column(Float, nullable=True)
+    equity = Column(Float, nullable=True)
+    current_assets = Column(Float, nullable=True)
+    current_liabilities = Column(Float, nullable=True)
+    shares = Column(Float, nullable=True)
+    # derived ratios
+    gross_margin = Column(Float, nullable=True)
+    operating_margin = Column(Float, nullable=True)
+    net_margin = Column(Float, nullable=True)
+    fcf = Column(Float, nullable=True)                   # op_cash_flow - capex
+    fcf_margin = Column(Float, nullable=True)
+    roe = Column(Float, nullable=True)
+    debt_to_equity = Column(Float, nullable=True)
+    current_ratio = Column(Float, nullable=True)
+    source = Column(String, nullable=True, default="polygon")
+    fetched_at = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "end_date", name="pk_ticker_fundamentals"),
+    )
+
+
+class TickerClassification(Base):
+    """Consolidated risk × fundamental-quality classification per ticker. quant_quality (ratios) +
+    llm_quality (qualitative overlay) blend into `quality`; combined with `volatility`/`dd_2022` it yields
+    a `tier` that routes the ticker: core swing/long-term, quality-growth (accumulate dips long-term),
+    speculative (small high-risk bucket), or value-trap (avoid)."""
+    __tablename__ = "ticker_classification"
+
+    ticker = Column(String, primary_key=True)
+    quant_quality = Column(Float, nullable=True)     # 0-1 from financial ratios (step 2b)
+    llm_quality = Column(Float, nullable=True)       # 0-1 qualitative overlay (step 2c)
+    quality = Column(Float, nullable=True)           # blended 0-1
+    volatility = Column(Float, nullable=True)        # trailing annualized daily-return vol
+    dd_2022 = Column(Float, nullable=True)           # 2022 max drawdown (bear stress)
+    distressed = Column(Boolean, nullable=True)
+    tier = Column(String, nullable=True)             # core | quality_growth | speculative | value_trap | unrated
+    llm_flags = Column(String, nullable=True)        # JSON list (one_off_gain, bank, turnaround, …)
+    llm_verdict = Column(String, nullable=True)
+    llm_model = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
