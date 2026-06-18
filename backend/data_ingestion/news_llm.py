@@ -300,7 +300,7 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None, provider=Non
                     progress_cb(frac, note)
         db.commit()
         if ptok or ctok:
-            record_usage(f"news_scoring/{provider}", model, ptok, ctok)
+            record_usage("news_scoring", model, ptok, ctok, provider=provider, requests=len(work))
         el = time.time() - t0
         summary = f"✅ Scored {grand} headlines in {el:.1f}s ({grand / el:.0f} hl/s)" if el > 0 else \
                   f"✅ Scored {grand} headlines"
@@ -423,7 +423,8 @@ def collect_batch(batch_id, poll_seconds=20):
     finally:
         db.close()
     if ptok or ctok:
-        record_usage("news_scoring/openai-batch", model, ptok, ctok, batch=True)
+        record_usage("news_scoring", model, ptok, ctok, provider="openai",
+                     requests=len(cmap), batch=True)
     print(f"✅ Batch {batch_id} ingested: {grand} headline scores | "
           f"tokens: {_fmt_tok(ptok)} in + {_fmt_tok(ctok)} out | "
           f"est cost ~${_est_cost(model, ptok, ctok, batch=True):.4f} (Batch API, 50% off)\n")

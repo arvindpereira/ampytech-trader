@@ -1407,10 +1407,22 @@ def get_evaluation_result(job_id: str):
 
 @app.get("/api/llm/usage")
 def llm_usage(since: str = None):
-    """Accumulated OpenAI token usage + estimated cost per model (from the usage ledger).
-    Divide your real dashboard spend over a period by these tokens to refine pricing estimates."""
+    """Accumulated token usage + estimated cost per model (from the DB usage ledger), across every
+    provider the server uses (OpenAI + local Ollama). Cost is recomputed from current pricing."""
     from app.core.llm_cost import usage_summary
     return usage_summary(since=since)
+
+class CalibrateRequest(BaseModel):
+    model: str
+    actual_cost: float
+    since: str = None
+
+@app.post("/api/llm/calibrate")
+def llm_calibrate(req: CalibrateRequest):
+    """Scale a model's pricing so its estimated cost over the window matches the real `actual_cost` you
+    read from the OpenAI dashboard. Persists to llm_pricing.json; future estimates use the new rate."""
+    from app.core.llm_cost import calibrate_model
+    return calibrate_model(req.model, req.actual_cost, since=req.since)
 
 @app.post("/api/evaluate/interpret")
 def regenerate_interpretation(job_id: str):

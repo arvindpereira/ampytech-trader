@@ -164,6 +164,12 @@ export default function Home() {
   const [evalResult, setEvalResult] = useState<any>(null);
   const [evalJobId, setEvalJobId] = useState<string | null>(null);
   const [interpLoading, setInterpLoading] = useState<boolean>(false);
+  const [llmUsage, setLlmUsage] = useState<any>(null);
+  const [llmSince, setLlmSince] = useState<'today' | '7d' | 'all'>('today');
+  const [llmLoading, setLlmLoading] = useState<boolean>(false);
+  const [calModel, setCalModel] = useState<string>('');
+  const [calCost, setCalCost] = useState<string>('');
+  const [calMsg, setCalMsg] = useState<string>('');
   const [evalWindow, setEvalWindow] = useState<string>('none');
   const [evalCustom, setEvalCustom] = useState<{ start: string; end: string }>({ start: '', end: '' });
   const [evalOosStart, setEvalOosStart] = useState<string>('');
@@ -408,6 +414,36 @@ export default function Home() {
       if (d.interpretation) setEvalResult((prev: any) => ({ ...prev, interpretation: d.interpretation }));
     } catch (err) { console.error(err); } finally { setInterpLoading(false); }
   };
+
+  const sinceDate = (mode: string) => {
+    if (mode === 'all') return '';
+    const d = new Date();
+    if (mode === '7d') d.setDate(d.getDate() - 6);
+    return d.toISOString().slice(0, 10);
+  };
+  const fetchLlmUsage = async (mode: string = llmSince) => {
+    setLlmLoading(true);
+    try {
+      const s = sinceDate(mode);
+      const r = await fetch(`http://localhost:8008/api/llm/usage${s ? `?since=${s}` : ''}`);
+      setLlmUsage(await r.json());
+    } catch (err) { console.error(err); } finally { setLlmLoading(false); }
+  };
+  const calibrateModel = async () => {
+    if (!calModel || !calCost) return;
+    setCalMsg('');
+    try {
+      const s = sinceDate(llmSince);
+      const r = await fetch('http://localhost:8008/api/llm/calibrate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: calModel, actual_cost: parseFloat(calCost), since: s || null }),
+      });
+      const d = await r.json();
+      if (d.error) setCalMsg(d.error);
+      else { setCalMsg(`Calibrated ${d.model}: ×${d.factor} (est $${d.est_cost_before} → set to $${d.actual_cost})`); setCalCost(''); fetchLlmUsage(); }
+    } catch (err) { console.error(err); setCalMsg('Calibration failed.'); }
+  };
+  useEffect(() => { if (activeTab === 'virtual_perf') fetchLlmUsage(llmSince); /* eslint-disable-next-line */ }, [activeTab, llmSince]);
 
   const handleAddStock = async () => {
     const t = addStockTicker.toUpperCase().trim();
@@ -1997,6 +2033,80 @@ export default function Home() {
                 </div>
               </>
             )}
+
+            {/* LLM usage + cost widget */}
+            <div className="glass-card" style={{ marginTop: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
+                <h2 style={{ margin: 0 }}><DollarSign size={20} color="var(--color-gold)" /> LLM Usage &amp; Cost</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {(['today', '7d', 'all'] as const).map(m => (
+                    <button key={m} onClick={() => setLlmSince(m)} className={`toggle-btn ${llmSince === m ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: '12px' }}>{m === 'today' ? 'Today' : m === '7d' ? '7 days' : 'All'}</button>
+                  ))}
+                  <button onClick={() => fetchLlmUsage(llmSince)} title="Refresh"
+                    style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: '6px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <RefreshCw size={14} className={llmLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+              </div>
+
+              {llmUsage && llmUsage.totals && llmUsage.totals.calls > 0 ? (
+                <>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="trade-table">
+                      <thead>
+                        <tr><th>Model</th><th>Provider</th><th>Calls</th><th>API reqs</th><th>Input tok</th><th>Output tok</th><th>Est. cost</th></tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(llmUsage.by_model).map(([model, v]: [string, any]) => (
+                          <tr key={model}>
+                            <td style={{ fontWeight: 600 }}>{model}</td>
+                            <td><span style={{ fontSize: '11px', padding: '2px 7px', borderRadius: '10px', background: v.provider === 'openai' ? 'rgba(16,185,129,0.15)' : 'rgba(139,92,246,0.15)', color: v.provider === 'openai' ? 'var(--color-buy)' : '#a78bfa' }}>{v.provider || '—'}</span></td>
+                            <td>{v.calls.toLocaleString()}</td>
+                            <td>{v.requests.toLocaleString()}</td>
+                            <td>{v.prompt_tokens.toLocaleString()}</td>
+                            <td>{v.completion_tokens.toLocaleString()}</td>
+                            <td>{v.priced ? `~$${v.est_cost.toFixed(4)}` : <span style={{ color: 'var(--text-secondary)' }}>free / local</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: '2px solid var(--border-glass)', fontWeight: 700 }}>
+                          <td>Total</td><td></td>
+                          <td>{llmUsage.totals.calls.toLocaleString()}</td>
+                          <td>{llmUsage.totals.requests.toLocaleString()}</td>
+                          <td>{llmUsage.totals.prompt_tokens.toLocaleString()}</td>
+                          <td>{llmUsage.totals.completion_tokens.toLocaleString()}</td>
+                          <td style={{ color: 'var(--color-gold)' }}>~${llmUsage.totals.est_cost.toFixed(4)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  <div style={{ marginTop: '16px', padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '8px' }}>Calibrate against your real OpenAI cost</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <select value={calModel} onChange={(e) => setCalModel(e.target.value)}
+                        style={{ padding: '6px 10px', borderRadius: '6px', background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontSize: '13px' }}>
+                        <option value="">Select model…</option>
+                        {Object.entries(llmUsage.by_model).filter(([, v]: [string, any]) => v.priced).map(([model]) => <option key={model} value={model}>{model}</option>)}
+                      </select>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>actual $ (for {llmSince === 'today' ? 'today' : llmSince === '7d' ? 'last 7 days' : 'all time'}):</span>
+                      <input type="number" step="0.01" value={calCost} onChange={(e) => setCalCost(e.target.value)} placeholder="1.11"
+                        style={{ width: '90px', padding: '6px 10px', borderRadius: '6px', background: 'var(--bg-input, rgba(255,255,255,0.05))', border: '1px solid var(--border-glass)', color: 'var(--text-primary)', fontSize: '13px' }} />
+                      <button onClick={calibrateModel} disabled={!calModel || !calCost}
+                        style={{ padding: '6px 14px', borderRadius: '6px', background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.35)', color: 'var(--color-gold)', fontWeight: 600, fontSize: '13px', cursor: (!calModel || !calCost) ? 'default' : 'pointer' }}>Calibrate</button>
+                    </div>
+                    {calMsg && <div style={{ marginTop: '8px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>{calMsg}</div>}
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      Token counts are tracked from every call; cost is estimated from a pricing table (gpt-5.5 is a starting estimate). Enter the model's real cost from your OpenAI dashboard for the selected window and we'll scale its rate so future estimates match.
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No LLM calls recorded {llmSince === 'today' ? 'today' : llmSince === '7d' ? 'in the last 7 days' : 'yet'}. Run an evaluation (expert interpretation) or news scoring to populate this.</p>
+              )}
+            </div>
           </section>
         )}
 

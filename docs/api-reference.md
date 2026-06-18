@@ -44,6 +44,8 @@ registry and polled for progress.
 | `POST /api/strategy/validate?oos_start` → `GET /api/strategy/validate/result?job_id` | Blended-OOS backtest of current vs suggested (vs 30/60) assignments + a verdict. |
 | `POST /api/evaluate` `{strategies, splits, use_allocation, start_date, end_date, oos_start}` → `GET /api/evaluate/result?job_id` | Growth-of-$100k curves + metrics for the strategies, blended, and SPY/QQQ/BRK; `caveats` + `mode`. When `EXPERT_INTERP_ENABLED` + `OPENAI_API_KEY`, the result also carries `interpretation` — a powerful model's (`OPENAI_EXPERT_MODEL`) plain-English, honest read (tldr / what_was_tested / key_findings / strengths / weaknesses / shortcomings / verdict). |
 | `POST /api/evaluate/interpret?job_id` | Re-generate the expert interpretation for a finished evaluation. |
+| `GET /api/llm/usage?since=YYYY-MM-DD` | Token usage + estimated cost per model from the `llm_usage` ledger (every provider: OpenAI + local Ollama). Cost is recomputed from current pricing. Powers the Model-Evaluation "LLM Usage & Cost" widget. |
+| `POST /api/llm/calibrate` `{model, actual_cost, since?}` | Scale a model's pricing so its estimated cost over the window matches your real OpenAI-dashboard cost; persists to `data/llm_pricing.json`. |
 | `GET /api/jobs` | Active + recently-finished background jobs (for progress bars). |
 | `POST /api/train/start` → `GET /api/train/status` | Retrain XGBoost+HMM+swing in the background; status reports each served model's last-trained time + progress. |
 

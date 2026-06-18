@@ -103,7 +103,7 @@ def interpret_evaluation(result, params=None, model=None):
         sections = json.loads(j["choices"][0]["message"]["content"])
         u = j.get("usage", {}) or {}
         ptok, ctok = u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
-        c = record_usage("eval_interpret", model, ptok, ctok)
+        c = record_usage("eval_interpret", model, ptok, ctok, provider="openai", requests=1)
         out = {"sections": sections, "model": model, "tokens": ptok + ctok,
                "input_tokens": ptok, "output_tokens": ctok}
         if c is not None:

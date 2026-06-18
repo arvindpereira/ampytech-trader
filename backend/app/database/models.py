@@ -233,3 +233,22 @@ class NewsLLMScore(Base):
     __table_args__ = (
         PrimaryKeyConstraint("ticker", "article_id", name="pk_news_llm_scores"),
     )
+
+
+class LLMUsage(Base):
+    """Ledger of every LLM/model call the server makes — across providers (OpenAI gpt-5.5 / gpt-4o-mini,
+    local Ollama gemma4, …). Token counts are the ground truth; cost is (re)estimated from the pricing
+    table, so it stays accurate even after pricing is calibrated against the real OpenAI dashboard."""
+    __tablename__ = "llm_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(String, nullable=False)              # ISO datetime of the call
+    date = Column(String, nullable=False)            # YYYY-MM-DD (for daily rollups / filtering)
+    provider = Column(String, nullable=True)         # openai | ollama | local
+    model = Column(String, nullable=False)           # gpt-5_5-2026-04-23, gpt-4o-mini, gemma4:e4b, …
+    purpose = Column(String, nullable=True)          # eval_interpret, news_scoring, …
+    requests = Column(Integer, nullable=False, default=1)   # underlying model/API calls in this event
+    prompt_tokens = Column(Integer, nullable=False, default=0)
+    completion_tokens = Column(Integer, nullable=False, default=0)
+    batch = Column(Boolean, nullable=False, default=False)  # OpenAI Batch API (50% off)
+    est_cost = Column(Float, nullable=True)          # snapshot estimate at write time (USD)
