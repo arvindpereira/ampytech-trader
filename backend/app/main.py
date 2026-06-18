@@ -25,8 +25,10 @@ from app.database import (
 )
 
 import json as _json
-STRATEGY_KEYS = ["swing", "longterm"]
-DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0}
+# high_risk = small opt-in sleeve driven by the AGGRESSIVE swing model on speculative-tier names.
+STRATEGY_KEYS = ["swing", "longterm", "high_risk"]
+DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
+HIGH_RISK_CAP = 0.05   # never let the high-risk sleeve exceed 5% of equity
 
 def get_strategy_buckets(db):
     """Capital allocation per strategy bucket (fraction of equity). Defaults to all-swing."""
@@ -841,11 +843,23 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     })
 
     # --- Swing (multi-day) signals — daily prices + LLM-scored news (validated portfolio edge) ---
-    swing_suggestions = []
+    # CORE book uses the core model on core+quality_growth names; the small HIGH-RISK sleeve uses the
+    # aggressive model restricted to speculative-tier names.
+    swing_suggestions, high_risk_suggestions = [], []
     if SWING_ENABLED:
         try:
-            from ml_engine.swing_alpha import build_swing_signals
-            swing_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, active_universe)
+            from ml_engine.swing_alpha import (build_swing_signals, load_swing_model,
+                                               tickers_for_tiers, CORE_TIERS, HIGH_RISK_TIERS)
+            core_names = set(tickers_for_tiers(CORE_TIERS, include_unrated=True))
+            spec_names = set(tickers_for_tiers(HIGH_RISK_TIERS))
+            core_uni = [t for t in active_universe if t in core_names] or active_universe
+            swing_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, core_uni)
+            hr_uni = [t for t in active_universe if t in spec_names]
+            if hr_uni:
+                agg_m, agg_meta = load_swing_model(aggressive=True)
+                if agg_m is not None:
+                    high_risk_suggestions = build_swing_signals(daily_prices_df, daily_macro_df, hr_uni,
+                                                                model=agg_m, meta=agg_meta, top_n=3)
         except Exception as e:
             print(f"Error computing swing signals: {e}")
 
@@ -855,7 +869,8 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
         "hedge_mode": effective_hedge_mode,
         "short_term_suggestions": suggestions,
         "long_term_allocation": sorted(long_term_allocation, key=lambda x: x["weight"], reverse=True),
-        "swing_suggestions": swing_suggestions
+        "swing_suggestions": swing_suggestions,
+        "high_risk_suggestions": high_risk_suggestions
     }
     _suggestions_cache[cache_key] = res
     return res
