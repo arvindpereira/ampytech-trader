@@ -309,7 +309,8 @@ class TickerClassification(Base):
     volatility = Column(Float, nullable=True)        # trailing annualized daily-return vol
     dd_2022 = Column(Float, nullable=True)           # 2022 max drawdown (bear stress)
     distressed = Column(Boolean, nullable=True)
-    tier = Column(String, nullable=True)             # core | quality_growth | speculative | value_trap | unrated
+    tier = Column(String, nullable=True)             # effective tier (computed, or the manual override)
+    tier_override = Column(String, nullable=True)    # user-set tier that wins over the computed one
     llm_flags = Column(String, nullable=True)        # JSON list (one_off_gain, bank, turnaround, …)
     llm_verdict = Column(String, nullable=True)
     llm_model = Column(String, nullable=True)

@@ -90,12 +90,15 @@ def classify_universe(run_llm=False, progress_cb=None):
             if distressed or "distress" in flags:
                 blended = min(blended, 0.20)
             vol, dd22 = vdd.get(tk, (None, None))
-            tier = _tier(blended, vol, vol_median, distressed)
+            computed = _tier(blended, vol, vol_median, distressed)
+            override = row.tier_override if row else None
+            tier = override or computed                # a manual override wins over the computed tier
             vals = {"ticker": tk, "quant_quality": qq, "llm_quality": llm_q, "quality": round(blended, 3),
                     "volatility": round(vol, 3) if vol is not None else None,
                     "dd_2022": round(dd22, 3) if dd22 is not None else None,
                     "distressed": bool(distressed), "tier": tier,
                     "updated_at": datetime.now().isoformat(timespec="seconds")}
+            # never clobber tier_override on recompute (it's preserved via the explicit set_ below)
             stmt = sqlite_insert(TickerClassification).values(**vals)
             stmt = stmt.on_conflict_do_update(index_elements=["ticker"],
                                               set_={k: v for k, v in vals.items() if k != "ticker"})

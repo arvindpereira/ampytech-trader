@@ -200,6 +200,9 @@ HIGH_RISK_CAP = float(os.getenv("HIGH_RISK_CAP", "0.05"))
 # allocations (NOT Kelly) — the model's win-prob is a ranking score, not a calibrated Kelly input, so
 # Kelly sizing would zero most positions. Keep this in lock-step with that sim.
 SWING_POSITION_PCT = float(os.getenv("SWING_POSITION_PCT", "0.10"))
+# Per-name volatility cap: scale each position by min(1, target/name_vol) so high-beta names get
+# smaller allocations. Set SWING_VOL_TARGET=0 to disable.
+SWING_VOL_TARGET = float(os.getenv("SWING_VOL_TARGET", "0.35"))
 # Which strategy actually places intraday bracket trades on the broker: 'swing' (validated edge) or
 # 'short_term' (legacy hourly model — net-negative in portfolio sim, kept only for comparison).
 EXECUTION_STRATEGY = os.getenv("EXECUTION_STRATEGY", "swing").lower()

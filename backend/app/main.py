@@ -1434,6 +1434,34 @@ def get_evaluation_result(job_id: str):
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
 
+class TierOverrideRequest(BaseModel):
+    ticker: str
+    tier: Optional[str] = None   # core | quality_growth | speculative | value_trap; null = clear override
+
+@app.post("/api/classification/override")
+def set_tier_override(req: TierOverrideRequest, db=Depends(get_db)):
+    """Manually override a ticker's tier (wins over the computed one); null clears it. Re-derives all
+    effective tiers (respecting overrides) so routing/serving update immediately."""
+    from app.database import TickerClassification
+    tk = req.ticker.upper().strip()
+    if req.tier not in (None, "core", "quality_growth", "speculative", "value_trap"):
+        raise HTTPException(status_code=400, detail="Invalid tier.")
+    row = db.query(TickerClassification).filter(TickerClassification.ticker == tk).first()
+    if not row:
+        row = TickerClassification(ticker=tk)
+        db.add(row)
+    row.tier_override = req.tier
+    if req.tier:
+        row.tier = req.tier                       # immediate effect
+    db.commit()
+    try:
+        from ml_engine.classify import classify_universe   # re-derive effective tiers (no LLM, fast)
+        classify_universe(run_llm=False)
+    except Exception as e:
+        print(f"Reclassify after override failed: {e}")
+    clear_suggestions_cache()
+    return {"status": "ok", "ticker": tk, "tier_override": req.tier}
+
 @app.get("/api/classification")
 def get_classification(db=Depends(get_db)):
     """Per-ticker risk × fundamental-quality tier (for the UI badges). Returns {ticker: {tier, quality,
@@ -1442,7 +1470,8 @@ def get_classification(db=Depends(get_db)):
     out = {}
     for c in db.query(TickerClassification).all():
         out[c.ticker] = {"tier": c.tier, "quality": c.quality, "volatility": c.volatility,
-                         "dd_2022": c.dd_2022, "distressed": c.distressed, "verdict": c.llm_verdict}
+                         "dd_2022": c.dd_2022, "distressed": c.distressed, "verdict": c.llm_verdict,
+                         "overridden": bool(c.tier_override)}
     return out
 
 @app.get("/api/premium/value")

@@ -639,6 +639,16 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
     active_tickers = [p.symbol for p in open_positions]
     positions_db = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
 
+    # Per-name volatility caps: trim high-beta names' position size (size x min(1, target/name_vol)).
+    from app.core.config import SWING_VOL_TARGET
+    vol_map = {}
+    if SWING_VOL_TARGET > 0:
+        try:
+            from app.database import TickerClassification
+            vol_map = {c.ticker: c.volatility for c in db.query(TickerClassification).all() if c.volatility}
+        except Exception:
+            vol_map = {}
+
     for sug in buys:
         ticker = sug["ticker"]
         close_price = sug["close"]
@@ -672,7 +682,10 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
         stop_price = round(entry_price * (1.0 - sl_pct), 2)
         target_price = round(entry_price * (1.0 + tp_pct), 2)
 
-        trade_value = min(portfolio_equity * SWING_POSITION_PCT, remaining_budget)
+        vol_scale = 1.0
+        if SWING_VOL_TARGET > 0 and vol_map.get(ticker):
+            vol_scale = min(1.0, SWING_VOL_TARGET / vol_map[ticker])   # high-vol → smaller position
+        trade_value = min(portfolio_equity * SWING_POSITION_PCT * vol_scale, remaining_budget)
         shares = int(trade_value / entry_price)
         if shares < 1 or trade_value < 100.0:
             print(f"Skipping {ticker}: position too small (${trade_value:.0f}).")

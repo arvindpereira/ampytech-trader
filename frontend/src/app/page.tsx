@@ -142,6 +142,7 @@ export default function Home() {
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [classification, setClassification] = useState<Record<string, any>>({});
+  const [tierMenu, setTierMenu] = useState<{ ticker: string; x: number; y: number } | null>(null);
   const [portfolio, setPortfolio] = useState<any>(null);
   const [refreshingPortfolio, setRefreshingPortfolio] = useState<boolean>(false);
   const [jobs, setJobs] = useState<any[]>([]);
@@ -389,13 +390,28 @@ export default function Home() {
     value_trap: { label: 'Cold', icon: '🧊', color: '#94A3B8', blurb: 'Weak fundamentals, low upside — avoid' },
   };
   const tierMeta = (t: string) => { const tier = classification[t]?.tier; return tier ? TIER_META[tier] : null; };
-  // Colored ticker symbol + tier icon (hover shows the tier + quality).
+  const setTierOverride = async (ticker: string, tier: string | null) => {
+    setTierMenu(null);
+    try {
+      await fetch('http://localhost:8008/api/classification/override', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker, tier }),
+      });
+      const r = await fetch('http://localhost:8008/api/classification');
+      if (r.ok) setClassification(await r.json());
+    } catch (err) { console.error(err); }
+  };
+  // Polished tier pill (tinted bg + icon + colored symbol). Click to override the tier; hover for detail.
   const TickerTag = ({ t, size = 13, bold = true }: { t: string; size?: number; bold?: boolean }) => {
     const m = tierMeta(t); const c = classification[t];
-    const title = m ? `${m.label} — ${m.blurb}${c?.quality != null ? ` · quality ${Math.round(c.quality * 100)}%` : ''}` : `${t}: unrated (no fundamentals)`;
+    const detail = m ? `${m.label} — ${m.blurb}${c?.quality != null ? ` · quality ${Math.round(c.quality * 100)}%` : ''}${c?.overridden ? ' · (manual override)' : ''} · click to change`
+                     : `${t}: unrated (no fundamentals) · click to set tier`;
+    const base: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: bold ? 700 : 600, fontSize: size, cursor: 'pointer', borderRadius: '6px', padding: '1px 7px', lineHeight: 1.7 };
+    const styled: React.CSSProperties = m
+      ? { ...base, color: m.color, background: `${m.color}1A`, border: `1px solid ${m.color}44` }
+      : { ...base, color: 'var(--text-primary)', border: '1px dashed var(--border-glass)' };
     return (
-      <span title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: bold ? 700 : 600, fontSize: size, color: m?.color || 'var(--text-primary)' }}>
-        {m && <span style={{ fontSize: size - 1 }}>{m.icon}</span>}{t}
+      <span title={detail} onClick={(e) => { e.stopPropagation(); setTierMenu({ ticker: t, x: e.clientX, y: e.clientY }); }} style={styled}>
+        {m && <span style={{ fontSize: size - 2 }}>{m.icon}</span>}{t}{c?.overridden && <span style={{ fontSize: size - 3, opacity: 0.7 }}>✎</span>}
       </span>
     );
   };
@@ -3069,6 +3085,26 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tier-override popover (click a ticker badge) */}
+      {tierMenu && (
+        <>
+          <div onClick={() => setTierMenu(null)} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
+          <div style={{ position: 'fixed', left: Math.min(tierMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 200), top: tierMenu.y + 8, zIndex: 201, background: 'rgba(16,20,38,0.98)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '6px', boxShadow: '0 12px 30px rgba(0,0,0,0.5)', minWidth: '180px' }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '4px 8px 6px' }}>Set <strong style={{ color: 'var(--text-primary)' }}>{tierMenu.ticker}</strong> tier</div>
+            {(['quality_growth', 'core', 'speculative', 'value_trap'] as const).map(k => (
+              <button key={k} onClick={() => setTierOverride(tierMenu.ticker, k)}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '7px 8px', background: classification[tierMenu.ticker]?.tier === k ? `${TIER_META[k].color}1A` : 'none', border: 'none', color: TIER_META[k].color, fontSize: '13px', fontWeight: 600, cursor: 'pointer', borderRadius: '6px', textAlign: 'left' }}>
+                <span>{TIER_META[k].icon}</span> {TIER_META[k].label}
+              </button>
+            ))}
+            <button onClick={() => setTierOverride(tierMenu.ticker, null)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '7px 8px', marginTop: '2px', borderTop: '1px solid var(--border-glass)', background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '12.5px', cursor: 'pointer', borderRadius: '6px', textAlign: 'left' }}>
+              ↺ Auto (clear override)
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

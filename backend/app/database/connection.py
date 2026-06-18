@@ -119,6 +119,17 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for source on news_llm_scores: {em}")
 
+    # 7. Migrate ticker_classification: add tier_override column (manual tier that wins over computed)
+    try:
+        cols_cls = [c["name"] for c in inspector.get_columns("ticker_classification")]
+        if cols_cls and "tier_override" not in cols_cls:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE ticker_classification ADD COLUMN tier_override VARCHAR"))
+                conn.commit()
+            print("Successfully added tier_override column to ticker_classification via auto-migration.")
+    except Exception as em:
+        print(f"Auto-migration check failed for tier_override on ticker_classification: {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE
