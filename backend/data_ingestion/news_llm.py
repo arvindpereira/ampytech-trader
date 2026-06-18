@@ -35,28 +35,15 @@ from app.core.config import (
     NEWS_LLM_PROVIDER, NEWS_LLM_WORKERS, OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL,
 )
 
+from app.core.llm_cost import estimate_cost, record_usage
+
 NON_NEWS = {"SPACE"}   # fictional ticker, no real news
 BATCH = 15             # headlines per LLM call (sweet spot for gemma4:e4b and gpt-4o-mini)
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
-# Approx OpenAI pricing (USD per 1M tokens) for live cost estimates; falls back to gpt-4o-mini rates.
-_OPENAI_PRICING = {
-    "gpt-4o-mini": (0.15, 0.60), "gpt-4o": (2.50, 10.0),
-    "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1-nano": (0.10, 0.40),
-}
-
-
-def _price(model):
-    for k, v in _OPENAI_PRICING.items():
-        if model.startswith(k):
-            return v
-    return _OPENAI_PRICING["gpt-4o-mini"]
-
 
 def _est_cost(model, prompt_tok, completion_tok, batch=False):
-    pin, pout = _price(model)
-    c = prompt_tok / 1e6 * pin + completion_tok / 1e6 * pout
-    return c * 0.5 if batch else c   # Batch API is 50% off
+    return estimate_cost(model, prompt_tok, completion_tok, batch=batch) or 0.0
 
 
 def _fmt_tok(n):
@@ -312,6 +299,8 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None, provider=Non
                         note += f" • {_fmt_tok(ptok + ctok)} tok • ~${_est_cost(model, ptok, ctok):.2f}"
                     progress_cb(frac, note)
         db.commit()
+        if ptok or ctok:
+            record_usage(f"news_scoring/{provider}", model, ptok, ctok)
         el = time.time() - t0
         summary = f"✅ Scored {grand} headlines in {el:.1f}s ({grand / el:.0f} hl/s)" if el > 0 else \
                   f"✅ Scored {grand} headlines"
@@ -433,6 +422,8 @@ def collect_batch(batch_id, poll_seconds=20):
         db.commit()
     finally:
         db.close()
+    if ptok or ctok:
+        record_usage("news_scoring/openai-batch", model, ptok, ctok, batch=True)
     print(f"✅ Batch {batch_id} ingested: {grand} headline scores | "
           f"tokens: {_fmt_tok(ptok)} in + {_fmt_tok(ctok)} out | "
           f"est cost ~${_est_cost(model, ptok, ctok, batch=True):.4f} (Batch API, 50% off)\n")

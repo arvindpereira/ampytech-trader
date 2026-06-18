@@ -1882,7 +1882,7 @@ export default function Home() {
                       <Brain size={20} color="#a78bfa" /> Expert Interpretation
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                      {it.model && <span>{it.model}{it.tokens ? ` · ${it.tokens.toLocaleString()} tok` : ''}{typeof it.cost === 'number' ? ` · ~$${it.cost.toFixed(3)}` : ''}</span>}
+                      {it.model && <span>{it.model}{it.tokens ? ` · ${it.input_tokens != null ? `${it.input_tokens.toLocaleString()}→${(it.output_tokens || 0).toLocaleString()}` : it.tokens.toLocaleString()} tok` : ''}{typeof it.cost === 'number' ? ` · ~$${it.cost.toFixed(4)}` : ''}</span>}
                       <button onClick={regenerateInterpretation} disabled={interpLoading}
                         style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', padding: '4px 10px', borderRadius: '6px', cursor: interpLoading ? 'default' : 'pointer', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.35)', color: 'var(--text-primary)' }}>
                         <RefreshCw size={12} className={interpLoading ? 'animate-spin' : ''} /> {interpLoading ? 'Thinking…' : 'Regenerate'}

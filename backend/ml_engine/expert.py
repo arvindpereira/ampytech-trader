@@ -12,15 +12,13 @@ import json
 import requests
 
 from app.core.config import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_EXPERT_MODEL
+from app.core.llm_cost import estimate_cost, record_usage
 
 # Friendly names for the evaluation series keys.
 _SERIES_NAMES = {
     "swing": "Swing + LLM-news", "longterm": "Long-term MPT", "blended": "Blended book",
     "spy": "S&P 500 (SPY)", "qqq": "Nasdaq 100 (QQQ)", "brk": "Berkshire (BRK-B)",
 }
-# Rough USD/1M-token pricing for cost estimates; only used when the model prefix is known.
-_PRICING = {"gpt-5.5": (None, None), "gpt-5": (None, None), "gpt-4o": (2.50, 10.0),
-            "gpt-4o-mini": (0.15, 0.60), "gpt-4.1": (2.00, 8.00)}
 
 
 def _fmt_pct(x):
@@ -65,15 +63,6 @@ def _data_summary(result, params):
     return "\n".join(lines)
 
 
-def _cost(model, prompt_tok, completion_tok):
-    for k, (pin, pout) in _PRICING.items():
-        if model.startswith(k):
-            if pin is None:
-                return None
-            return prompt_tok / 1e6 * pin + completion_tok / 1e6 * pout
-    return None
-
-
 def interpret_evaluation(result, params=None, model=None):
     """Return {sections, model, tokens, cost?} or {error}. `sections` has tldr / what_was_tested /
     key_findings[] / strengths[] / weaknesses[] / shortcomings[] / verdict."""
@@ -114,8 +103,9 @@ def interpret_evaluation(result, params=None, model=None):
         sections = json.loads(j["choices"][0]["message"]["content"])
         u = j.get("usage", {}) or {}
         ptok, ctok = u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
-        out = {"sections": sections, "model": model, "tokens": ptok + ctok}
-        c = _cost(model, ptok, ctok)
+        c = record_usage("eval_interpret", model, ptok, ctok)
+        out = {"sections": sections, "model": model, "tokens": ptok + ctok,
+               "input_tokens": ptok, "output_tokens": ctok}
         if c is not None:
             out["cost"] = c
         return out

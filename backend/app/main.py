@@ -1405,6 +1405,13 @@ def get_evaluation_result(job_id: str):
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
 
+@app.get("/api/llm/usage")
+def llm_usage(since: str = None):
+    """Accumulated OpenAI token usage + estimated cost per model (from the usage ledger).
+    Divide your real dashboard spend over a period by these tokens to refine pricing estimates."""
+    from app.core.llm_cost import usage_summary
+    return usage_summary(since=since)
+
 @app.post("/api/evaluate/interpret")
 def regenerate_interpretation(job_id: str):
     """(Re)generate the plain-English expert interpretation for a finished evaluation result."""
