@@ -14,6 +14,9 @@ STRENGTH ?= 0.10
 START ?= 2021-01-01
 NEWS_START ?= $(START)
 LLM_MODEL ?= gemma4:e4b
+PROVIDER ?=
+WORKERS  ?=
+BATCH_ID ?=
 TICKER   ?=
 TICKERS  ?=
 BACKUP_KEEP ?= 10
@@ -35,7 +38,9 @@ help:
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
-	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 TICKERS=AAPL,NVDA]"
+	@echo "  make news-llm          - LLM-score news headlines for the swing model [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]"
+	@echo "  make news-llm-batch    - Same via OpenAI Batch API (cheapest, unattended; needs OPENAI_API_KEY)"
+	@echo "  make news-llm-batch-collect BATCH_ID=<id> - Ingest a submitted batch's results"
 	@echo "  make db-backup         - Back up the trading DB to Google Drive [BACKUP_KEEP=10]"
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
 	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
@@ -131,9 +136,24 @@ longterm-eval:
 
 news-llm:
 	@echo "========================================================================"
-	@echo "🗞️  LLM-scoring news headlines (local Ollama $(LLM_MODEL)) for the swing model [START=$(NEWS_START)$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "🗞️  LLM-scoring news headlines [START=$(NEWS_START)$(if $(PROVIDER), PROVIDER=$(PROVIDER))$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "    (default provider = local Ollama; PROVIDER=openai for a fast bulk backfill)"
 	@echo "========================================================================"
-	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) $(if $(TICKERS),--tickers $(TICKERS))
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) \
+		$(if $(TICKERS),--tickers $(TICKERS)) $(if $(PROVIDER),--provider $(PROVIDER)) $(if $(WORKERS),--workers $(WORKERS))
+
+news-llm-batch:
+	@echo "========================================================================"
+	@echo "🗞️  Submitting OpenAI Batch news-scoring job (cheapest, unattended) [START=$(NEWS_START)$(if $(TICKERS), TICKERS=$(TICKERS))]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --start $(NEWS_START) --batch \
+		$(if $(TICKERS),--tickers $(TICKERS))
+
+news-llm-batch-collect:
+	@echo "========================================================================"
+	@echo "🗞️  Ingesting OpenAI Batch results [BATCH_ID=$(BATCH_ID)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/news_llm.py --collect $(BATCH_ID)
 
 db-backup:
 	@echo "========================================================================"

@@ -142,6 +142,15 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:e4b")   # local, fast, JSON-clean (qwen3.5 emits empty under json mode)
 NEWS_LLM_START = os.getenv("NEWS_LLM_START", "2021-01-01")  # how far back to score headlines (~5y, dense from 2021)
 
+# News-LLM scoring provider. Default "ollama" keeps the recurring daily/intraday jobs free + local.
+# "openai" is a fast opt-in for bulk backfills (10-50x faster; ~<$1 for a full backfill). Headlines
+# are public data, so there's no privacy concern sending them out.
+NEWS_LLM_PROVIDER = os.getenv("NEWS_LLM_PROVIDER", "ollama")
+NEWS_LLM_WORKERS = int(os.getenv("NEWS_LLM_WORKERS", "12"))   # concurrent batches when provider=openai
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")       # cheap, fast, reliable JSON mode
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
 # --- Swing (multi-day) strategy ---------------------------------------------------------------
 # The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
 # features add a real portfolio-level edge (higher return/Sharpe, lower drawdown) over a technicals-only
