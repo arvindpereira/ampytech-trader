@@ -1,5 +1,5 @@
 .PHONY: help default install fetch backfill-news news-llm insider train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
-        news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt \
+        news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
@@ -60,6 +60,7 @@ help:
 	@echo "  make swing-train       - Train + save the production swing model served in the UI [SWING_HORIZON=5]"
 	@echo "  make exec-timing       - Forward-walk: best time of day to enter swing trades [OOS_START=2022-01-01]"
 	@echo "  make stop-opt          - Forward-walk: optimize swing stop-loss & take-profit params [OOS_START=2022-01-01]"
+	@echo "  make horizon-opt       - Forward-walk: optimize swing holding horizon [OOS_START=2022-01-01]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
 	@echo ""
 	@echo "Simulation:"
@@ -151,6 +152,12 @@ stop-opt:
 	@echo "🛑 Stop/TP optimization forward-walk for the swing strategy [OOS_START=$(OOS_START) SWING_HORIZON=$(SWING_HORIZON) SPLITS=$(SPLITS)]..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) -m ml_engine.stop_opt --horizon $(SWING_HORIZON) --splits $(SPLITS) --oos-start $(OOS_START)
+
+horizon-opt:
+	@echo "========================================================================"
+	@echo "📆 Holding-horizon optimization forward-walk for the swing strategy [OOS_START=$(OOS_START) SPLITS=$(SPLITS)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) -m ml_engine.horizon_opt --splits $(SPLITS) --oos-start $(OOS_START)
 
 news-llm:
 	@echo "========================================================================"
