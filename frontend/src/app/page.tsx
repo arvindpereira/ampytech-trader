@@ -422,7 +422,10 @@ export default function Home() {
     if (mode === 'all') return '';
     const d = new Date();
     if (mode === '7d') d.setDate(d.getDate() - 6);
-    return d.toISOString().slice(0, 10);
+    // Local date (not UTC) — the backend stamps usage rows with datetime.now() local time, so a UTC
+    // slice can be a day ahead and filter out everything near midnight.
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
   const fetchLlmUsage = async (mode: string = llmSince) => {
     setLlmLoading(true);
