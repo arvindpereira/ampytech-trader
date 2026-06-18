@@ -293,3 +293,24 @@ class TickerFundamental(Base):
     __table_args__ = (
         PrimaryKeyConstraint("ticker", "end_date", name="pk_ticker_fundamentals"),
     )
+
+
+class TickerClassification(Base):
+    """Consolidated risk × fundamental-quality classification per ticker. quant_quality (ratios) +
+    llm_quality (qualitative overlay) blend into `quality`; combined with `volatility`/`dd_2022` it yields
+    a `tier` that routes the ticker: core swing/long-term, quality-growth (accumulate dips long-term),
+    speculative (small high-risk bucket), or value-trap (avoid)."""
+    __tablename__ = "ticker_classification"
+
+    ticker = Column(String, primary_key=True)
+    quant_quality = Column(Float, nullable=True)     # 0-1 from financial ratios (step 2b)
+    llm_quality = Column(Float, nullable=True)       # 0-1 qualitative overlay (step 2c)
+    quality = Column(Float, nullable=True)           # blended 0-1
+    volatility = Column(Float, nullable=True)        # trailing annualized daily-return vol
+    dd_2022 = Column(Float, nullable=True)           # 2022 max drawdown (bear stress)
+    distressed = Column(Boolean, nullable=True)
+    tier = Column(String, nullable=True)             # core | quality_growth | speculative | value_trap | unrated
+    llm_flags = Column(String, nullable=True)        # JSON list (one_off_gain, bank, turnaround, …)
+    llm_verdict = Column(String, nullable=True)
+    llm_model = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
