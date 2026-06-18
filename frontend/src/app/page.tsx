@@ -396,7 +396,9 @@ export default function Home() {
     if (!t) return;
     setActionBusy(true);
     try {
-      await fetch(`http://localhost:8008/api/universe/add`, {
+      // /backfill adds the ticker if missing AND always starts a (visible) backfill job —
+      // so "Add & Backfill" works even for a ticker already in the universe.
+      await fetch(`http://localhost:8008/api/universe/backfill`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: t }),
       });
       setAddStockTicker('');
@@ -404,6 +406,15 @@ export default function Home() {
       fetchJobsAndTraining();
       fetchData();
     } catch (err) { console.error(err); } finally { setActionBusy(false); }
+  };
+
+  const handleBackfillTicker = async (ticker: string) => {
+    try {
+      await fetch(`http://localhost:8008/api/universe/backfill`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker }),
+      });
+      fetchJobsAndTraining();
+    } catch (err) { console.error(err); }
   };
 
   const handleRemoveMonitored = async (ticker: string) => {
@@ -794,6 +805,17 @@ export default function Home() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          {/* Active background-jobs badge (visible from any tab) */}
+          {jobs.filter((j: any) => j.status === 'running').length > 0 && (
+            <button
+              onClick={() => setActiveTab('editor')}
+              title="View the Background Jobs queue"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,242,254,0.1)', border: '1px solid var(--color-buy)', borderRadius: '999px', color: 'var(--color-buy)', padding: '4px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              <RefreshCw size={13} className="animate-spin" />
+              {jobs.filter((j: any) => j.status === 'running').length} job(s) running
+            </button>
+          )}
           {/* Service health indicators */}
           {health && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2323,29 +2345,40 @@ export default function Home() {
                                   })()}
                                 </td>
                                 <td>
-                                  {h.monitored ? (
+                                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                                     <button
-                                      onClick={() => handleRemoveMonitored(h.ticker)}
-                                      title="Stop monitoring this ticker"
-                                      style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-sell)'}
+                                      onClick={() => handleBackfillTicker(h.ticker)}
+                                      title="Backfill prices + news for this stock (watch it in Background Jobs)"
+                                      style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-buy)'}
                                       onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
                                     >
-                                      <Trash2 size={16} />
+                                      <RefreshCw size={15} />
                                     </button>
-                                  ) : (
-                                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                    {h.monitored ? (
                                       <button
-                                        onClick={() => setLiquidateModal({ ticker: h.ticker, held: h.shares, shares: String(h.shares) })}
-                                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--color-sell)', borderRadius: '6px', color: 'var(--color-sell)', padding: '4px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                        onClick={() => handleRemoveMonitored(h.ticker)}
+                                        title="Stop monitoring this ticker"
+                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                                        onMouseEnter={(e) => e.currentTarget.style.color = 'var(--color-sell)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-secondary)'}
                                       >
-                                        Liquidate
+                                        <Trash2 size={16} />
                                       </button>
-                                      <span title="Held position — sell via Liquidate. The trash icon is enabled only once you hold 0 shares.">
-                                        <Trash2 size={16} style={{ color: 'rgba(255,255,255,0.18)', cursor: 'not-allowed' }} />
-                                      </span>
-                                    </div>
-                                  )}
+                                    ) : (
+                                      <>
+                                        <button
+                                          onClick={() => setLiquidateModal({ ticker: h.ticker, held: h.shares, shares: String(h.shares) })}
+                                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid var(--color-sell)', borderRadius: '6px', color: 'var(--color-sell)', padding: '4px 12px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                        >
+                                          Liquidate
+                                        </button>
+                                        <span title="Held position — sell via Liquidate. The trash icon is enabled only once you hold 0 shares.">
+                                          <Trash2 size={16} style={{ color: 'rgba(255,255,255,0.18)', cursor: 'not-allowed' }} />
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             ))
@@ -2360,6 +2393,39 @@ export default function Home() {
 
             {/* Right Column: Universe Editor & Simulation controls */}
             <aside>
+              {/* Background jobs queue — visible status for every backfill / retrain / eval */}
+              {jobs.length > 0 && (
+                <div className="glass-card" style={{ marginBottom: '24px', border: '1px solid rgba(0,242,254,0.3)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h2 style={{ margin: 0 }}>
+                      <RefreshCw size={18} color="var(--color-buy)" className={jobs.some((j: any) => j.status === 'running') ? 'animate-spin' : ''} />
+                      Background Jobs
+                    </h2>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {jobs.filter((j: any) => j.status === 'running').length} running
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {jobs.map((j: any) => {
+                      const TYPE: Record<string, string> = { backfill: 'Data backfill', train: 'Model retrain', evaluate: 'Evaluation', suggest: 'Strategy suggester', validate: 'Validation' };
+                      const statusColor = j.status === 'error' ? 'var(--color-sell)' : j.status === 'done' ? 'var(--color-buy)' : 'var(--color-gold)';
+                      return (
+                        <div key={j.id}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '4px', gap: '8px' }}>
+                            <span style={{ fontWeight: 600 }}>{TYPE[j.type] || j.type}<span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}> · {j.label}</span></span>
+                            <span style={{ color: statusColor, flexShrink: 0 }}>{j.status === 'error' ? 'failed' : j.status === 'done' ? 'done ✓' : `${j.progress}%`}</span>
+                          </div>
+                          <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
+                            <div style={{ width: `${j.progress}%`, height: '100%', background: j.status === 'error' ? 'var(--color-sell)' : 'var(--color-buy)', transition: 'width 0.4s' }} />
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px' }}>{j.error || j.stage}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Model Training & Background Data Jobs */}
               <div className="glass-card" style={{ marginBottom: '24px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
@@ -2409,27 +2475,6 @@ export default function Home() {
                   ))}
                 </div>
 
-                {jobs.filter((j: any) => j.type === 'backfill').length > 0 && (
-                  <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-glass)', paddingTop: '14px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
-                      Data Backfill
-                    </div>
-                    {jobs.filter((j: any) => j.type === 'backfill').map((j: any) => (
-                      <div key={j.id} style={{ marginBottom: '12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '4px' }}>
-                          <span>{j.label}</span>
-                          <span style={{ color: j.status === 'error' ? 'var(--color-sell)' : j.status === 'done' ? 'var(--color-buy)' : 'var(--text-secondary)' }}>
-                            {j.status === 'error' ? 'failed' : `${j.progress}%`}
-                          </span>
-                        </div>
-                        <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden' }}>
-                          <div style={{ width: `${j.progress}%`, height: '100%', background: j.status === 'error' ? 'var(--color-sell)' : 'var(--color-buy)', transition: 'width 0.4s' }} />
-                        </div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px' }}>{j.error || j.stage}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
 
               {/* Universe Ticker Checklist */}
