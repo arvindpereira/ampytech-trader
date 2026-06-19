@@ -42,6 +42,7 @@ import {
   CartesianGrid,
   Legend
 } from 'recharts';
+import GrantTimeline from './GrantTimeline';
 
 interface HedgePlan {
   mode: string;
@@ -122,6 +123,7 @@ interface EquityLot {
   unrealized_gain_pct?: number | null;
   is_long_term?: boolean;
   days_to_long_term?: number;
+  recommendation?: { action: string; label: string; detail: string };
 }
 
 export default function Home() {
@@ -230,6 +232,7 @@ export default function Home() {
   });
   const [premiumStatus, setPremiumStatus] = useState<string>('');
   const [equityLots, setEquityLots] = useState<EquityLot[]>([]);
+  const [grantTicker, setGrantTicker] = useState<string>('');
   const [equityForecasts, setEquityForecasts] = useState<Record<string, any>>({});
   const [taxProfile, setTaxProfile] = useState<any>({
     filing_status: 'single',
@@ -258,6 +261,9 @@ export default function Home() {
   const [tradingBlocks, setTradingBlocks] = useState<any[]>([]);
   const [autoTradingPaused, setAutoTradingPaused] = useState<boolean>(false);
   const [newBlockTicker, setNewBlockTicker] = useState<string>('');
+  const [equityAggregate, setEquityAggregate] = useState<any[]>([]);
+  const [sellModal, setSellModal] = useState<any>(null);
+  const [sellBusy, setSellBusy] = useState<boolean>(false);
 
   const money = (v: any) => typeof v === 'number' && isFinite(v) ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
   const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
@@ -272,6 +278,7 @@ export default function Home() {
         const data = await lotsRes.json();
         setEquityLots(data.lots || []);
         setEquityForecasts(data.forecasts || {});
+        setEquityAggregate(data.aggregate || []);
       }
       if (profileRes.ok) setTaxProfile(await profileRes.json());
     } catch (err) {
@@ -341,6 +348,38 @@ export default function Home() {
     if (!id) return;
     await fetch(`http://localhost:8008/api/equity/lots/${id}`, { method: 'DELETE' });
     fetchEquityAdvisor();
+  };
+
+  const editEquityLot = (lot: EquityLot) => {
+    setNewEquityLot({
+      id: lot.id, ticker: lot.ticker, account_label: lot.account_label, lot_type: lot.lot_type,
+      shares: lot.shares, cost_basis_per_share: lot.cost_basis_per_share,
+      acquisition_date: lot.acquisition_date, notes: lot.notes,
+    });
+    document.getElementById('equity-lot-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  const submitSell = async () => {
+    if (!sellModal || sellModal.shares <= 0) return;
+    setSellBusy(true);
+    try {
+      const res = await fetch(`http://localhost:8008/api/equity/lots/${sellModal.id}/sell`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shares: sellModal.shares,
+          sale_price: sellModal.sale_price ? parseFloat(sellModal.sale_price) : null,
+          sale_date: sellModal.sale_date || null,
+          add_wash_sale_block: !!sellModal.add_wash_sale_block,
+        })
+      });
+      await res.json();
+      setSellModal(null);
+      fetchEquityAdvisor();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSellBusy(false);
+    }
   };
 
   const runEquityAnalyze = async () => {
@@ -1090,6 +1129,44 @@ export default function Home() {
               {jobs.filter((j: any) => j.status === 'running').length} job(s) running
             </button>
           )}
+          {/* Market open/closed status (with next session for closed markets) */}
+          {health?.services?.alpaca?.status === 'up' && (() => {
+            const a = health.services.alpaca;
+            const isOpen = !!a.market_open;
+            const color = isOpen ? '#10B981' : '#F59E0B';
+            let nextLabel = '';
+            if (!isOpen && a.next_open) {
+              const d = new Date(a.next_open);
+              if (!isNaN(d.getTime())) {
+                nextLabel = ' · Opens ' + d.toLocaleString(undefined, {
+                  weekday: 'short', month: 'short', day: 'numeric',
+                  hour: 'numeric', minute: '2-digit',
+                });
+              }
+            }
+            return (
+              <div
+                title={isOpen ? 'US market is open — the bot trades on schedule' : `US market is closed${nextLabel ? ' —' + nextLabel.replace(' · Opens', ' opens') : ''}`}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '4px 12px', borderRadius: '999px',
+                  background: isOpen ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                  border: `1px solid ${color}`, cursor: 'default',
+                }}
+              >
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
+                <span style={{ fontSize: '11px', color, fontWeight: 700 }}>
+                  {isOpen ? 'Market Open' : 'Market Closed'}
+                </span>
+                {!isOpen && nextLabel && (
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                    {nextLabel.replace(' · ', '')}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Service health indicators */}
           {health && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -3303,7 +3380,28 @@ export default function Home() {
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
                 Add each batch of vested shares: ticker, how many, your <em>cost basis</em> (price per share when they vested/were bought), and the date. We pull the live price and work out gains, holding period, and long-term status. <strong>RSU</strong> = restricted stock units; <strong>ESPP</strong> = employee stock purchase plan.
               </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+              {equityAggregate.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '12.5px', fontWeight: 600, marginBottom: '6px' }}>By holding</div>
+                  <table className="trade-table">
+                    <thead><tr><th>Ticker</th><th>Shares</th><th>Avg basis</th><th>Value</th><th>Unrealized</th><th>LT / ST</th><th>Recommendation</th></tr></thead>
+                    <tbody>
+                      {equityAggregate.map((a: any) => (
+                        <tr key={a.ticker}>
+                          <td><strong>{a.ticker}</strong>{a.tier_label && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{a.tier_label} · {pct(a.weight)}</div>}</td>
+                          <td>{Math.round(a.shares).toLocaleString()}</td>
+                          <td>{money(a.avg_cost_basis)}</td>
+                          <td>{money(a.market_value)}</td>
+                          <td style={{ color: (a.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(a.unrealized_gain)} / {pct(a.unrealized_pct)}</td>
+                          <td style={{ fontSize: '12px' }}>{Math.round(a.lt_shares).toLocaleString()} / {Math.round(a.st_shares).toLocaleString()}</td>
+                          <td title={a.recommendation?.detail || ''} style={{ fontSize: '12px', color: a.recommendation?.action === 'trim' ? '#F59E0B' : a.recommendation?.action === 'hold' ? 'var(--color-buy)' : 'var(--text-primary)' }}>{a.recommendation?.label || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div id="equity-lot-form" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginBottom: '14px' }}>
                 <input placeholder="Ticker" value={newEquityLot.ticker} onChange={(e) => setNewEquityLot({ ...newEquityLot, ticker: e.target.value.toUpperCase() })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <input placeholder="Account" value={newEquityLot.account_label || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, account_label: e.target.value })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <select value={newEquityLot.lot_type} onChange={(e) => setNewEquityLot({ ...newEquityLot, lot_type: e.target.value as any })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
@@ -3312,10 +3410,11 @@ export default function Home() {
                 <input type="number" placeholder="Shares" value={newEquityLot.shares || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, shares: parseFloat(e.target.value) || 0 })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <input type="number" placeholder="Basis/share" value={newEquityLot.cost_basis_per_share || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, cost_basis_per_share: parseFloat(e.target.value) || 0 })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <input type="date" value={newEquityLot.acquisition_date} onChange={(e) => setNewEquityLot({ ...newEquityLot, acquisition_date: e.target.value })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
-                <button onClick={saveEquityLot} disabled={!newEquityLot.ticker || newEquityLot.shares <= 0} className="toggle-btn"><Plus size={14} /> Add Lot</button>
+                <button onClick={saveEquityLot} disabled={!newEquityLot.ticker || newEquityLot.shares <= 0} className="toggle-btn"><Plus size={14} /> {newEquityLot.id ? 'Update Lot' : 'Add Lot'}</button>
+                {newEquityLot.id && <button onClick={() => setNewEquityLot({ ...newEquityLot, id: undefined, shares: 0, cost_basis_per_share: 0, notes: '' })} style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', borderRadius: '6px', padding: '8px', cursor: 'pointer' }}>Cancel</button>}
               </div>
               <table className="trade-table">
-                <thead><tr><th>Ticker</th><th>Shares</th><th>Basis</th><th>Price</th><th>Value</th><th>P&L</th><th>Term</th><th></th></tr></thead>
+                <thead><tr><th>Ticker</th><th>Shares</th><th>Basis</th><th>Price</th><th>Value</th><th>P&L</th><th>Term</th><th>Recommendation</th><th></th></tr></thead>
                 <tbody>
                   {equityLots.map((lot) => (
                     <tr key={lot.id}>
@@ -3326,12 +3425,38 @@ export default function Home() {
                       <td>{money(lot.market_value)}</td>
                       <td style={{ color: (lot.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(lot.unrealized_gain)} / {pct(lot.unrealized_gain_pct)}</td>
                       <td>{lot.is_long_term ? 'LT' : `ST ${lot.days_to_long_term}d`}</td>
-                      <td><button onClick={() => deleteEquityLot(lot.id)} style={{ background: 'transparent', border: 0, color: 'var(--color-sell)', cursor: 'pointer' }}><Trash2 size={15} /></button></td>
+                      <td title={lot.recommendation?.detail || ''} style={{ fontSize: '12px', color: lot.recommendation?.action === 'harvest' ? 'var(--color-sell)' : lot.recommendation?.action === 'wait' ? '#F59E0B' : 'var(--text-secondary)' }}>{lot.recommendation?.label || '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button onClick={() => setSellModal({ id: lot.id, ticker: lot.ticker, max: lot.shares, shares: lot.shares, sale_price: lot.current_price ? String(lot.current_price) : '', sale_date: new Date().toISOString().slice(0, 10), basis: lot.cost_basis_per_share, add_wash_sale_block: false })} className="toggle-btn" style={{ padding: '3px 8px', fontSize: '11.5px', marginRight: '6px' }}>Sell</button>
+                        <button onClick={() => editEquityLot(lot)} style={{ background: 'transparent', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', marginRight: '4px' }} title="Edit"><Sliders size={14} /></button>
+                        <button onClick={() => deleteEquityLot(lot.id)} style={{ background: 'transparent', border: 0, color: 'var(--color-sell)', cursor: 'pointer' }} title="Delete"><Trash2 size={15} /></button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            {equityLots.length > 0 && (() => {
+              const grantTickers = Array.from(new Set(equityLots.map((l) => l.ticker))).sort();
+              const selected = grantTicker && grantTickers.includes(grantTicker) ? grantTicker : grantTickers[0];
+              return (
+                <div className="glass-card" style={{ padding: '18px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                    <Activity size={20} color="#22D3EE" />
+                    <h3 style={{ margin: 0, fontSize: '18px' }}>Grant Timeline</h3>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px', flex: 1 }}>
+                      Your grants over time vs. the market price, how far above/below your cost basis you are, and the share of granted shares in profit.
+                    </span>
+                    <select value={selected} onChange={(e) => setGrantTicker(e.target.value)}
+                      style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
+                      {grantTickers.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  {selected && <GrantTimeline key={selected} ticker={selected} />}
+                </div>
+              );
+            })()}
 
             <div className="glass-card" style={{ padding: '18px' }}>
               <h3 style={{ marginTop: 0 }}>Analyst Forecast</h3>
@@ -3448,6 +3573,49 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      {/* Sell-from-lot modal */}
+      {sellModal && (() => {
+        const px = parseFloat(sellModal.sale_price) || 0;
+        const sh = parseFloat(sellModal.shares) || 0;
+        const realized = (px - sellModal.basis) * sh;
+        const isLoss = realized < 0;
+        return (
+          <div onClick={() => !sellBusy && setSellModal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '420px', maxWidth: '92vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+              <h2 style={{ marginTop: 0, marginBottom: '4px' }}>Sell {sellModal.ticker}</h2>
+              <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>Record a sale from this lot ({sellModal.max} sh held, basis {money(sellModal.basis)}). Updates your remaining shares — it does not place a broker order.</p>
+              <div style={{ display: 'grid', gap: '10px' }}>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Shares to sell
+                  <input type="number" max={sellModal.max} value={sellModal.shares} onChange={(e) => setSellModal({ ...sellModal, shares: Math.min(sellModal.max, parseFloat(e.target.value) || 0) })} style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                  <button onClick={() => setSellModal({ ...sellModal, shares: sellModal.max })} style={{ background: 'transparent', border: 0, color: 'var(--color-gold)', cursor: 'pointer', fontSize: '11px', padding: '2px 0' }}>Sell all {sellModal.max}</button>
+                </label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', flex: 1 }}>Sale price
+                    <input type="number" value={sellModal.sale_price} onChange={(e) => setSellModal({ ...sellModal, sale_price: e.target.value })} style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                  </label>
+                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', flex: 1 }}>Sale date
+                    <input type="date" value={sellModal.sale_date} onChange={(e) => setSellModal({ ...sellModal, sale_date: e.target.value })} style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                  </label>
+                </div>
+                <div style={{ fontSize: '13px', padding: '8px 0', color: isLoss ? 'var(--color-sell)' : 'var(--color-buy)' }}>
+                  Realized {isLoss ? 'loss' : 'gain'}: <strong>{money(realized)}</strong> · proceeds {money(px * sh)}
+                </div>
+                {isLoss && (
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12.5px', color: 'var(--text-primary)', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', padding: '10px' }}>
+                    <input type="checkbox" checked={!!sellModal.add_wash_sale_block} onChange={(e) => setSellModal({ ...sellModal, add_wash_sale_block: e.target.checked })} style={{ marginTop: '2px' }} />
+                    <span><strong>Block re-buys for 31 days</strong> (wash-sale protection). Stops the bot from re-buying {sellModal.ticker} and disallowing this loss. Recommended.</span>
+                  </label>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '18px', justifyContent: 'flex-end' }}>
+                <button onClick={() => setSellModal(null)} disabled={sellBusy} style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', borderRadius: '8px', padding: '8px 16px', cursor: 'pointer' }}>Cancel</button>
+                <button onClick={submitSell} disabled={sellBusy || sh <= 0} className="toggle-btn">{sellBusy ? 'Recording…' : 'Record sale'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Liquidate position modal */}
       {liquidateModal && (
