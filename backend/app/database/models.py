@@ -197,6 +197,33 @@ class AnalystForecast(Base):
     )
 
 
+class TradingBlock(Base):
+    """A guard that prevents the auto-trader from BUYING a ticker. Two kinds:
+
+    - 'wash_sale': time-boxed. Recorded when you harvest a loss (here or in an external
+      account like Schwab) so the bot can't re-buy the same name inside the 30-day IRS
+      wash-sale window and disallow the loss. Auto-expires at `blocked_until`.
+    - 'permanent': open-ended (blocked_until = NULL). For names you hold/manage externally
+      and never want the bot to accumulate (e.g. employer RSUs).
+
+    Releasing a block sets `active=False` rather than deleting it, so the history is auditable.
+    The global auto-trading kill-switch lives separately in AppSetting ('auto_trading_paused').
+    """
+    __tablename__ = "trading_blocks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False, index=True)
+    block_type = Column(String, nullable=False, default="wash_sale")  # 'wash_sale' | 'permanent'
+    reason = Column(String, nullable=True)
+    account_label = Column(String, nullable=True)
+    sale_date = Column(String, nullable=True)          # YYYY-MM-DD (wash_sale only)
+    realized_loss = Column(Float, nullable=True)        # signed; negative = harvested loss
+    shares = Column(Float, nullable=True)
+    blocked_until = Column(String, nullable=True)       # YYYY-MM-DD; NULL = permanent
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(String, nullable=False)
+
+
 class VirtualOrder(Base):
     __tablename__ = "virtual_orders"
 

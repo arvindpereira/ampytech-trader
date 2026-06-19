@@ -24,10 +24,52 @@ from app.core.config import (
 from app.database import (
     SessionLocal, init_db, ExecutedTrade, RecentPrice,
     VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    UniverseTicker
+    UniverseTicker, AppSetting, TradingBlock
 )
 from ml_engine.models import PortfolioOptimizer
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Trading safety guards (wash-sale / never-trade blocks + global kill-switch)
+# ---------------------------------------------------------------------------
+AUTO_TRADING_PAUSED_KEY = "auto_trading_paused"
+
+
+def auto_trading_paused(db):
+    """Global kill-switch. When set, run_execution() halts ALL trading (buys and sells)."""
+    row = db.query(AppSetting).filter(AppSetting.key == AUTO_TRADING_PAUSED_KEY).first()
+    return bool(row and str(row.value).lower() in ("true", "1", "yes"))
+
+
+def buy_block_reason(ticker, db, as_of=None):
+    """Return a human-readable reason if BUYING `ticker` is currently blocked, else None.
+
+    Blocks the auto-trader from re-buying a name inside the wash-sale window (so a harvested
+    loss isn't disallowed) or a name flagged never-trade. Expired wash-sale blocks are
+    deactivated opportunistically. Sells are never blocked here — only the global pause stops
+    sells — so tax-loss exits and stop-losses still fire.
+    """
+    if not ticker:
+        return None
+    today = (as_of or datetime.now().date()).isoformat()
+    blocks = db.query(TradingBlock).filter(
+        TradingBlock.ticker == ticker.upper(), TradingBlock.active == True  # noqa: E712
+    ).all()
+    expired = False
+    for b in blocks:
+        if b.block_type == "permanent" or not b.blocked_until:
+            return b.reason or f"{ticker} is flagged never-trade ({b.account_label or 'manual'})."
+        if b.blocked_until >= today:
+            return (b.reason or
+                    f"{ticker} is in a wash-sale block until {b.blocked_until} "
+                    f"(loss sale {b.sale_date or '?'}).")
+        # past blocked_until -> retire it so the list stays clean
+        b.active = False
+        expired = True
+    if expired:
+        db.commit()
+    return None
 
 def get_alpaca_api(force_virtual=False):
     """Initializes and returns the Alpaca REST API object, defaulting to virtual broker if keys are missing."""
@@ -133,6 +175,10 @@ def execute_local_paper_trade(db, suggestions_data):
         max_trade_value = portfolio_equity * 0.1
 
         if action == "BUY":
+            blocked = buy_block_reason(ticker, db)
+            if blocked:
+                print(f"🔒 Skipping BUY {ticker}: {blocked}")
+                continue
             # Check if we already own this ticker
             if holdings.get(ticker, 0.0) > 0.0:
                 continue
@@ -429,6 +475,10 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data, mode="real"):
         max_trade_value = portfolio_equity * 0.1
 
         if action == "BUY":
+            blocked = buy_block_reason(ticker, db)
+            if blocked:
+                print(f"🔒 Skipping BUY {ticker}: {blocked}")
+                continue
             # Check locked policy
             if ticker in positions_db and positions_db[ticker].policy == "lock":
                 print(f"Ticker {ticker} is locked. Skipping BUY execution.")
@@ -655,6 +705,10 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
         stop_loss = sug.get("stop_loss")
         take_profit = sug.get("take_profit")
 
+        blocked = buy_block_reason(ticker, db)
+        if blocked:
+            print(f"🔒 Skipping BUY {ticker}: {blocked}")
+            continue
         if ticker in positions_db and positions_db[ticker].policy == "lock":
             print(f"{ticker} is locked. Skipping.")
             continue
@@ -941,6 +995,17 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
 def run_execution():
     init_db()
     db = SessionLocal()
+
+    # Global kill-switch: when auto-trading is paused, do nothing at all (no buys, no sells,
+    # no broker sync side effects). Lets the user freeze the bot while harvesting losses in a
+    # real account so it can't trip a wash sale.
+    if auto_trading_paused(db):
+        print("\n" + "=" * 60)
+        print("⏸  AUTO-TRADING IS PAUSED — skipping execution entirely.")
+        print("   Resume from the Equity Advisor tab (or POST /api/execution/auto-trading).")
+        print("=" * 60 + "\n")
+        db.close()
+        return
 
     from app.main import get_daily_suggestions
 

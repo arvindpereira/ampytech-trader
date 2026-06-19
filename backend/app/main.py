@@ -22,7 +22,7 @@ from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
     SentimentSourceLog, InsiderDisclosure, NewsLLMScore, AppSetting,
-    EquityLot, TaxProfile, AnalystForecast
+    EquityLot, TaxProfile, AnalystForecast, TradingBlock
 )
 
 import json as _json
@@ -1366,6 +1366,7 @@ def get_strategy_config(db=Depends(get_db)):
         "effective_swing": round(buckets.get("swing", 0.0) * factor, 4),
         "overlay_active": factor < 1.0,
         "retrain": _retrain_status(db),
+        "auto_trading_paused": _auto_trading_paused(db),
     }
 
 class BucketsRequest(BaseModel):
@@ -1838,6 +1839,21 @@ class EquityAnalyzeRequest(BaseModel):
     long_term_grace_days: int = 45
 
 
+class TradingBlockRequest(BaseModel):
+    ticker: str
+    block_type: str = "wash_sale"            # 'wash_sale' | 'permanent'
+    reason: Optional[str] = None
+    account_label: Optional[str] = None
+    sale_date: Optional[str] = None          # YYYY-MM-DD (wash_sale)
+    realized_loss: Optional[float] = None
+    shares: Optional[float] = None
+    window_days: int = 31                     # wash-sale window (30d + 1 buffer)
+
+
+class AutoTradingRequest(BaseModel):
+    paused: bool
+
+
 def _forecast_dict(row):
     if not row:
         return None
@@ -1899,6 +1915,134 @@ def _equity_narrative(result):
     return msg
 
 
+def _concentration_rollup(classified_lots, db):
+    """Aggregate classified lots into a per-ticker concentration + harvestable-loss view, enriched
+    with the fundamental tier/quality. Drives the advisor UI table and grounds the LLM narrative."""
+    from app.database.models import TickerClassification
+    TIER_LABEL = {"quality_growth": "Hot", "core": "Solid", "speculative": "Long-shot", "value_trap": "Cold"}
+    by_ticker = {}
+    for l in classified_lots:
+        t = l["ticker"]
+        r = by_ticker.setdefault(t, {"ticker": t, "shares": 0.0, "cost": 0.0, "market_value": 0.0,
+                                     "unrealized_gain": 0.0, "lt_shares": 0.0, "st_shares": 0.0,
+                                     "harvestable_loss": 0.0, "current_price": l.get("current_price")})
+        sh = l["shares"]
+        r["shares"] += sh
+        r["cost"] += sh * l["cost_basis_per_share"]
+        r["market_value"] += l["market_value"]
+        r["unrealized_gain"] += l["unrealized_gain"]
+        r["lt_shares" if l["is_long_term"] else "st_shares"] += sh
+        if l["unrealized_gain"] < 0:
+            r["harvestable_loss"] += l["unrealized_gain"]
+    total_mv = sum(r["market_value"] for r in by_ticker.values()) or 1.0
+    cls = {c.ticker: c for c in db.query(TickerClassification).all()}
+    out = []
+    for r in by_ticker.values():
+        c = cls.get(r["ticker"])
+        tier = (getattr(c, "tier_override", None) or getattr(c, "tier", None)) if c else None
+        r["avg_cost_basis"] = r["cost"] / r["shares"] if r["shares"] else 0.0
+        r["unrealized_pct"] = (r["unrealized_gain"] / r["cost"]) if r["cost"] else None
+        r["weight"] = r["market_value"] / total_mv
+        r["tier"] = tier
+        r["tier_label"] = TIER_LABEL.get(tier, tier)
+        r["quality"] = getattr(c, "quality", None) if c else None
+        out.append(r)
+    out.sort(key=lambda r: r["market_value"], reverse=True)
+    return out
+
+
+def _wash_sale_guard_hint(rec, window_days=31):
+    """From a sell plan, summarize which loss-harvest tickers should get a re-buy block + the
+    suggested blocked-until date, so the UI can offer one-click protection."""
+    by_ticker = {}
+    for p in rec.get("picks", []):
+        if p.get("gain", 0) < 0:
+            agg = by_ticker.setdefault(p["ticker"], {"ticker": p["ticker"], "realized_loss": 0.0, "shares": 0.0})
+            agg["realized_loss"] += p["gain"]
+            agg["shares"] += p.get("sell_shares", 0.0)
+    if not by_ticker:
+        return None
+    sale_date = datetime.now().date()
+    blocked_until = (sale_date + timedelta(days=window_days)).isoformat()
+    return {
+        "sale_date": sale_date.isoformat(),
+        "window_days": window_days,
+        "blocked_until": blocked_until,
+        "tickers": sorted(by_ticker.values(), key=lambda x: x["realized_loss"]),
+    }
+
+
+def _equity_llm_narrative(result, db):
+    """Plain-English advisory narrative grounded in the rollup, tiers, and the sell plan. Uses local
+    Ollama by default (private — tax PII never leaves the machine). Falls back to the deterministic
+    narrative on any error / model offline."""
+    try:
+        import requests
+        from app.core.config import OLLAMA_URL, LLM_MODEL, NEWS_LLM_PROVIDER
+        conc = result.get("concentration", [])
+        rec = result.get("recommendation", {})
+        guard = result.get("wash_sale_guard")
+        # Top current swing BUY alternatives (best-effort; never block the narrative on it).
+        alts = []
+        try:
+            sugs = get_daily_suggestions(date=None, db=db) or {}
+            for s in (sugs.get("swing_suggestions") or [])[:8]:
+                if s.get("action") == "BUY":
+                    alts.append(s.get("ticker"))
+        except Exception:
+            pass
+        ctx = {
+            "positions": [{
+                "ticker": r["ticker"], "market_value": round(r["market_value"]),
+                "weight_pct": round(r["weight"] * 100, 1), "unrealized_pct": round((r["unrealized_pct"] or 0) * 100, 1),
+                "harvestable_loss": round(r["harvestable_loss"]), "tier": r.get("tier_label"),
+                "quality": r.get("quality"),
+                "lt_shares": round(r["lt_shares"]), "st_shares": round(r["st_shares"]),
+            } for r in conc],
+            "objective": rec.get("objective"),
+            "plan_proceeds": round(rec.get("gross_proceeds", 0)),
+            "plan_realized_gain": round(rec.get("realized_gain", 0)),
+            "plan_tax_savings": round(rec.get("estimated_tax_savings", 0)),
+            "wash_sale_block_until": guard.get("blocked_until") if guard else None,
+            "buy_alternatives": alts[:6],
+        }
+        prompt = (
+            "You are a concise, practical portfolio + tax-aware advisor. Using ONLY the JSON facts "
+            "below, write a short brief (120-180 words) for a self-directed investor. Cover, in plain "
+            "English: (1) any over-concentration or deeply-underwater single-stock risk; (2) the "
+            "tax-loss-harvesting opportunity (sell highest-cost lots first to realize the most loss); "
+            "(3) the wash-sale caution — do not re-buy within ~30 days, and employer RSU vests can "
+            "trip it; (4) where freed cash could rotate (the higher-quality buy alternatives). Be "
+            "direct, use the real numbers, no preamble, no markdown headers. End with one sentence "
+            "noting this is decision-support, not tax advice.\n\nFACTS:\n" + _json.dumps(ctx)
+        )
+        if NEWS_LLM_PROVIDER == "openai":
+            from app.core.config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL
+            if OPENAI_API_KEY:
+                r = requests.post(f"{OPENAI_BASE_URL}/chat/completions",
+                                  headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                                  json={"model": OPENAI_MODEL, "temperature": 0.2,
+                                        "messages": [{"role": "user", "content": prompt}]}, timeout=60)
+                r.raise_for_status()
+                text = r.json()["choices"][0]["message"]["content"].strip()
+                if text:
+                    return text
+        # default: local Ollama
+        r = requests.post(f"{OLLAMA_URL}/api/generate",
+                          json={"model": LLM_MODEL, "prompt": prompt, "stream": False,
+                                "options": {"temperature": 0.2, "num_predict": 320}}, timeout=120)
+        r.raise_for_status()
+        text = (r.json().get("response") or "").strip()
+        # strip any <think> blocks some models emit
+        if "</think>" in text:
+            text = text.split("</think>", 1)[1].strip()
+        if text:
+            return text
+    except Exception as e:
+        print(f"LLM narrative unavailable, using deterministic fallback: {e}")
+    return _equity_narrative(result)
+
+
 def _run_equity_analyze_job(jid, req_data):
     from app.database import SessionLocal
     from data_ingestion.analyst_fetcher import refresh_forecasts
@@ -1925,15 +2069,17 @@ def _run_equity_analyze_job(jid, req_data):
         yearly = annual_plan(lots, profile, prices=prices)
         result = {
             "lots": classified,
+            "concentration": _concentration_rollup(classified, db),
             "forecasts": [_forecast_dict(f) for f in forecasts if f],
             "profile": _tax_profile_dict(profile),
             "recommendation": rec,
             "wash_sale_warnings": washes,
+            "wash_sale_guard": _wash_sale_guard_hint(rec),
             "annual_plan": yearly,
             "disclaimer": "Decision-support only, not tax advice. Tax constants and analyst data are approximate/best-effort.",
         }
         _job_update(jid, progress=90, stage="Writing narrative")
-        result["narrative"] = _equity_narrative(result)
+        result["narrative"] = _equity_llm_narrative(result, db)
         _EQUITY_ANALYZE_RESULTS[jid] = result
         _job_update(jid, progress=100, stage="Complete", status="done")
     except Exception as e:
@@ -2058,6 +2204,105 @@ def get_equity_analyze_result(job_id: str):
     if j:
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
+
+
+AUTO_TRADING_PAUSED_KEY = "auto_trading_paused"
+
+
+def _auto_trading_paused(db) -> bool:
+    row = db.query(AppSetting).filter(AppSetting.key == AUTO_TRADING_PAUSED_KEY).first()
+    return bool(row and str(row.value).lower() in ("true", "1", "yes"))
+
+
+def _block_dict(b):
+    days_remaining = None
+    if b.blocked_until:
+        try:
+            days_remaining = max(0, (datetime.strptime(b.blocked_until, "%Y-%m-%d").date() - datetime.now().date()).days)
+        except Exception:
+            days_remaining = None
+    return {
+        "id": b.id, "ticker": b.ticker, "block_type": b.block_type, "reason": b.reason,
+        "account_label": b.account_label, "sale_date": b.sale_date, "realized_loss": b.realized_loss,
+        "shares": b.shares, "blocked_until": b.blocked_until, "active": b.active,
+        "created_at": b.created_at, "days_remaining": days_remaining,
+    }
+
+
+@app.get("/api/equity/trading-blocks")
+def list_trading_blocks(db=Depends(get_db)):
+    """Active BUY guards + the global auto-trading pause state (UI safety panel)."""
+    today = datetime.now().date().isoformat()
+    rows = db.query(TradingBlock).filter(TradingBlock.active == True).all()  # noqa: E712
+    # Opportunistically retire expired wash-sale blocks so the list stays clean.
+    fresh = []
+    changed = False
+    for b in rows:
+        if b.block_type == "wash_sale" and b.blocked_until and b.blocked_until < today:
+            b.active = False
+            changed = True
+            continue
+        fresh.append(b)
+    if changed:
+        db.commit()
+    fresh.sort(key=lambda b: (b.block_type != "wash_sale", b.ticker))
+    return {"blocks": [_block_dict(b) for b in fresh], "auto_trading_paused": _auto_trading_paused(db)}
+
+
+@app.post("/api/equity/trading-blocks")
+def create_trading_block(req: TradingBlockRequest, db=Depends(get_db)):
+    ticker = req.ticker.upper().strip()
+    if req.block_type not in ("wash_sale", "permanent"):
+        raise HTTPException(status_code=400, detail="block_type must be wash_sale or permanent")
+    if not ticker:
+        raise HTTPException(status_code=400, detail="ticker is required")
+    blocked_until = None
+    sale_date = None
+    if req.block_type == "wash_sale":
+        try:
+            sd = datetime.strptime((req.sale_date or datetime.now().date().isoformat())[:10], "%Y-%m-%d").date()
+        except Exception:
+            raise HTTPException(status_code=400, detail="sale_date must be YYYY-MM-DD")
+        if not (1 <= int(req.window_days) <= 120):
+            raise HTTPException(status_code=400, detail="window_days out of range (1-120)")
+        sale_date = sd.isoformat()
+        blocked_until = (sd + timedelta(days=int(req.window_days))).isoformat()
+        reason = req.reason or (f"Wash-sale guard: loss sale {sale_date}"
+                                f"{(' of ' + format(req.shares, ',.0f') + ' sh') if req.shares else ''}"
+                                f" — no re-buys until {blocked_until}.")
+    else:
+        reason = req.reason or f"Never-trade: held/managed externally ({req.account_label or 'manual'})."
+    row = TradingBlock(
+        ticker=ticker, block_type=req.block_type, reason=reason, account_label=req.account_label,
+        sale_date=sale_date, realized_loss=req.realized_loss, shares=req.shares,
+        blocked_until=blocked_until, active=True, created_at=datetime.now().isoformat(timespec="seconds"),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"status": "success", "block": _block_dict(row)}
+
+
+@app.delete("/api/equity/trading-blocks/{block_id}")
+def release_trading_block(block_id: int, db=Depends(get_db)):
+    row = db.query(TradingBlock).filter(TradingBlock.id == block_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Block not found")
+    row.active = False
+    db.commit()
+    return {"status": "success", "block": _block_dict(row)}
+
+
+@app.post("/api/execution/auto-trading")
+def set_auto_trading(req: AutoTradingRequest, db=Depends(get_db)):
+    """Global kill-switch. paused=True freezes ALL auto-trading (buys and sells)."""
+    row = db.query(AppSetting).filter(AppSetting.key == AUTO_TRADING_PAUSED_KEY).first()
+    if not row:
+        row = AppSetting(key=AUTO_TRADING_PAUSED_KEY)
+        db.add(row)
+    row.value = "true" if req.paused else "false"
+    db.commit()
+    return {"status": "success", "auto_trading_paused": req.paused}
 
 
 @app.post("/api/simulate")

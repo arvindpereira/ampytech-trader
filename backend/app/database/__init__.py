@@ -3,5 +3,6 @@ from app.database.models import (
     RecentPrice, DailyPrice, CrisisPrice, MacroIndicator, TickerSentiment, ExecutedTrade,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
     SentimentSourceLog, CongressDisclosure, InsiderDisclosure, NewsLLMScore, AppSetting,
-    LLMUsage, TickerFundamental, TickerClassification, EquityLot, TaxProfile, AnalystForecast
+    LLMUsage, TickerFundamental, TickerClassification, EquityLot, TaxProfile, AnalystForecast,
+    TradingBlock
 )
