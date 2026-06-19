@@ -2,7 +2,7 @@
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit backup restore restore-commit \
-        simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
+        simulate backtest-virtual schedule serve serve-all serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
 EPOCHS ?= 10
@@ -76,6 +76,7 @@ help:
 	@echo ""
 	@echo "Run / misc:"
 	@echo "  make serve             - Launch FastAPI (:8008) + Next.js (:3002) together"
+	@echo "  make serve-all         - Launch backend + frontend + scheduler together (one process, no duplicates)"
 	@echo "  make serve-backend     - Launch only the FastAPI backend (:8008)"
 	@echo "  make serve-frontend    - Launch only the Next.js frontend (:3002)"
 	@echo "  make schedule          - Run the APScheduler daemon (unattended fetch/train/execute)"
@@ -321,10 +322,24 @@ serve-backend:
 serve-frontend:
 	cd frontend && npm run dev -- -p 3002
 
+# One command for everything: backend (:8008) + frontend (:3002) + the scheduler daemon.
+# Kills any pre-existing scheduler first so you never end up with duplicates; Ctrl+C stops all three.
+serve-all:
+	@echo "========================================================================"
+	@echo "🚀 Backend :8008  🎨 Frontend :3002  ⏰ Scheduler — all together. Ctrl+C stops all."
+	@echo "========================================================================"
+	@pkill -f "run.py schedule" 2>/dev/null || true; pkill -f "execution/scheduler.py" 2>/dev/null || true; sleep 1
+	@bash -c 'trap "kill 0; pkill -f \"execution/scheduler.py\" 2>/dev/null" EXIT; \
+		(cd backend && $(VENV_PY) run.py serve) & \
+		(cd frontend && npm run dev -- -p 3002) & \
+		(cd backend && $(VENV_PY) run.py schedule) & wait'
+
 schedule:
 	@echo "========================================================================"
 	@echo "⏰ Starting APScheduler daemon (daily fetch/inference/execution + weekly retrain)..."
+	@echo "    Stopping any existing scheduler first (avoids duplicate daemons)..."
 	@echo "========================================================================"
+	@pkill -f "run.py schedule" 2>/dev/null || true; pkill -f "execution/scheduler.py" 2>/dev/null || true; sleep 1
 	cd backend && $(VENV_PY) run.py schedule
 
 lint:

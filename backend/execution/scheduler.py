@@ -10,6 +10,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 HEARTBEAT_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                               "data", "scheduler_heartbeat.txt")
 
+PIDFILE = os.path.join(os.path.dirname(HEARTBEAT_FILE), "scheduler.pid")
+
+
 def _write_heartbeat():
     try:
         os.makedirs(os.path.dirname(HEARTBEAT_FILE), exist_ok=True)
@@ -17,6 +20,41 @@ def _write_heartbeat():
             f.write(datetime.now().isoformat())
     except Exception as e:
         print(f"Heartbeat write failed: {e}")
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False          # no such process
+    except PermissionError:
+        return True           # exists (owned by another user)
+    except OSError:
+        return False
+    return True
+
+
+def _acquire_singleton(force=False):
+    """Refuse to start a second scheduler if one is already running (the root cause of duplicate
+    daemons + the stale-import failures). Writes a PID lock and clears it on clean exit."""
+    import atexit
+    try:
+        if os.path.exists(PIDFILE):
+            old = int((open(PIDFILE).read() or "0").strip() or 0)
+            if old and old != os.getpid() and _pid_alive(old):
+                if not force:
+                    print(f"⛔ A scheduler is already running (PID {old}). It won't start a duplicate.\n"
+                          f"   Use `make schedule` (restarts cleanly) or pass --force to override.")
+                    return False
+                print(f"⚠ --force: starting despite existing scheduler PID {old}.")
+        os.makedirs(os.path.dirname(PIDFILE), exist_ok=True)
+        with open(PIDFILE, "w") as f:
+            f.write(str(os.getpid()))
+        atexit.register(lambda: os.path.exists(PIDFILE) and os.remove(PIDFILE))
+        return True
+    except Exception as e:
+        print(f"Singleton guard warning (continuing): {e}")
+        return True
 
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -166,10 +204,15 @@ def main():
         action="store_true",
         help="Run a single pipeline pass immediately for verification and exit"
     )
+    parser.add_argument("--force", action="store_true",
+                        help="start even if another scheduler appears to be running")
     args = parser.parse_args()
 
     if args.test:
         test_single_scheduler_tick()
+        return
+
+    if not _acquire_singleton(force=args.force):
         return
 
     scheduler = BlockingScheduler()
