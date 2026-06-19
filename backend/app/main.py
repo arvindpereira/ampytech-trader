@@ -21,7 +21,8 @@ from app.core.config import (
 from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    SentimentSourceLog, InsiderDisclosure, NewsLLMScore, AppSetting
+    SentimentSourceLog, InsiderDisclosure, NewsLLMScore, AppSetting,
+    EquityLot, TaxProfile, AnalystForecast
 )
 
 import json as _json
@@ -142,6 +143,7 @@ def get_jobs():
 _EVAL_RESULTS = {}
 _SUGGEST_RESULTS = {}
 _VALIDATE_RESULTS = {}
+_EQUITY_ANALYZE_RESULTS = {}
 
 def _run_suggest_job(jid, oos_start):
     try:
@@ -1806,6 +1808,236 @@ def delete_holding(ticker: str, mode: str = "real", db=Depends(get_db)):
         db.commit()
         return {"status": "success"}
     raise HTTPException(status_code=404, detail=f"Holding not found for {ticker_val}")
+
+
+class EquityLotRequest(BaseModel):
+    id: Optional[int] = None
+    ticker: str
+    account_label: Optional[str] = None
+    lot_type: str = "other"
+    shares: float
+    cost_basis_per_share: float
+    acquisition_date: str
+    notes: Optional[str] = None
+
+
+class TaxProfileRequest(BaseModel):
+    filing_status: str = "single"
+    ordinary_income: float = 0.0
+    magi: float = 0.0
+    state_ltcg_rate: float = 0.0
+    state_stcg_rate: float = 0.0
+    carryover_loss: float = 0.0
+    tax_year: int = 2026
+
+
+class EquityAnalyzeRequest(BaseModel):
+    objective: str = "raise_cash"
+    target_amount: float = 0.0
+    target_ticker: Optional[str] = None
+    long_term_grace_days: int = 45
+
+
+def _forecast_dict(row):
+    if not row:
+        return None
+    return {
+        "ticker": row.ticker, "as_of_date": row.as_of_date, "current_price": row.current_price,
+        "target_mean": row.target_mean, "target_high": row.target_high, "target_low": row.target_low,
+        "target_median": row.target_median, "num_analysts": row.num_analysts,
+        "recommendation_mean": row.recommendation_mean, "recommendation_key": row.recommendation_key,
+        "strong_buy": row.strong_buy, "buy": row.buy, "hold": row.hold, "sell": row.sell,
+        "strong_sell": row.strong_sell, "upside_pct": row.upside_pct, "source": row.source,
+    }
+
+
+def _tax_profile_dict(row):
+    if not row:
+        return {
+            "filing_status": "single", "ordinary_income": 0.0, "magi": 0.0,
+            "state_ltcg_rate": 0.0, "state_stcg_rate": 0.0, "carryover_loss": 0.0,
+            "tax_year": datetime.now().year,
+        }
+    return {
+        "filing_status": row.filing_status, "ordinary_income": row.ordinary_income, "magi": row.magi,
+        "state_ltcg_rate": row.state_ltcg_rate, "state_stcg_rate": row.state_stcg_rate,
+        "carryover_loss": row.carryover_loss, "tax_year": row.tax_year,
+    }
+
+
+def _lot_dict(row):
+    return {
+        "id": row.id, "ticker": row.ticker, "account_label": row.account_label,
+        "lot_type": row.lot_type, "shares": row.shares,
+        "cost_basis_per_share": row.cost_basis_per_share,
+        "acquisition_date": row.acquisition_date, "notes": row.notes,
+        "created_at": row.created_at,
+    }
+
+
+def _equity_narrative(result):
+    picks = result.get("recommendation", {}).get("picks", [])
+    if not picks:
+        return "No sale lots were selected for the requested objective. Review target amount, prices, and lot data."
+    gross = result["recommendation"].get("gross_proceeds", 0.0)
+    tax = result["recommendation"].get("estimated_tax", 0.0)
+    net = result["recommendation"].get("net_cash", 0.0)
+    first = picks[0]
+    return (f"The heuristic selects {len(picks)} lot(s), starting with {first['ticker']} lot {first.get('id')}, "
+            f"for estimated gross proceeds of ${gross:,.0f}, estimated tax of ${tax:,.0f}, "
+            f"and estimated net cash of ${net:,.0f}. These figures are approximate and advisory only.")
+
+
+def _run_equity_analyze_job(jid, req_data):
+    from app.database import SessionLocal
+    from data_ingestion.analyst_fetcher import refresh_forecasts
+    from ml_engine.tax_advisor import annual_plan, classify_lots, recommend_sale, wash_sale_flags
+    db = SessionLocal()
+    try:
+        _job_update(jid, progress=10, stage="Loading lots and tax profile")
+        lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+        profile = db.query(TaxProfile).filter(TaxProfile.id == 1).first()
+        if not profile:
+            profile = TaxProfile(id=1)
+            db.add(profile)
+            db.commit()
+        tickers = sorted({l.ticker for l in lots})
+        _job_update(jid, progress=30, stage="Refreshing Massive forecast snapshots")
+        forecasts = refresh_forecasts(tickers, db=db) if tickers else []
+        prices = {f.ticker: f.current_price for f in forecasts if f and f.current_price is not None}
+        _job_update(jid, progress=60, stage="Running tax-aware lot heuristic")
+        classified = classify_lots(lots, prices=prices)
+        rec = recommend_sale(lots, profile, req_data.get("objective"), req_data.get("target_amount", 0.0),
+                             req_data.get("long_term_grace_days", 45), target_ticker=req_data.get("target_ticker"),
+                             prices=prices)
+        washes = wash_sale_flags(lots, rec.get("picks", []))
+        yearly = annual_plan(lots, profile, prices=prices)
+        result = {
+            "lots": classified,
+            "forecasts": [_forecast_dict(f) for f in forecasts if f],
+            "profile": _tax_profile_dict(profile),
+            "recommendation": rec,
+            "wash_sale_warnings": washes,
+            "annual_plan": yearly,
+            "disclaimer": "Decision-support only, not tax advice. Tax constants and analyst data are approximate/best-effort.",
+        }
+        _job_update(jid, progress=90, stage="Writing narrative")
+        result["narrative"] = _equity_narrative(result)
+        _EQUITY_ANALYZE_RESULTS[jid] = result
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+    finally:
+        db.close()
+
+
+@app.get("/api/equity/lots")
+def get_equity_lots(db=Depends(get_db)):
+    lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+    from data_ingestion.analyst_fetcher import latest_or_refresh
+    from ml_engine.tax_advisor import classify_lots
+    tickers = sorted({l.ticker for l in lots})
+    prices = {}
+    forecasts = {}
+    for ticker in tickers:
+        f = latest_or_refresh(ticker, db, stale_days=1)
+        forecasts[ticker] = _forecast_dict(f)
+        if f and f.current_price is not None:
+            prices[ticker] = f.current_price
+    return {"lots": classify_lots(lots, prices=prices), "forecasts": forecasts}
+
+
+@app.post("/api/equity/lots")
+def upsert_equity_lot(req: EquityLotRequest, db=Depends(get_db)):
+    ticker = req.ticker.upper().strip()
+    if req.lot_type not in ("rsu", "espp", "other"):
+        raise HTTPException(status_code=400, detail="lot_type must be rsu, espp, or other")
+    if req.shares <= 0 or req.cost_basis_per_share < 0:
+        raise HTTPException(status_code=400, detail="shares must be positive and cost basis non-negative")
+    try:
+        datetime.strptime(req.acquisition_date[:10], "%Y-%m-%d")
+    except Exception:
+        raise HTTPException(status_code=400, detail="acquisition_date must be YYYY-MM-DD")
+    row = db.query(EquityLot).filter(EquityLot.id == req.id).first() if req.id else None
+    if not row:
+        row = EquityLot(created_at=datetime.now().isoformat(timespec="seconds"))
+        db.add(row)
+    row.ticker = ticker
+    row.account_label = req.account_label
+    row.lot_type = req.lot_type
+    row.shares = req.shares
+    row.cost_basis_per_share = req.cost_basis_per_share
+    row.acquisition_date = req.acquisition_date[:10]
+    row.notes = req.notes
+    db.commit()
+    db.refresh(row)
+    return {"status": "success", "lot": _lot_dict(row)}
+
+
+@app.delete("/api/equity/lots/{lot_id}")
+def delete_equity_lot(lot_id: int, db=Depends(get_db)):
+    row = db.query(EquityLot).filter(EquityLot.id == lot_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "success"}
+
+
+@app.get("/api/equity/tax-profile")
+def get_tax_profile(db=Depends(get_db)):
+    row = db.query(TaxProfile).filter(TaxProfile.id == 1).first()
+    return _tax_profile_dict(row)
+
+
+@app.post("/api/equity/tax-profile")
+def upsert_tax_profile(req: TaxProfileRequest, db=Depends(get_db)):
+    row = db.query(TaxProfile).filter(TaxProfile.id == 1).first()
+    if not row:
+        row = TaxProfile(id=1)
+        db.add(row)
+    row.filing_status = req.filing_status
+    row.ordinary_income = req.ordinary_income
+    row.magi = req.magi
+    row.state_ltcg_rate = req.state_ltcg_rate
+    row.state_stcg_rate = req.state_stcg_rate
+    row.carryover_loss = req.carryover_loss
+    row.tax_year = req.tax_year
+    db.commit()
+    return {"status": "success", "profile": _tax_profile_dict(row)}
+
+
+@app.get("/api/equity/forecast/{ticker}")
+def get_equity_forecast(ticker: str, db=Depends(get_db)):
+    from data_ingestion.analyst_fetcher import latest_or_refresh
+    row = latest_or_refresh(ticker.upper().strip(), db, stale_days=1)
+    if not row:
+        raise HTTPException(status_code=404, detail="No forecast or local price data available for ticker")
+    return _forecast_dict(row)
+
+
+@app.post("/api/equity/analyze")
+def start_equity_analyze(req: EquityAnalyzeRequest):
+    if req.objective not in ("raise_cash", "harvest_loss", "exit_ticker"):
+        raise HTTPException(status_code=400, detail="objective must be raise_cash, harvest_loss, or exit_ticker")
+    active = [j for j in _jobs_snapshot() if j["type"] == "equity_analyze" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("equity_analyze", "Analyzing equity lots")
+    threading.Thread(target=_run_equity_analyze_job, args=(jid, req.dict()), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+
+@app.get("/api/equity/analyze/result")
+def get_equity_analyze_result(job_id: str):
+    if job_id in _EQUITY_ANALYZE_RESULTS:
+        return {"status": "done", "result": _EQUITY_ANALYZE_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
 
 @app.post("/api/simulate")
 def trigger_simulate(days: int = 5, background_tasks: BackgroundTasks = None):

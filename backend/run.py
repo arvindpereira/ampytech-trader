@@ -70,6 +70,12 @@ def news_llm(start=None):
         cmd += ["--start", start]
     run_command(cmd, "LLM News Scoring (local Ollama) for the swing model")
 
+def fetch_forecasts(tickers=None):
+    cmd = [sys.executable, "data_ingestion/analyst_fetcher.py"]
+    if tickers:
+        cmd += ["--tickers", tickers]
+    run_command(cmd, "Equity Advisor Forecast Refresh")
+
 def swing_eval(horizon=5, splits=4):
     run_command([sys.executable, "ml_engine/swing_alpha.py", "--horizon", str(horizon), "--splits", str(splits)],
                 "Swing (multi-day) Walk-Forward + Portfolio Sim — WITH vs WITHOUT LLM news")
@@ -89,7 +95,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
+        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -97,6 +103,12 @@ def main():
         type=str,
         default=None,
         help="Ticker symbol to add (for add-ticker action)"
+    )
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Comma-separated tickers for fetch-forecasts"
     )
     parser.add_argument(
         "--days",
@@ -143,6 +155,8 @@ def main():
 
     if args.action == "fetch":
         fetch()
+    elif args.action == "fetch-forecasts":
+        fetch_forecasts(tickers=args.tickers)
     elif args.action == "train":
         train(epochs=args.epochs)
     elif args.action == "backtest":

@@ -106,8 +106,25 @@ interface VirtualPosition {
   current_price: string;
 }
 
+interface EquityLot {
+  id?: number;
+  ticker: string;
+  account_label?: string;
+  lot_type: 'rsu' | 'espp' | 'other';
+  shares: number;
+  cost_basis_per_share: number;
+  acquisition_date: string;
+  notes?: string;
+  current_price?: number;
+  market_value?: number;
+  unrealized_gain?: number;
+  unrealized_gain_pct?: number | null;
+  is_long_term?: boolean;
+  days_to_long_term?: number;
+}
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor'>('dashboard');
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'swing' | 'long_term'>('short_term');
   const appMode = 'real';
   const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
@@ -211,6 +228,113 @@ export default function Home() {
     url: ''
   });
   const [premiumStatus, setPremiumStatus] = useState<string>('');
+  const [equityLots, setEquityLots] = useState<EquityLot[]>([]);
+  const [equityForecasts, setEquityForecasts] = useState<Record<string, any>>({});
+  const [taxProfile, setTaxProfile] = useState<any>({
+    filing_status: 'single',
+    ordinary_income: 0,
+    magi: 0,
+    state_ltcg_rate: 0,
+    state_stcg_rate: 0,
+    carryover_loss: 0,
+    tax_year: new Date().getFullYear()
+  });
+  const [newEquityLot, setNewEquityLot] = useState<EquityLot>({
+    ticker: 'ADBE',
+    account_label: '',
+    lot_type: 'rsu',
+    shares: 0,
+    cost_basis_per_share: 0,
+    acquisition_date: new Date().toISOString().slice(0, 10),
+    notes: ''
+  });
+  const [equityObjective, setEquityObjective] = useState<string>('raise_cash');
+  const [equityTarget, setEquityTarget] = useState<string>('10000');
+  const [equityTargetTicker, setEquityTargetTicker] = useState<string>('ADBE');
+  const [equityPlan, setEquityPlan] = useState<any>(null);
+  const [equityRunning, setEquityRunning] = useState<boolean>(false);
+  const [equityProgress, setEquityProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
+
+  const money = (v: any) => typeof v === 'number' && isFinite(v) ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
+  const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
+
+  const fetchEquityAdvisor = async () => {
+    try {
+      const [lotsRes, profileRes] = await Promise.all([
+        fetch('http://localhost:8008/api/equity/lots'),
+        fetch('http://localhost:8008/api/equity/tax-profile')
+      ]);
+      if (lotsRes.ok) {
+        const data = await lotsRes.json();
+        setEquityLots(data.lots || []);
+        setEquityForecasts(data.forecasts || {});
+      }
+      if (profileRes.ok) setTaxProfile(await profileRes.json());
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'advisor') fetchEquityAdvisor();
+  }, [activeTab]);
+
+  const saveTaxProfile = async () => {
+    await fetch('http://localhost:8008/api/equity/tax-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taxProfile)
+    });
+    fetchEquityAdvisor();
+  };
+
+  const saveEquityLot = async () => {
+    await fetch('http://localhost:8008/api/equity/lots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newEquityLot)
+    });
+    setNewEquityLot({ ...newEquityLot, id: undefined, shares: 0, cost_basis_per_share: 0, notes: '' });
+    fetchEquityAdvisor();
+  };
+
+  const deleteEquityLot = async (id?: number) => {
+    if (!id) return;
+    await fetch(`http://localhost:8008/api/equity/lots/${id}`, { method: 'DELETE' });
+    fetchEquityAdvisor();
+  };
+
+  const runEquityAnalyze = async () => {
+    setEquityRunning(true);
+    setEquityPlan(null);
+    try {
+      const res = await fetch('http://localhost:8008/api/equity/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ objective: equityObjective, target_amount: parseFloat(equityTarget) || 0, target_ticker: equityTargetTicker || null })
+      });
+      const { job_id } = await res.json();
+      const poll = setInterval(async () => {
+        const r = await fetch(`http://localhost:8008/api/equity/analyze/result?job_id=${job_id}`);
+        const data = await r.json();
+        if (data.status === 'done') {
+          clearInterval(poll);
+          setEquityPlan(data.result);
+          setEquityRunning(false);
+          fetchEquityAdvisor();
+        } else if (data.status === 'error') {
+          clearInterval(poll);
+          setEquityProgress({ pct: 0, stage: data.error || 'Analysis failed' });
+          setEquityRunning(false);
+        } else {
+          setEquityProgress({ pct: data.progress || 0, stage: data.stage || 'Running' });
+        }
+      }, 1000);
+    } catch (err) {
+      console.error(err);
+      setEquityRunning(false);
+    }
+  };
 
   const fetchSources = async (ticker: string) => {
     setLoadingSources(true);
@@ -1034,6 +1158,12 @@ export default function Home() {
             onClick={() => setActiveTab('editor')}
           >
             Universe & Portfolio Editor
+          </button>
+          <button
+            className={`toggle-btn ${activeTab === 'advisor' ? 'active' : ''}`}
+            onClick={() => setActiveTab('advisor')}
+          >
+            Equity Advisor
           </button>
         </div>
       </div>
@@ -3028,6 +3158,131 @@ export default function Home() {
               )}
             </aside>
           </>
+        )}
+
+        {activeTab === 'advisor' && (
+          <section style={{ gridColumn: '1 / -1', display: 'grid', gap: '18px' }}>
+            <div className="glass-card" style={{ padding: '18px', border: '1px solid rgba(245, 158, 11, 0.28)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <DollarSign size={20} color="#F59E0B" />
+                <h2 style={{ margin: 0, fontSize: '18px' }}>Equity Advisor</h2>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Decision-support only. Not tax advice. No orders are placed.</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+                {[
+                  ['filing_status', 'Filing status'],
+                  ['ordinary_income', 'Ordinary income'],
+                  ['magi', 'MAGI'],
+                  ['state_ltcg_rate', 'State LT rate'],
+                  ['state_stcg_rate', 'State ST rate'],
+                  ['carryover_loss', 'Carryover loss'],
+                  ['tax_year', 'Tax year']
+                ].map(([key, label]) => (
+                  <label key={key} style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    {label}
+                    {key === 'filing_status' ? (
+                      <select value={taxProfile[key] || 'single'} onChange={(e) => setTaxProfile({ ...taxProfile, [key]: e.target.value })}
+                        style={{ width: '100%', marginTop: '5px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
+                        <option value="single">Single</option>
+                        <option value="married_joint">Married joint</option>
+                        <option value="married_separate">Married separate</option>
+                        <option value="head_of_household">Head of household</option>
+                      </select>
+                    ) : (
+                      <input type="number" value={taxProfile[key] ?? ''} onChange={(e) => setTaxProfile({ ...taxProfile, [key]: parseFloat(e.target.value) || 0 })}
+                        style={{ width: '100%', marginTop: '5px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                    )}
+                  </label>
+                ))}
+              </div>
+              <button onClick={saveTaxProfile} className="toggle-btn" style={{ marginTop: '12px' }}>Save Profile</button>
+            </div>
+
+            <div className="glass-card" style={{ padding: '18px' }}>
+              <h3 style={{ marginTop: 0 }}>My Share Lots</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+                <input placeholder="Ticker" value={newEquityLot.ticker} onChange={(e) => setNewEquityLot({ ...newEquityLot, ticker: e.target.value.toUpperCase() })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                <input placeholder="Account" value={newEquityLot.account_label || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, account_label: e.target.value })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                <select value={newEquityLot.lot_type} onChange={(e) => setNewEquityLot({ ...newEquityLot, lot_type: e.target.value as any })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
+                  <option value="rsu">RSU</option><option value="espp">ESPP</option><option value="other">Other</option>
+                </select>
+                <input type="number" placeholder="Shares" value={newEquityLot.shares || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, shares: parseFloat(e.target.value) || 0 })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                <input type="number" placeholder="Basis/share" value={newEquityLot.cost_basis_per_share || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, cost_basis_per_share: parseFloat(e.target.value) || 0 })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                <input type="date" value={newEquityLot.acquisition_date} onChange={(e) => setNewEquityLot({ ...newEquityLot, acquisition_date: e.target.value })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                <button onClick={saveEquityLot} disabled={!newEquityLot.ticker || newEquityLot.shares <= 0} className="toggle-btn"><Plus size={14} /> Add Lot</button>
+              </div>
+              <table className="trade-table">
+                <thead><tr><th>Ticker</th><th>Shares</th><th>Basis</th><th>Price</th><th>Value</th><th>P&L</th><th>Term</th><th></th></tr></thead>
+                <tbody>
+                  {equityLots.map((lot) => (
+                    <tr key={lot.id}>
+                      <td>{lot.ticker}<div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{lot.acquisition_date}</div></td>
+                      <td>{lot.shares.toFixed(2)}</td>
+                      <td>{money(lot.cost_basis_per_share)}</td>
+                      <td>{money(lot.current_price)}</td>
+                      <td>{money(lot.market_value)}</td>
+                      <td style={{ color: (lot.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(lot.unrealized_gain)} / {pct(lot.unrealized_gain_pct)}</td>
+                      <td>{lot.is_long_term ? 'LT' : `ST ${lot.days_to_long_term}d`}</td>
+                      <td><button onClick={() => deleteEquityLot(lot.id)} style={{ background: 'transparent', border: 0, color: 'var(--color-sell)', cursor: 'pointer' }}><Trash2 size={15} /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="glass-card" style={{ padding: '18px' }}>
+              <h3 style={{ marginTop: 0 }}>Analyst Forecast</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                {Object.values(equityForecasts).filter(Boolean).map((f: any) => (
+                  <div key={f.ticker} style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
+                    <strong>{f.ticker}</strong>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{f.source} · {f.as_of_date}</div>
+                    <div>Price: {money(f.current_price)}</div>
+                    {f.target_mean != null && <div>Target mean: {money(f.target_mean)} ({pct(f.upside_pct)})</div>}
+                    {f.target_high != null && <div>Range: {money(f.target_low)} - {money(f.target_high)}</div>}
+                    {f.num_analysts != null && <div>Analysts: {f.num_analysts}</div>}
+                    {f.recommendation_key && <div>Rating: {f.recommendation_key}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ padding: '18px' }}>
+              <h3 style={{ marginTop: 0 }}>Sell Plan</h3>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+                <select value={equityObjective} onChange={(e) => setEquityObjective(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
+                  <option value="raise_cash">Raise target cash</option>
+                  <option value="harvest_loss">Harvest target loss</option>
+                  <option value="exit_ticker">Exit holdings</option>
+                </select>
+                <input type="number" value={equityTarget} onChange={(e) => setEquityTarget(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                {equityObjective === 'exit_ticker' && <input value={equityTargetTicker} onChange={(e) => setEquityTargetTicker(e.target.value.toUpperCase())} placeholder="Ticker" style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', width: '100px' }} />}
+                <button onClick={runEquityAnalyze} disabled={equityRunning || equityLots.length === 0} className="toggle-btn"><Play size={14} /> {equityRunning ? 'Analyzing...' : 'Analyze'}</button>
+                {equityRunning && <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{equityProgress.pct}% · {equityProgress.stage}</span>}
+              </div>
+              {equityPlan && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+                    <div>Gross<br /><strong>{money(equityPlan.recommendation?.gross_proceeds)}</strong></div>
+                    <div>Est. tax<br /><strong>{money(equityPlan.recommendation?.estimated_tax)}</strong></div>
+                    <div>Net cash<br /><strong>{money(equityPlan.recommendation?.net_cash)}</strong></div>
+                    <div>Realized gain<br /><strong>{money(equityPlan.recommendation?.realized_gain)}</strong></div>
+                  </div>
+                  <p style={{ color: 'var(--text-secondary)' }}>{equityPlan.narrative}</p>
+                  <table className="trade-table">
+                    <thead><tr><th>Lot</th><th>Sell</th><th>Proceeds</th><th>Gain</th><th>Tax</th><th>Note</th></tr></thead>
+                    <tbody>{(equityPlan.recommendation?.picks || []).map((p: any) => (
+                      <tr key={`${p.id}-${p.sell_shares}`}><td>{p.ticker} #{p.id}</td><td>{p.sell_shares.toFixed(2)}</td><td>{money(p.sale_proceeds)}</td><td>{money(p.gain)}</td><td>{money(p.estimated_tax)}</td><td>{p.wait_flag || ''}</td></tr>
+                    ))}</tbody>
+                  </table>
+                  {(equityPlan.wash_sale_warnings || []).map((w: any, i: number) => (
+                    <div key={i} style={{ color: '#F59E0B', display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}><AlertTriangle size={14} /> {w.message}</div>
+                  ))}
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{equityPlan.disclaimer}</p>
+                </>
+              )}
+            </div>
+          </section>
         )}
       </main>
 

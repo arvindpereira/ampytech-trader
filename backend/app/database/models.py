@@ -144,6 +144,59 @@ class VirtualPosition(Base):
     )
 
 
+class EquityLot(Base):
+    __tablename__ = "equity_lots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    account_label = Column(String, nullable=True)
+    lot_type = Column(String, nullable=False, default="other")  # rsu | espp | other
+    shares = Column(Float, nullable=False)
+    cost_basis_per_share = Column(Float, nullable=False)
+    acquisition_date = Column(String, nullable=False)  # YYYY-MM-DD
+    notes = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+
+
+class TaxProfile(Base):
+    __tablename__ = "tax_profile"
+
+    id = Column(Integer, primary_key=True, default=1)
+    filing_status = Column(String, nullable=False, default="single")
+    ordinary_income = Column(Float, nullable=False, default=0.0)
+    magi = Column(Float, nullable=False, default=0.0)
+    state_ltcg_rate = Column(Float, nullable=False, default=0.0)
+    state_stcg_rate = Column(Float, nullable=False, default=0.0)
+    carryover_loss = Column(Float, nullable=False, default=0.0)
+    tax_year = Column(Integer, nullable=False, default=2026)
+
+
+class AnalystForecast(Base):
+    __tablename__ = "ticker_analyst_forecasts"
+
+    ticker = Column(String, nullable=False)
+    as_of_date = Column(String, nullable=False)
+    current_price = Column(Float, nullable=True)
+    target_mean = Column(Float, nullable=True)
+    target_high = Column(Float, nullable=True)
+    target_low = Column(Float, nullable=True)
+    target_median = Column(Float, nullable=True)
+    num_analysts = Column(Integer, nullable=True)
+    recommendation_mean = Column(Float, nullable=True)
+    recommendation_key = Column(String, nullable=True)
+    strong_buy = Column(Integer, nullable=True)
+    buy = Column(Integer, nullable=True)
+    hold = Column(Integer, nullable=True)
+    sell = Column(Integer, nullable=True)
+    strong_sell = Column(Integer, nullable=True)
+    upside_pct = Column(Float, nullable=True)
+    source = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "as_of_date", name="pk_ticker_analyst_forecasts"),
+    )
+
+
 class VirtualOrder(Base):
     __tablename__ = "virtual_orders"
 

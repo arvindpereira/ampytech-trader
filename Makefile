@@ -1,4 +1,4 @@
-.PHONY: help default install fetch backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+.PHONY: help default install fetch fetch-forecasts backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit backup restore restore-commit \
@@ -39,6 +39,7 @@ help:
 	@echo ""
 	@echo "Data:"
 	@echo "  make fetch             - Hourly+daily prices, macro, sentiment, crisis eras"
+	@echo "  make fetch-forecasts   - Refresh Equity Advisor forecasts [TICKERS=ADBE,PINS]"
 	@echo "  make backfill-news     - Backfill historical daily news sentiment (~2021->now)"
 	@echo "  make insider           - Fetch REAL SEC Form 4 insider data (set SEC_USER_AGENT)"
 	@echo "  make fundamentals      - Ingest company financials (Polygon) & derived ratios [TICKERS=NVDA,BYND]"
@@ -104,6 +105,13 @@ fetch:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py fetch
 	@echo "✅ Data fetch complete."
+
+fetch-forecasts:
+	@echo "========================================================================"
+	@echo "📈 Refreshing Equity Advisor forecast snapshots [TICKERS=$(if $(TICKERS),$(TICKERS),ADBE,PINS)]..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py fetch-forecasts --tickers $(if $(TICKERS),$(TICKERS),ADBE,PINS)
+	@echo "✅ Forecast refresh complete."
 
 backfill-news:
 	@echo "========================================================================"
@@ -337,4 +345,3 @@ add-ticker:
 	@echo "➕ Adding ticker $(TICKER) to the database..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py add-ticker --symbol "$(TICKER)"
-
