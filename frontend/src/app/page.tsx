@@ -3166,40 +3166,62 @@ export default function Home() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                 <DollarSign size={20} color="#F59E0B" />
                 <h2 style={{ margin: 0, fontSize: '18px' }}>Equity Advisor</h2>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Decision-support only. Not tax advice. No orders are placed.</span>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>Plans when/what to sell from your vested shares — tax-aware. Decision-support only, not tax advice. No orders are placed.</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
-                {[
-                  ['filing_status', 'Filing status'],
-                  ['ordinary_income', 'Ordinary income'],
-                  ['magi', 'MAGI'],
-                  ['state_ltcg_rate', 'State LT rate'],
-                  ['state_stcg_rate', 'State ST rate'],
-                  ['carryover_loss', 'Carryover loss'],
-                  ['tax_year', 'Tax year']
-                ].map(([key, label]) => (
-                  <label key={key} style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    {label}
-                    {key === 'filing_status' ? (
-                      <select value={taxProfile[key] || 'single'} onChange={(e) => setTaxProfile({ ...taxProfile, [key]: e.target.value })}
-                        style={{ width: '100%', marginTop: '5px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
-                        <option value="single">Single</option>
-                        <option value="married_joint">Married joint</option>
-                        <option value="married_separate">Married separate</option>
-                        <option value="head_of_household">Head of household</option>
-                      </select>
-                    ) : (
-                      <input type="number" value={taxProfile[key] ?? ''} onChange={(e) => setTaxProfile({ ...taxProfile, [key]: parseFloat(e.target.value) || 0 })}
-                        style={{ width: '100%', marginTop: '5px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
-                    )}
-                  </label>
-                ))}
-              </div>
-              <button onClick={saveTaxProfile} className="toggle-btn" style={{ marginTop: '12px' }}>Save Profile</button>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>
+                <strong style={{ color: 'var(--text-primary)' }}>Step 1 — Your tax situation.</strong> These let us estimate taxes realistically. Nothing is filed or shared.
+              </p>
+              {(() => {
+                const FIELDS: { key: string; label: string; type: 'select' | 'money' | 'percent' | 'year'; help: string }[] = [
+                  { key: 'filing_status', label: 'Filing status', type: 'select', help: 'How you file your federal taxes.' },
+                  { key: 'ordinary_income', label: 'Annual income', type: 'money', help: 'Your regular taxable income (salary, etc.). Sets your tax bracket.' },
+                  { key: 'magi', label: 'Total income (MAGI)', type: 'money', help: 'Modified Adjusted Gross Income — roughly all your income for the year. Used to check the extra 3.8% investment tax that applies above ~$200k (single) / $250k (married).' },
+                  { key: 'state_ltcg_rate', label: 'State tax — long-term gains', type: 'percent', help: 'Your state’s rate on shares held over 1 year. Enter 0 if your state has no capital-gains tax (e.g. TX, FL, WA).' },
+                  { key: 'state_stcg_rate', label: 'State tax — short-term gains', type: 'percent', help: 'Your state’s rate on shares held under 1 year.' },
+                  { key: 'carryover_loss', label: 'Loss carryover', type: 'money', help: 'Capital losses carried over from prior years’ returns. Enter 0 if none.' },
+                  { key: 'tax_year', label: 'Tax year', type: 'year', help: 'The year you’re planning for (2025 or 2026).' },
+                ];
+                const inp: React.CSSProperties = { width: '100%', marginTop: '5px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' };
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '14px' }}>
+                    {FIELDS.map(f => (
+                      <div key={f.key}>
+                        <label style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>{f.label}</label>
+                        {f.type === 'select' ? (
+                          <select value={(taxProfile as any).filing_status || 'single'} onChange={(e) => setTaxProfile({ ...taxProfile, filing_status: e.target.value })} style={inp}>
+                            <option value="single">Single</option>
+                            <option value="married_joint">Married, filing jointly</option>
+                            <option value="married_separate">Married, filing separately</option>
+                            <option value="head_of_household">Head of household</option>
+                          </select>
+                        ) : f.type === 'percent' ? (
+                          <div style={{ position: 'relative' }}>
+                            <input type="number" step="0.1" value={(taxProfile as any)[f.key] != null ? +(((taxProfile as any)[f.key]) * 100).toFixed(2) : ''}
+                              onChange={(e) => setTaxProfile({ ...taxProfile, [f.key]: (parseFloat(e.target.value) || 0) / 100 })} style={inp} />
+                            <span style={{ position: 'absolute', right: '10px', top: '13px', color: 'var(--text-secondary)', fontSize: '12px' }}>%</span>
+                          </div>
+                        ) : (
+                          <div style={{ position: 'relative' }}>
+                            {f.type === 'money' && <span style={{ position: 'absolute', left: '9px', top: '13px', color: 'var(--text-secondary)', fontSize: '12px' }}>$</span>}
+                            <input type="number" value={(taxProfile as any)[f.key] ?? ''}
+                              onChange={(e) => setTaxProfile({ ...taxProfile, [f.key]: f.type === 'year' ? (parseInt(e.target.value) || 2026) : (parseFloat(e.target.value) || 0) })}
+                              style={{ ...inp, paddingLeft: f.type === 'money' ? '20px' : '8px' }} />
+                          </div>
+                        )}
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: 1.4 }}>{f.help}</div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              <button onClick={saveTaxProfile} className="toggle-btn" style={{ marginTop: '14px' }}>Save Profile</button>
             </div>
 
             <div className="glass-card" style={{ padding: '18px' }}>
-              <h3 style={{ marginTop: 0 }}>My Share Lots</h3>
+              <h3 style={{ marginTop: 0 }}>Step 2 — Your share lots</h3>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                Add each batch of vested shares: ticker, how many, your <em>cost basis</em> (price per share when they vested/were bought), and the date. We pull the live price and work out gains, holding period, and long-term status. <strong>RSU</strong> = restricted stock units; <strong>ESPP</strong> = employee stock purchase plan.
+              </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', marginBottom: '14px' }}>
                 <input placeholder="Ticker" value={newEquityLot.ticker} onChange={(e) => setNewEquityLot({ ...newEquityLot, ticker: e.target.value.toUpperCase() })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <input placeholder="Account" value={newEquityLot.account_label || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, account_label: e.target.value })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
@@ -3248,25 +3270,39 @@ export default function Home() {
             </div>
 
             <div className="glass-card" style={{ padding: '18px' }}>
-              <h3 style={{ marginTop: 0 }}>Sell Plan</h3>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+              <h3 style={{ marginTop: 0 }}>Step 3 — Sell plan</h3>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '6px' }}>
                 <select value={equityObjective} onChange={(e) => setEquityObjective(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
-                  <option value="raise_cash">Raise target cash</option>
-                  <option value="harvest_loss">Harvest target loss</option>
-                  <option value="exit_ticker">Exit holdings</option>
+                  <option value="raise_cash">Raise cash</option>
+                  <option value="harvest_loss">Harvest losses (cut taxes)</option>
+                  <option value="exit_ticker">Exit a holding</option>
                 </select>
-                <input type="number" value={equityTarget} onChange={(e) => setEquityTarget(e.target.value)} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                {equityObjective !== 'exit_ticker' && (
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '9px', top: '9px', color: 'var(--text-secondary)', fontSize: '12px' }}>$</span>
+                    <input type="number" value={equityTarget} onChange={(e) => setEquityTarget(e.target.value)} placeholder="Target amount" style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px 8px 8px 20px', width: '150px' }} />
+                  </div>
+                )}
                 {equityObjective === 'exit_ticker' && <input value={equityTargetTicker} onChange={(e) => setEquityTargetTicker(e.target.value.toUpperCase())} placeholder="Ticker" style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', width: '100px' }} />}
-                <button onClick={runEquityAnalyze} disabled={equityRunning || equityLots.length === 0} className="toggle-btn"><Play size={14} /> {equityRunning ? 'Analyzing...' : 'Analyze'}</button>
+                <button onClick={runEquityAnalyze} disabled={equityRunning || equityLots.length === 0} className="toggle-btn"><Play size={14} /> {equityRunning ? 'Analyzing...' : 'Build plan'}</button>
                 {equityRunning && <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{equityProgress.pct}% · {equityProgress.stage}</span>}
               </div>
-              {equityPlan && (
+              <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '14px', lineHeight: 1.5 }}>
+                {equityObjective === 'raise_cash' && 'Sells the most tax-efficient lots (losses first, then highest-cost shares) until it raises your target cash.'}
+                {equityObjective === 'harvest_loss' && 'Sells losing lots to bank tax losses (which offset other gains), up to your target.'}
+                {equityObjective === 'exit_ticker' && 'Plans a full exit of one ticker, ordered for tax efficiency, and warns about wash-sale timing.'}
+              </div>
+              {equityPlan && (() => { const rec = equityPlan.recommendation || {}; return (
                 <>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '14px' }}>
-                    <div>Gross<br /><strong>{money(equityPlan.recommendation?.gross_proceeds)}</strong></div>
-                    <div>Est. tax<br /><strong>{money(equityPlan.recommendation?.estimated_tax)}</strong></div>
-                    <div>Net cash<br /><strong>{money(equityPlan.recommendation?.net_cash)}</strong></div>
-                    <div>Realized gain<br /><strong>{money(equityPlan.recommendation?.realized_gain)}</strong></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '6px' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Cash from sale<br /><strong style={{ fontSize: '15px', color: 'var(--text-primary)' }}>{money(rec.gross_proceeds)}</strong></div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Tax owed<br /><strong style={{ fontSize: '15px', color: 'var(--text-primary)' }}>{money(rec.estimated_tax)}</strong></div>
+                    {(rec.estimated_tax_savings || 0) > 0 && <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Tax savings<br /><strong style={{ fontSize: '15px', color: 'var(--color-buy)' }}>{money(rec.estimated_tax_savings)}</strong></div>}
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Net cash kept<br /><strong style={{ fontSize: '15px', color: 'var(--color-gold)' }}>{money(rec.net_cash)}</strong></div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Realized gain<br /><strong style={{ fontSize: '15px', color: (rec.realized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(rec.realized_gain)}</strong></div>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.5 }}>
+                    Net cash = cash from sale − tax owed. Tax savings from losses offset <em>other</em> gains, so they’re shown separately (not added to cash). Estimates round tax up to stay conservative.
                   </div>
                   <p style={{ color: 'var(--text-secondary)' }}>{equityPlan.narrative}</p>
                   <table className="trade-table">
@@ -3280,7 +3316,7 @@ export default function Home() {
                   ))}
                   <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{equityPlan.disclaimer}</p>
                 </>
-              )}
+              ); })()}
             </div>
           </section>
         )}
