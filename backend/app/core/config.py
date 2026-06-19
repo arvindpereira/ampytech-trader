@@ -250,3 +250,10 @@ REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "ampytech-trader:v1.0.0 (by /
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+
+# Alpaca market-data host (separate from the trading host). Used for the free, Benzinga-sourced
+# news endpoint (/v1beta1/news), which is included with any Alpaca account at no extra cost.
+ALPACA_DATA_URL = os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets")
+# Merge Alpaca (Benzinga) headlines into the LLM news feed alongside Polygon/Massive. On by default
+# when Alpaca keys are present; deduped against Polygon by headline so a story isn't scored twice.
+NEWS_USE_ALPACA = os.getenv("NEWS_USE_ALPACA", "True").lower() in ("true", "1", "yes")
