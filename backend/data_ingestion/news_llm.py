@@ -33,7 +33,9 @@ from app.core.config import (
     TICKER_UNIVERSE, MASSIVE_API_KEY, MASSIVE_BASE_URL,
     OLLAMA_URL, LLM_MODEL, NEWS_LLM_START,
     NEWS_LLM_PROVIDER, NEWS_LLM_WORKERS, OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL,
+    ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_DATA_URL, NEWS_USE_ALPACA,
 )
+from app.core.text import normalize_headline
 
 from app.core.llm_cost import estimate_cost, record_usage
 
@@ -142,9 +144,22 @@ def score_batch(ticker, headlines, provider, model):
 
 
 # --------------------------------------------------------------------------------------------------
-# News fetch (Polygon/Massive)
+# News fetch — pluggable sources (Polygon/Massive + Alpaca/Benzinga), merged + deduped by headline
 # --------------------------------------------------------------------------------------------------
-def _fetch_news(ticker, start, end, headers, max_pages=80):
+def _alpaca_enabled():
+    return NEWS_USE_ALPACA and bool(ALPACA_API_KEY and ALPACA_SECRET_KEY)
+
+
+def _news_source_available():
+    return bool(MASSIVE_API_KEY) or _alpaca_enabled()
+
+
+def _norm_title(t):
+    """Normalize a headline for cross-source dedup (lowercase, collapse non-alphanumerics)."""
+    return normalize_headline(t)
+
+
+def _fetch_news_massive(ticker, start, end, headers, max_pages=80):
     """Pages Polygon news for a ticker in [start,end]. Returns [(article_id, published_utc, title)]."""
     enc = urllib.parse.quote(ticker)
     url = (f"{MASSIVE_BASE_URL}/v2/reference/news?ticker={enc}"
@@ -166,6 +181,60 @@ def _fetch_news(ticker, start, end, headers, max_pages=80):
         except Exception:
             break
     return out
+
+
+def _fetch_news_alpaca(ticker, start, end, max_pages=80):
+    """Pages Alpaca's (Benzinga) news for a ticker in [start,end]. Free with any Alpaca account.
+    Returns [(article_id, published_utc, title)] with article_ids prefixed 'alpaca:' so they never
+    collide with Polygon ids in the (ticker, article_id) primary key."""
+    enc = urllib.parse.quote(ticker)
+    base = (f"{ALPACA_DATA_URL}/v1beta1/news?symbols={enc}"
+            f"&start={start}T00:00:00Z&end={end}T23:59:59Z"
+            f"&sort=asc&limit=50")
+    headers = {"APCA-API-KEY-ID": ALPACA_API_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY}
+    out, token, pages = [], None, 0
+    while pages < max_pages:
+        url = base + (f"&page_token={urllib.parse.quote(token)}" if token else "")
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+            if r.status_code != 200:
+                break
+            j = r.json()
+            for a in (j.get("news") or []):
+                aid = a.get("id")
+                if aid is None:
+                    continue
+                pub = a.get("created_at", "") or a.get("updated_at", "") or ""
+                out.append((f"alpaca:{aid}", pub, a.get("headline", "") or ""))
+            token = j.get("next_page_token")
+            pages += 1
+            if not token:
+                break
+            time.sleep(0.15)
+        except Exception:
+            break
+    return out
+
+
+def _fetch_news(ticker, start, end, headers, max_pages=80):
+    """Combined per-ticker news from Polygon/Massive + Alpaca, deduped by normalized headline
+    (Polygon kept on collision). Returns [(article_id, published_utc, title)]."""
+    massive = _fetch_news_massive(ticker, start, end, headers, max_pages=max_pages) if MASSIVE_API_KEY else []
+    if not _alpaca_enabled():
+        return massive
+    alpaca = _fetch_news_alpaca(ticker, start, end, max_pages=max_pages)
+    if not alpaca:
+        return massive
+    seen = {_norm_title(t) for _, _, t in massive}
+    merged = list(massive)
+    for aid, pub, title in alpaca:
+        key = _norm_title(title)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append((aid, pub, title))
+    return merged
 
 
 # --------------------------------------------------------------------------------------------------
@@ -208,9 +277,23 @@ def _build_work(db, start, end, tickers):
         arts = _fetch_news(ticker, ticker_start, end, headers)
         if not arts:
             continue
-        existing = {r[0] for r in db.query(NewsLLMScore.article_id)
-                    .filter(NewsLLMScore.ticker == ticker).all()}
-        todo = [a for a in arts if a[0] not in existing]
+        # Skip anything already stored: by exact article_id, AND by (date, normalized headline) so we
+        # don't pay to re-score a story another source already gave us on a prior run (cross-source dedup).
+        stored = db.query(NewsLLMScore.article_id, NewsLLMScore.date, NewsLLMScore.title).filter(
+            NewsLLMScore.ticker == ticker).all()
+        existing_ids = {r[0] for r in stored}
+        existing_titles = {(r[1], normalize_headline(r[2])) for r in stored if r[2]}
+        seen_titles = set()
+        todo = []
+        for aid, pub, title in arts:
+            if aid in existing_ids:
+                continue
+            key = (((pub or "")[:10]), normalize_headline(title))
+            if key[1] and (key in existing_titles or key in seen_titles):
+                continue
+            if key[1]:
+                seen_titles.add(key)
+            todo.append((aid, pub, title))
         if todo:
             with_news += 1
             print(f"   • {ticker}: {len(arts)} fetched → {len(todo)} new to score")
@@ -224,7 +307,8 @@ def _build_work(db, start, end, tickers):
 
 def _rows_for(ticker, chunk, results, model):
     return [{"ticker": ticker, "article_id": aid, "date": (pub or "")[:10], "published_utc": pub,
-             "title": (title or "")[:300], "llm_score": s, "llm_relevance": rel, "model": model}
+             "title": (title or "")[:300], "llm_score": s, "llm_relevance": rel, "model": model,
+             "source": "alpaca" if str(aid).startswith("alpaca:") else "polygon"}
             for (aid, pub, title), (s, rel) in zip(chunk, results)]
 
 
@@ -246,8 +330,8 @@ def fetch_and_score(start=None, end=None, tickers=None, model=None, provider=Non
     """Fetch + score news per ticker, concurrently, upserting into news_llm_scores (skips already-scored).
 
     `progress_cb(fraction, note)` is called as batches complete (fraction 0..1) for UI progress bars."""
-    if not MASSIVE_API_KEY:
-        print("No MASSIVE_API_KEY; cannot fetch news.")
+    if not _news_source_available():
+        print("No news source configured; set MASSIVE_API_KEY and/or Alpaca keys (NEWS_USE_ALPACA=True).")
         return
     provider, model = _resolve(provider, model)
     if workers is None:
@@ -326,8 +410,8 @@ def _openai_headers():
 def submit_batch(start=None, end=None, tickers=None, model=None):
     """Build all work, upload a JSONL, and create an OpenAI Batch job. Returns the batch id.
     Persists the custom_id -> chunk-meta map to backend/data/news_batch_<id>.json for collection."""
-    if not MASSIVE_API_KEY:
-        print("No MASSIVE_API_KEY; cannot fetch news.")
+    if not _news_source_available():
+        print("No news source configured; set MASSIVE_API_KEY and/or Alpaca keys (NEWS_USE_ALPACA=True).")
         return None
     _, model = _resolve("openai", model)
     init_db()

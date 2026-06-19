@@ -29,6 +29,7 @@ from app.core.config import (
     TICKER_UNIVERSE, SWING_HORIZON_DAYS,
     SWING_ATR_STOP_MULT, SWING_TP_MULT, SWING_STOP_MIN, SWING_STOP_MAX, SWING_TOP_N,
 )
+from app.core.text import normalize_headline
 from ml_engine.features import build_all_features
 from ml_engine.models import find_optimal_threshold, simulate_portfolio_chronological
 
@@ -65,7 +66,12 @@ def tickers_for_tiers(tiers, include_unrated=False):
 
 def load_llm_news_daily(exclude_premium=False):
     """Per (ticker, date) relevance-weighted news aggregates from the LLM scores.
-    `exclude_premium` drops premium-newsletter rows (source like 'premium:%') for A/B comparisons."""
+    `exclude_premium` drops premium-newsletter rows (source like 'premium:%') for A/B comparisons.
+
+    Deduped by (ticker, date, normalized headline) BEFORE aggregating, so the same story arriving from
+    multiple sources (e.g. Polygon + Alpaca/Benzinga, possibly on different ingest runs and thus under
+    different article_ids) counts once — it never doubles the intensity/score. Highest-relevance copy of
+    a duplicated headline is kept. Rows with an empty headline are left as-is (treated as not dedupable)."""
     db = SessionLocal()
     q = db.query(NewsLLMScore)
     if exclude_premium:
@@ -74,9 +80,18 @@ def load_llm_news_daily(exclude_premium=False):
     db.close()
     if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame([{"ticker": r.ticker, "date": r.date,
+    df = pd.DataFrame([{"ticker": r.ticker, "date": r.date, "title": r.title,
                         "s": r.llm_score, "rel": r.llm_relevance} for r in rows])
     df = df[(df["date"].astype(str).str.len() == 10)]
+
+    # By-day, cross-source headline dedup: collapse identical normalized headlines within the same
+    # (ticker, date) to a single row (the most relevant copy), leaving empty-headline rows untouched.
+    df["_ntitle"] = df["title"].map(normalize_headline)
+    dedupable = df["_ntitle"] != ""
+    deduped = (df[dedupable].sort_values("rel", ascending=False)
+               .drop_duplicates(["ticker", "date", "_ntitle"], keep="first"))
+    df = pd.concat([deduped, df[~dedupable]], ignore_index=True)
+
     df["wscore"] = df["s"] * df["rel"]
     g = df.groupby(["ticker", "date"]).agg(wsum=("wscore", "sum"),
                                            relsum=("rel", "sum"),

@@ -1,6 +1,7 @@
 .PHONY: help default install fetch fetch-forecasts backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
+        files-backup files-backup-list files-verify files-restore files-restore-commit backup restore restore-commit \
         simulate backtest-virtual schedule serve serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
@@ -52,6 +53,9 @@ help:
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
 	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
 	@echo "  make db-restore-commit - Restore the newest DB backup matching the current git commit"
+	@echo "  make backup            - Back up both the database and files (models/configs) to Google Drive"
+	@echo "  make restore           - Restore the newest database and files backup (or RESTORE=<name>)"
+	@echo "  make restore-commit    - Restore the newest database and files backup matching the current git commit"
 	@echo ""
 	@echo "Models:"
 	@echo "  make train             - Train XGBoost (hourly) + HMM (daily) + PyTorch  [EPOCHS=$(EPOCHS)]"
@@ -232,6 +236,31 @@ db-restore:
 
 db-restore-commit:
 	cd backend && $(VENV_PY) scripts/db_backup.py --restore-commit
+
+files-backup:
+	@echo "========================================================================"
+	@echo "☁️  Backing up trading files (models/configs) to Google Drive (keeps newest $(BACKUP_KEEP))..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) scripts/db_backup.py --files --keep $(BACKUP_KEEP)
+
+files-backup-list:
+	cd backend && $(VENV_PY) scripts/db_backup.py --files --list
+
+files-verify:
+	cd backend && $(VENV_PY) scripts/db_backup.py --files --verify $(RESTORE)
+
+files-restore:
+	cd backend && $(VENV_PY) scripts/db_backup.py --files --restore $(RESTORE)
+
+files-restore-commit:
+	cd backend && $(VENV_PY) scripts/db_backup.py --files --restore-commit
+
+backup: db-backup files-backup
+
+restore: db-restore files-restore
+
+restore-commit: db-restore-commit files-restore-commit
+
 
 swing-eval:
 	@echo "========================================================================"
