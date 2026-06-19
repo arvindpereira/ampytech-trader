@@ -47,7 +47,7 @@ def _git_info():
             return ""
     sha = g("rev-parse", "--short", "HEAD") or "nogit"
     branch = g("rev-parse", "--abbrev-ref", "HEAD") or "?"
-    dirty = bool(g("status", "--porcelain"))
+    dirty = bool(g("status", "--porcelain", "--untracked-files=no"))
     return sha, branch, dirty
 
 
