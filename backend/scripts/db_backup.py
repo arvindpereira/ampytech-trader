@@ -20,6 +20,8 @@ import sys
 import time
 import argparse
 import subprocess
+import zipfile
+import shutil
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -109,27 +111,114 @@ def _commit_of(f):
     return (f.get("appProperties") or {}).get("commit", "?")
 
 
-def backup(keep=None):
-    if not os.path.exists(DB_PATH):
-        sys.exit(f"DB not found at {DB_PATH}")
+def _create_files_zip(zip_path):
+    """Zip up the models and metadata paths relative to the backend directory."""
+    backend_dir = os.path.dirname(DATA_STORAGE_DIR)
+    targets = [
+        "ml_engine/saved_models",
+        "data/llm_pricing.json",
+        "data/premium_ingest_state.json",
+        "data/premium_news/archive",
+    ]
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for t in targets:
+            full = os.path.join(backend_dir, t)
+            if not os.path.exists(full):
+                print(f"  (Target path {t} does not exist; skipping)")
+                continue
+            if os.path.isdir(full):
+                for root, dirs, files in os.walk(full):
+                    for file in files:
+                        filepath = os.path.join(root, file)
+                        arcname = os.path.relpath(filepath, backend_dir)
+                        zipf.write(filepath, arcname)
+            else:
+                arcname = os.path.relpath(full, backend_dir)
+                zipf.write(full, arcname)
+    print(f"✓ Created files zip at {zip_path}")
+
+
+def _extract_files_zip(zip_path):
+    """Unzip the models and metadata paths, moving existing targets to .pre-restore."""
+    backend_dir = os.path.dirname(DATA_STORAGE_DIR)
+    targets = [
+        "ml_engine/saved_models",
+        "data/llm_pricing.json",
+        "data/premium_ingest_state.json",
+        "data/premium_news/archive",
+    ]
+    for t in targets:
+        full = os.path.join(backend_dir, t)
+        if os.path.exists(full):
+            pre_restore = full + ".pre-restore"
+            if os.path.exists(pre_restore):
+                if os.path.isdir(pre_restore):
+                    shutil.rmtree(pre_restore)
+                else:
+                    os.remove(pre_restore)
+            shutil.move(full, pre_restore)
+            print(f"Moved existing {t} aside → {t}.pre-restore")
+    with zipfile.ZipFile(zip_path, "r") as zipf:
+        zipf.extractall(backend_dir)
+    print(f"✓ Unpacked files to {backend_dir}")
+
+
+def _verify_files_zip(zip_path):
+    """Validate a backup zip and list its contents/sizes."""
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zipf:
+            bad_file = zipf.testzip()
+            if bad_file:
+                print(f"⚠ Zip CRC check failed on file: {bad_file}")
+                return False
+            print(f"\n{'Archive File Path':<60} {'Size':>12}")
+            print("-" * 74)
+            for info in zipf.infolist():
+                if info.filename.endswith("/"):
+                    continue
+                print(f"  {info.filename:<58} {info.file_size:>12,d} B")
+            return True
+    except Exception as e:
+        print(f"⚠ Failed to read/verify zip archive: {e}")
+        return False
+
+
+def backup(keep=None, files_mode=False):
     from googleapiclient.http import MediaFileUpload
     svc = _service()
     sha, branch, dirty = _git_info()
     stamp = f"{datetime.now():%Y%m%d_%H%M%S}__{sha}{'-dirty' if dirty else ''}"
-    name = f"{PREFIX}{stamp}.db"
-    media = MediaFileUpload(DB_PATH, mimetype="application/x-sqlite3", resumable=True)
+
+    if files_mode:
+        name = f"{PREFIX}{stamp}.zip"
+        temp_zip = os.path.join(DATA_STORAGE_DIR, f"temp_{stamp}.zip")
+        _create_files_zip(temp_zip)
+        if not os.path.exists(temp_zip):
+            sys.exit("Failed to create files zip archive.")
+        media_path = temp_zip
+        mimetype = "application/zip"
+    else:
+        if not os.path.exists(DB_PATH):
+            sys.exit(f"DB not found at {DB_PATH}")
+        name = f"{PREFIX}{stamp}.db"
+        media_path = DB_PATH
+        mimetype = "application/x-sqlite3"
+
+    media = MediaFileUpload(media_path, mimetype=mimetype, resumable=True)
     meta = {"name": name, "parents": [GOOGLE_DRIVE_FOLDER_ID],
             "appProperties": {"commit": sha, "branch": branch, "dirty": str(dirty).lower(),
                               "taken_at": datetime.now().isoformat(timespec="seconds")}}
-    print(f"Uploading {name} ({os.path.getsize(DB_PATH)/1e6:.0f} MB) @ commit {sha}"
+    print(f"Uploading {name} ({os.path.getsize(media_path)/1e6:.2f} MB) @ commit {sha}"
           f"{' (dirty tree!)' if dirty else ''} → folder {GOOGLE_DRIVE_FOLDER_ID}…")
     if dirty:
         print("  ⚠ working tree has uncommitted changes — this backup's 'commit' stamp is approximate.")
     f = _exec(svc.files().create(body=meta, media_body=media, fields="id,name"))
     print(f"✓ Backed up: {f['name']} (id {f['id']})")
+
+    if files_mode and os.path.exists(temp_zip):
+        os.remove(temp_zip)
+
     if keep:
-        # The backup is already safely uploaded — never let prune-of-old-backups turn a successful
-        # backup into a failure (e.g. a transient Drive 400 on the list/delete calls).
         try:
             for old in _list(svc)[keep:]:
                 _exec(svc.files().delete(fileId=old["id"]))
@@ -144,10 +233,10 @@ def list_backups():
         sz = int(f.get("size", 0)) / 1e6
         c = _commit_of(f)
         here = "  ← current commit" if c == cur else ""
-        print(f"  {f['name']:48} {sz:6.0f} MB  {f['createdTime'][:19]}  commit={c}{here}")
+        print(f"  {f['name']:48} {sz:6.2f} MB  {f['createdTime'][:19]}  commit={c}{here}")
 
 
-def restore(name=None, match_commit=False):
+def restore(name=None, match_commit=False, files_mode=False):
     import io
     from googleapiclient.http import MediaIoBaseDownload
     svc = _service()
@@ -174,24 +263,40 @@ def restore(name=None, match_commit=False):
     if tcommit != cur and not match_commit:
         print(f"⚠ This backup was taken at commit {tcommit}, but you're on {cur}. "
               f"Schema/data may not match the code — consider `git checkout {tcommit}` or --restore-commit.")
-    if os.path.exists(DB_PATH):
-        bak = DB_PATH + ".pre-restore"
-        os.replace(DB_PATH, bak)
-        print(f"Moved existing DB aside → {bak}")
-    print(f"Downloading {target['name']} (commit {tcommit}) → {DB_PATH}…")
-    req = svc.files().get_media(fileId=target["id"])
-    with open(DB_PATH, "wb") as fh:
-        dl = MediaIoBaseDownload(fh, req)
-        done = False
-        while not done:
-            _, done = dl.next_chunk()
-    print(f"✓ Restored {target['name']} to {DB_PATH}")
+
+    if files_mode:
+        temp_zip = os.path.join(DATA_STORAGE_DIR, "temp_restore_files.zip")
+        print(f"Downloading {target['name']} (commit {tcommit}) → {temp_zip}…")
+        req = svc.files().get_media(fileId=target["id"])
+        with open(temp_zip, "wb") as fh:
+            dl = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+        try:
+            _extract_files_zip(temp_zip)
+        finally:
+            if os.path.exists(temp_zip):
+                os.remove(temp_zip)
+        print(f"✓ Restored files from {target['name']}")
+    else:
+        if os.path.exists(DB_PATH):
+            bak = DB_PATH + ".pre-restore"
+            os.replace(DB_PATH, bak)
+            print(f"Moved existing DB aside → {bak}")
+        print(f"Downloading {target['name']} (commit {tcommit}) → {DB_PATH}…")
+        req = svc.files().get_media(fileId=target["id"])
+        with open(DB_PATH, "wb") as fh:
+            dl = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+        print(f"✓ Restored {target['name']} to {DB_PATH}")
 
 
-def verify(name=None, match_commit=False):
-    """Download a backup to a temp file and validate it (SQLite integrity + row counts) WITHOUT touching
-    the live DB. Proves the backup is restorable; exercises the same download path as --restore."""
-    import sqlite3
+def verify(name=None, match_commit=False, files_mode=False):
+    """Download a backup to a temp file and validate it WITHOUT touching
+    the live DB/files. Proves the backup is restorable; exercises the same download path as --restore."""
     from googleapiclient.http import MediaIoBaseDownload
     svc = _service()
     files = _list(svc)
@@ -209,35 +314,52 @@ def verify(name=None, match_commit=False):
     else:
         target = files[0]
 
-    tmp = DB_PATH + ".verify"
-    print(f"Downloading {target['name']} (commit {_commit_of(target)}) → {tmp} for verification…")
-    req = svc.files().get_media(fileId=target["id"])
-    with open(tmp, "wb") as fh:
-        dl = MediaIoBaseDownload(fh, req)
-        done = False
-        while not done:
-            _, done = dl.next_chunk()
+    if files_mode:
+        tmp = os.path.join(DATA_STORAGE_DIR, "temp_verify_files.zip")
+        print(f"Downloading {target['name']} (commit {_commit_of(target)}) → {tmp} for verification…")
+        req = svc.files().get_media(fileId=target["id"])
+        with open(tmp, "wb") as fh:
+            dl = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+        try:
+            ok = _verify_files_zip(tmp)
+            print("\n✓ Backup is valid and restorable." if ok else "\n⚠ Verification found issues — inspect before relying on it.")
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    else:
+        import sqlite3
+        tmp = DB_PATH + ".verify"
+        print(f"Downloading {target['name']} (commit {_commit_of(target)}) → {tmp} for verification…")
+        req = svc.files().get_media(fileId=target["id"])
+        with open(tmp, "wb") as fh:
+            dl = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
 
-    tables = ["news_llm_scores", "daily_prices", "recent_prices", "universe_tickers", "virtual_orders"]
-    try:
-        c = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
-        integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
-        b_counts = {t: _safe_count(c, t) for t in tables}
-        c.close()
-        live = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
-        l_counts = {t: _safe_count(live, t) for t in tables}
-        live.close()
-        size = os.path.getsize(tmp) / 1e6
-        print(f"\nBackup file: {size:.0f} MB | PRAGMA integrity_check: {integrity}")
-        print(f"{'table':<20}{'backup':>12}{'live':>12}")
-        for t in tables:
-            flag = "" if b_counts[t] == l_counts[t] else "  ⚠ differs"
-            print(f"{t:<20}{str(b_counts[t]):>12}{str(l_counts[t]):>12}{flag}")
-        ok = integrity == "ok" and all(b_counts[t] is not None for t in tables)
-        print("\n✓ Backup is valid and restorable." if ok else "\n⚠ Verification found issues — inspect before relying on it.")
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        tables = ["news_llm_scores", "daily_prices", "recent_prices", "universe_tickers", "virtual_orders"]
+        try:
+            c = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
+            integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
+            b_counts = {t: _safe_count(c, t) for t in tables}
+            c.close()
+            live = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+            l_counts = {t: _safe_count(live, t) for t in tables}
+            live.close()
+            size = os.path.getsize(tmp) / 1e6
+            print(f"\nBackup file: {size:.0f} MB | PRAGMA integrity_check: {integrity}")
+            print(f"{'table':<20}{'backup':>12}{'live':>12}")
+            for t in tables:
+                flag = "" if b_counts[t] == l_counts[t] else "  ⚠ differs"
+                print(f"{t:<20}{str(b_counts[t]):>12}{str(l_counts[t]):>12}{flag}")
+            ok = integrity == "ok" and all(b_counts[t] is not None for t in tables)
+            print("\n✓ Backup is valid and restorable." if ok else "\n⚠ Verification found issues — inspect before relying on it.")
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
 
 
 def _safe_count(conn, table):
@@ -248,23 +370,28 @@ def _safe_count(conn, table):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Back up / restore the trading DB to Google Drive (commit-stamped)")
+    p = argparse.ArgumentParser(description="Back up / restore the trading DB and files to Google Drive (commit-stamped)")
+    p.add_argument("--files", action="store_true", help="operate on files (models/configs zip) instead of database")
     p.add_argument("--keep", type=int, default=None, help="after upload, keep only the N newest backups")
     p.add_argument("--list", action="store_true", help="list backups (with commit) in the Drive folder")
     p.add_argument("--restore", nargs="?", const="__latest__", help="restore a backup (default: newest)")
     p.add_argument("--restore-commit", action="store_true", help="restore the newest backup matching the current git commit")
-    p.add_argument("--verify", nargs="?", const="__latest__", help="download+validate a backup without touching the live DB (default: newest)")
+    p.add_argument("--verify", nargs="?", const="__latest__", help="download+validate a backup without touching the live DB/files (default: newest)")
     p.add_argument("--verify-commit", action="store_true", help="verify the newest backup matching the current git commit")
     a = p.parse_args()
+
+    if a.files:
+        PREFIX = "trading_files_"
+
     if a.list:
         list_backups()
     elif a.verify_commit:
-        verify(match_commit=True)
+        verify(match_commit=True, files_mode=a.files)
     elif a.verify is not None:
-        verify(None if a.verify == "__latest__" else a.verify)
+        verify(None if a.verify == "__latest__" else a.verify, files_mode=a.files)
     elif a.restore_commit:
-        restore(match_commit=True)
+        restore(match_commit=True, files_mode=a.files)
     elif a.restore is not None:
-        restore(None if a.restore == "__latest__" else a.restore)
+        restore(None if a.restore == "__latest__" else a.restore, files_mode=a.files)
     else:
-        backup(keep=a.keep)
+        backup(keep=a.keep, files_mode=a.files)
