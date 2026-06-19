@@ -19,6 +19,7 @@ import {
   Lock,
   Unlock,
   Play,
+  Pause,
   RotateCcw,
   Cpu,
   Clock,
@@ -254,6 +255,9 @@ export default function Home() {
   const [equityPlan, setEquityPlan] = useState<any>(null);
   const [equityRunning, setEquityRunning] = useState<boolean>(false);
   const [equityProgress, setEquityProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
+  const [tradingBlocks, setTradingBlocks] = useState<any[]>([]);
+  const [autoTradingPaused, setAutoTradingPaused] = useState<boolean>(false);
+  const [newBlockTicker, setNewBlockTicker] = useState<string>('');
 
   const money = (v: any) => typeof v === 'number' && isFinite(v) ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
   const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
@@ -273,6 +277,41 @@ export default function Home() {
     } catch (err) {
       console.error(err);
     }
+    fetchTradingGuard();
+  };
+
+  const fetchTradingGuard = async () => {
+    try {
+      const res = await fetch('http://localhost:8008/api/equity/trading-blocks');
+      if (res.ok) {
+        const data = await res.json();
+        setTradingBlocks(data.blocks || []);
+        setAutoTradingPaused(!!data.auto_trading_paused);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const setAutoTrading = async (paused: boolean) => {
+    await fetch('http://localhost:8008/api/execution/auto-trading', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused })
+    });
+    fetchTradingGuard();
+  };
+
+  const createTradingBlock = async (body: any) => {
+    await fetch('http://localhost:8008/api/equity/trading-blocks', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    fetchTradingGuard();
+  };
+
+  const releaseTradingBlock = async (id: number) => {
+    await fetch(`http://localhost:8008/api/equity/trading-blocks/${id}`, { method: 'DELETE' });
+    fetchTradingGuard();
   };
 
   useEffect(() => {
@@ -3162,6 +3201,48 @@ export default function Home() {
 
         {activeTab === 'advisor' && (
           <section style={{ gridColumn: '1 / -1', display: 'grid', gap: '18px' }}>
+            <div className="glass-card" style={{ padding: '18px', border: autoTradingPaused ? '1px solid rgba(239,68,68,0.55)' : '1px solid var(--border-glass)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                {autoTradingPaused ? <Lock size={18} color="#EF4444" /> : <Unlock size={18} color="#10B981" />}
+                <h3 style={{ margin: 0, fontSize: '16px' }}>Trading guard</h3>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Stops the auto-trader from re-buying a name you&rsquo;re harvesting losses on (wash-sale protection) or any name you manage elsewhere.</span>
+              </div>
+              {autoTradingPaused && (
+                <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: '8px', padding: '10px 12px', marginBottom: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <AlertTriangle size={16} color="#EF4444" />
+                  <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}><strong>Auto-trading is PAUSED.</strong> No buys or sells will run until you resume.</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px' }}>
+                <button onClick={() => setAutoTrading(!autoTradingPaused)} className="toggle-btn" style={{ borderColor: autoTradingPaused ? '#10B981' : '#EF4444', color: autoTradingPaused ? '#10B981' : '#EF4444' }}>
+                  {autoTradingPaused ? <><Play size={14} /> Resume auto-trading</> : <><Pause size={14} /> Pause all auto-trading</>}
+                </button>
+                <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Global kill-switch — freezes the whole bot. Use while settling a real-account loss sale.</span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <input value={newBlockTicker} onChange={(e) => setNewBlockTicker(e.target.value.toUpperCase())} placeholder="Ticker (e.g. PINS)" style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', width: '160px' }} />
+                <button onClick={() => { if (newBlockTicker) { createTradingBlock({ ticker: newBlockTicker, block_type: 'wash_sale', sale_date: new Date().toISOString().slice(0, 10), reason: `Loss sale initiated — block re-buys 31 days.` }); setNewBlockTicker(''); } }} disabled={!newBlockTicker} className="toggle-btn">Block 31 days (loss sale)</button>
+                <button onClick={() => { if (newBlockTicker) { createTradingBlock({ ticker: newBlockTicker, block_type: 'permanent', account_label: 'external', reason: `Held/managed externally — never auto-trade.` }); setNewBlockTicker(''); } }} disabled={!newBlockTicker} className="toggle-btn">Never trade (held elsewhere)</button>
+              </div>
+              {tradingBlocks.length === 0 ? (
+                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>No active buy-blocks. Record a tax-loss sale below (or here) to protect the harvested loss.</div>
+              ) : (
+                <table className="trade-table">
+                  <thead><tr><th>Ticker</th><th>Type</th><th>Until</th><th>Why</th><th></th></tr></thead>
+                  <tbody>
+                    {tradingBlocks.map((b) => (
+                      <tr key={b.id}>
+                        <td><strong>{b.ticker}</strong></td>
+                        <td>{b.block_type === 'wash_sale' ? '🧼 Wash-sale' : '🚫 Never-trade'}</td>
+                        <td>{b.blocked_until ? `${b.blocked_until}${b.days_remaining != null ? ` (${b.days_remaining}d)` : ''}` : 'permanent'}</td>
+                        <td style={{ fontSize: '11.5px', color: 'var(--text-secondary)', maxWidth: '320px' }}>{b.reason}</td>
+                        <td><button onClick={() => releaseTradingBlock(b.id)} style={{ background: 'transparent', border: 0, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '11.5px' }}>Release</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
             <div className="glass-card" style={{ padding: '18px', border: '1px solid rgba(245, 158, 11, 0.28)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                 <DollarSign size={20} color="#F59E0B" />
@@ -3292,8 +3373,35 @@ export default function Home() {
                 {equityObjective === 'harvest_loss' && 'Sells losing lots to bank tax losses (which offset other gains), up to your target.'}
                 {equityObjective === 'exit_ticker' && 'Plans a full exit of one ticker, ordered for tax efficiency, and warns about wash-sale timing.'}
               </div>
-              {equityPlan && (() => { const rec = equityPlan.recommendation || {}; return (
+              {equityPlan && (() => { const rec = equityPlan.recommendation || {}; const guard = equityPlan.wash_sale_guard; const conc = equityPlan.concentration || []; return (
                 <>
+                  {conc.length > 0 && (
+                    <div style={{ marginBottom: '14px' }}>
+                      <div style={{ fontSize: '12.5px', fontWeight: 600, marginBottom: '6px' }}>Concentration &amp; harvestable losses</div>
+                      <table className="trade-table">
+                        <thead><tr><th>Ticker</th><th>Weight</th><th>Value</th><th>Unreal.</th><th>LT / ST sh</th><th>Harvestable loss</th><th>Tier</th></tr></thead>
+                        <tbody>
+                          {conc.map((r: any) => (
+                            <tr key={r.ticker}>
+                              <td><strong>{r.ticker}</strong></td>
+                              <td style={{ color: r.weight > 0.25 ? '#F59E0B' : 'inherit' }}>{pct(r.weight)}{r.weight > 0.25 ? ' ⚠' : ''}</td>
+                              <td>{money(r.market_value)}</td>
+                              <td style={{ color: (r.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{pct(r.unrealized_pct)}</td>
+                              <td style={{ fontSize: '12px' }}>{Math.round(r.lt_shares).toLocaleString()} / {Math.round(r.st_shares).toLocaleString()}</td>
+                              <td style={{ color: r.harvestable_loss < 0 ? 'var(--color-sell)' : 'var(--text-secondary)' }}>{r.harvestable_loss < 0 ? money(r.harvestable_loss) : '—'}</td>
+                              <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{r.tier_label || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {equityPlan.narrative && (
+                    <div style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.25)', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}><Brain size={14} color="#38BDF8" /><strong style={{ fontSize: '12.5px' }}>Advisor read</strong></div>
+                      <p style={{ margin: 0, color: 'var(--text-primary)', fontSize: '13px', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{equityPlan.narrative}</p>
+                    </div>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '6px' }}>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Cash from sale<br /><strong style={{ fontSize: '15px', color: 'var(--text-primary)' }}>{money(rec.gross_proceeds)}</strong></div>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Tax owed<br /><strong style={{ fontSize: '15px', color: 'var(--text-primary)' }}>{money(rec.estimated_tax)}</strong></div>
@@ -3304,13 +3412,32 @@ export default function Home() {
                   <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: 1.5 }}>
                     Net cash = cash from sale − tax owed. Tax savings from losses offset <em>other</em> gains, so they’re shown separately (not added to cash). Estimates round tax up to stay conservative.
                   </div>
-                  <p style={{ color: 'var(--text-secondary)' }}>{equityPlan.narrative}</p>
                   <table className="trade-table">
                     <thead><tr><th>Lot</th><th>Sell</th><th>Proceeds</th><th>Gain</th><th>Tax</th><th>Note</th></tr></thead>
                     <tbody>{(equityPlan.recommendation?.picks || []).map((p: any) => (
                       <tr key={`${p.id}-${p.sell_shares}`}><td>{p.ticker} #{p.id}</td><td>{p.sell_shares.toFixed(2)}</td><td>{money(p.sale_proceeds)}</td><td>{money(p.gain)}</td><td>{money(p.estimated_tax)}</td><td>{p.wait_flag || ''}</td></tr>
                     ))}</tbody>
                   </table>
+                  {guard && guard.tickers && guard.tickers.length > 0 && (
+                    <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', padding: '12px 14px', marginTop: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}><Lock size={14} color="#10B981" /><strong style={{ fontSize: '12.5px' }}>Protect this harvest</strong></div>
+                      <p style={{ margin: '0 0 10px', fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        If you place these loss sales, block the bot from re-buying for 31 days so the IRS wash-sale rule can&rsquo;t disallow the loss. One click per name records the sale date and the block. (Watch your RSU vest calendar — a vest inside the window can also trip it.)
+                      </p>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {guard.tickers.map((t: any) => {
+                          const already = tradingBlocks.some((b) => b.ticker === t.ticker);
+                          return (
+                            <button key={t.ticker} disabled={already}
+                              onClick={() => createTradingBlock({ ticker: t.ticker, block_type: 'wash_sale', sale_date: guard.sale_date, window_days: guard.window_days, realized_loss: t.realized_loss, shares: t.shares, reason: `Loss sale ${guard.sale_date} (~${money(t.realized_loss)}) — no re-buys until ${guard.blocked_until}.` })}
+                              className="toggle-btn" style={{ opacity: already ? 0.5 : 1 }}>
+                              {already ? `✓ ${t.ticker} blocked` : `Block ${t.ticker} until ${guard.blocked_until}`}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {(equityPlan.wash_sale_warnings || []).map((w: any, i: number) => (
                     <div key={i} style={{ color: '#F59E0B', display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}><AlertTriangle size={14} /> {w.message}</div>
                   ))}
