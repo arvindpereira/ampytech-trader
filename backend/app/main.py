@@ -1876,16 +1876,27 @@ def _lot_dict(row):
 
 
 def _equity_narrative(result):
-    picks = result.get("recommendation", {}).get("picks", [])
+    rec = result.get("recommendation", {})
+    picks = rec.get("picks", [])
+    obj = {"raise_cash": "raise cash", "harvest_loss": "harvest losses",
+           "exit_ticker": "exit the position"}.get(rec.get("objective"), "plan")
     if not picks:
-        return "No sale lots were selected for the requested objective. Review target amount, prices, and lot data."
-    gross = result["recommendation"].get("gross_proceeds", 0.0)
-    tax = result["recommendation"].get("estimated_tax", 0.0)
-    net = result["recommendation"].get("net_cash", 0.0)
-    first = picks[0]
-    return (f"The heuristic selects {len(picks)} lot(s), starting with {first['ticker']} lot {first.get('id')}, "
-            f"for estimated gross proceeds of ${gross:,.0f}, estimated tax of ${tax:,.0f}, "
-            f"and estimated net cash of ${net:,.0f}. These figures are approximate and advisory only.")
+        return ("No lots were selected for this plan — likely nothing matched your target, or you have no "
+                "qualifying lots. Try a different objective or target amount.")
+    gross = rec.get("gross_proceeds", 0.0)
+    tax = rec.get("estimated_tax", 0.0)
+    savings = rec.get("estimated_tax_savings", 0.0)
+    net = rec.get("net_cash", 0.0)
+    n = len(picks)
+    msg = (f"To {obj}, the plan sells {n} lot{'s' if n != 1 else ''} for about ${gross:,.0f} in proceeds. ")
+    if tax > 0:
+        msg += f"You'd owe roughly ${tax:,.0f} in tax, leaving about ${net:,.0f} in cash. "
+    else:
+        msg += f"There's no tax owed, so you keep about ${net:,.0f} in cash. "
+    if savings > 0:
+        msg += f"It also harvests about ${savings:,.0f} of tax savings (losses that offset other gains). "
+    msg += "Estimates are approximate and run conservative — this is planning help, not tax advice."
+    return msg
 
 
 def _run_equity_analyze_job(jid, req_data):
@@ -1993,6 +2004,16 @@ def get_tax_profile(db=Depends(get_db)):
 
 @app.post("/api/equity/tax-profile")
 def upsert_tax_profile(req: TaxProfileRequest, db=Depends(get_db)):
+    if req.filing_status not in ("single", "married_joint", "married_separate", "head_of_household"):
+        raise HTTPException(status_code=400, detail="filing_status must be single, married_joint, married_separate, or head_of_household")
+    if not (2000 <= int(req.tax_year) <= 2100):
+        raise HTTPException(status_code=400, detail="tax_year out of range")
+    for fld, val in (("ordinary_income", req.ordinary_income), ("magi", req.magi), ("carryover_loss", req.carryover_loss)):
+        if val < 0:
+            raise HTTPException(status_code=400, detail=f"{fld} cannot be negative")
+    for fld, val in (("state_ltcg_rate", req.state_ltcg_rate), ("state_stcg_rate", req.state_stcg_rate)):
+        if not (0.0 <= val <= 1.0):
+            raise HTTPException(status_code=400, detail=f"{fld} must be a decimal between 0 and 1 (e.g. 0.093 for 9.3%)")
     row = db.query(TaxProfile).filter(TaxProfile.id == 1).first()
     if not row:
         row = TaxProfile(id=1)

@@ -196,17 +196,24 @@ def recommend_sale(
         gains += tax["gain"]
         selected.append({**lot, "sell_shares": shares, "sale_proceeds": sale_proceeds, **tax, "wait_flag": wait_flag})
 
-    net_cash = proceeds - est_tax
+    # Frame the cash honestly: you receive the proceeds and pay tax only when there's a net gain. A net
+    # LOSS doesn't add cash to this sale — it's a tax *saving* that offsets other gains, reported
+    # separately so net_cash is never inflated above gross proceeds.
+    tax_owed = max(0.0, est_tax)
+    tax_savings = max(0.0, -est_tax)
+    net_cash = proceeds - tax_owed
     return {
         "objective": objective,
         "target_amount": target_amount,
         "picks": selected,
         "gross_proceeds": proceeds,
-        "estimated_tax": est_tax,
-        "net_cash": net_cash,
+        "estimated_tax": tax_owed,             # tax you'd owe (>= 0)
+        "estimated_tax_savings": tax_savings,  # tax reduced by harvested losses (>= 0)
+        "estimated_tax_net": est_tax,          # signed net (owed minus savings), for transparency
+        "net_cash": net_cash,                  # cash in hand = gross proceeds - tax owed
         "realized_gain": gains,
         "method": "Deterministic heuristic: losses first, then HIFO among gains with a preference for long-term lots.",
-        "tax_note": "Approximate planning estimate only; verify current tax-year brackets and personal tax treatment.",
+        "tax_note": "Approximate and deliberately conservative (rounds tax up); verify current-year brackets and your personal tax treatment.",
     }
 
 
