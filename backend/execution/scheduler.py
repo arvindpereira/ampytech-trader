@@ -165,8 +165,32 @@ def daily_trade_inference_job():
     # Daily inference is run dynamically in executor.py, but we log the status here
     print("Daily Trade Inference completed (latest model state is loaded).")
 
+def _market_is_open():
+    """Returns (is_open, detail) from Alpaca's clock. On any error returns (None, reason) so callers can
+    decide whether to proceed — we never want a transient clock failure to silently halt the daily run."""
+    try:
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api()
+        if not api:
+            return None, "no Alpaca API connection"
+        clock = api.get_clock()
+        if clock.is_open:
+            return True, "market open"
+        return False, f"market closed — next open {clock.next_open}"
+    except Exception as e:
+        return None, f"clock check failed: {e}"
+
+
 def daily_trade_execution_job():
     print(f"\n[{datetime.now()}] Triggering Daily Trade Execution Job...")
+    # Skip cleanly on weekends/holidays. The 09:45 ET cron fires every calendar weekday regardless of
+    # market holidays (e.g. Juneteenth), so guard here the same way the intraday job does — otherwise we'd
+    # queue GTC orders against a closed market. If the clock check itself fails we proceed (fail-open) so a
+    # transient broker hiccup doesn't skip a real trading day.
+    is_open, detail = _market_is_open()
+    if is_open is False:
+        print(f"Skipping Daily Trade Execution — {detail}.")
+        return
     try:
         run_execution()
         print("Daily Trade Execution Job completed.")

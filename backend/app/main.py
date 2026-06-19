@@ -1839,6 +1839,13 @@ class EquityAnalyzeRequest(BaseModel):
     long_term_grace_days: int = 45
 
 
+class EquityLotSellRequest(BaseModel):
+    shares: float                         # how many to sell from this lot
+    sale_price: Optional[float] = None    # defaults to latest known price
+    sale_date: Optional[str] = None       # YYYY-MM-DD; defaults to today
+    add_wash_sale_block: bool = False     # if the sale is a loss, block re-buys 31 days
+
+
 class TradingBlockRequest(BaseModel):
     ticker: str
     block_type: str = "wash_sale"            # 'wash_sale' | 'permanent'
@@ -1947,8 +1954,54 @@ def _concentration_rollup(classified_lots, db):
         r["tier_label"] = TIER_LABEL.get(tier, tier)
         r["quality"] = getattr(c, "quality", None) if c else None
         out.append(r)
+    for r in out:
+        r["recommendation"] = _ticker_recommendation(r, total_mv)
     out.sort(key=lambda r: r["market_value"], reverse=True)
     return out
+
+
+def _lot_recommendation(lot):
+    """Tax-aware, deterministic per-lot suggestion. Advisory only — not tax advice.
+    `lot` is a classify_lots() dict (has unrealized_gain, is_long_term, days_to_long_term)."""
+    gain = lot.get("unrealized_gain", 0.0) or 0.0
+    if gain < 0:
+        return {"action": "harvest", "label": "Harvest loss",
+                "detail": f"Down {abs(round(gain)):,} — sell to bank a tax loss (highest-cost lots first)."}
+    d2lt = lot.get("days_to_long_term") or 0
+    if not lot.get("is_long_term") and 0 < d2lt <= 45:
+        return {"action": "wait", "label": f"Hold {d2lt}d → LT",
+                "detail": f"Gain — wait {d2lt} days for lower long-term tax before selling."}
+    if lot.get("is_long_term"):
+        return {"action": "sellable", "label": "LT gain — sell-eligible",
+                "detail": "Long-term gain; sells at the lower LT rate if you need cash or want to diversify."}
+    return {"action": "hold", "label": "Hold (ST gain)",
+            "detail": "Short-term gain; selling now is taxed at your ordinary rate."}
+
+
+def _ticker_recommendation(row, total_mv):
+    """Per-ticker steer combining tax (net unrealized), fundamental tier, and concentration."""
+    weight = row.get("weight") or (row["market_value"] / total_mv if total_mv else 0)
+    tier = row.get("tier")
+    concentrated = weight > 0.25
+    if row.get("harvestable_loss", 0) < 0 and (row.get("unrealized_gain", 0) or 0) < 0:
+        base = {"action": "trim", "label": "Harvest + rotate",
+                "detail": "Underwater — harvest the loss and rotate into higher-quality names."}
+    elif tier == "speculative":
+        base = {"action": "trim", "label": "Trim (speculative)",
+                "detail": "Low-quality/high-risk tier — trim into stronger names, mind wash-sale on any loss lots."}
+    elif tier == "value_trap":
+        base = {"action": "trim", "label": "Reduce (weak)",
+                "detail": "Weak-quality tier — reduce over time."}
+    elif tier in ("quality_growth", "core"):
+        base = {"action": "hold", "label": "Quality — hold",
+                "detail": "Solid fundamentals; hold, trim only to manage concentration."}
+    else:
+        base = {"action": "hold", "label": "Hold",
+                "detail": "No strong signal — hold and revisit."}
+    if concentrated:
+        base = {"action": "trim", "label": base["label"] + " · concentrated ⚠",
+                "detail": f"{base['detail']} This is {round(weight * 100)}% of your tracked equity — diversifying lowers single-name risk."}
+    return base
 
 
 def _wash_sale_guard_hint(rec, window_days=31):
@@ -2102,7 +2155,11 @@ def get_equity_lots(db=Depends(get_db)):
         forecasts[ticker] = _forecast_dict(f)
         if f and f.current_price is not None:
             prices[ticker] = f.current_price
-    return {"lots": classify_lots(lots, prices=prices), "forecasts": forecasts}
+    classified = classify_lots(lots, prices=prices)
+    for l in classified:
+        l["recommendation"] = _lot_recommendation(l)
+    return {"lots": classified, "forecasts": forecasts,
+            "aggregate": _concentration_rollup(classified, db)}
 
 
 @app.post("/api/equity/lots")
@@ -2140,6 +2197,60 @@ def delete_equity_lot(lot_id: int, db=Depends(get_db)):
     db.delete(row)
     db.commit()
     return {"status": "success"}
+
+
+@app.post("/api/equity/lots/{lot_id}/sell")
+def sell_equity_lot(lot_id: int, req: EquityLotSellRequest, db=Depends(get_db)):
+    """Record selling some/all shares of a specific lot. Reduces the lot (deletes it if fully sold),
+    computes the realized gain/loss, and — when it's a loss and requested — drops a 31-day wash-sale
+    block so the auto-trader can't re-buy the name inside the window."""
+    row = db.query(EquityLot).filter(EquityLot.id == lot_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    sell_shares = float(req.shares)
+    if sell_shares <= 0 or sell_shares > row.shares + 1e-9:
+        raise HTTPException(status_code=400, detail=f"shares must be between 0 and {row.shares}")
+    # Sale price: explicit > latest local price > cost basis (so a missing price never fabricates a gain).
+    price = req.sale_price
+    if price is None:
+        from data_ingestion.analyst_fetcher import latest_or_refresh
+        f = latest_or_refresh(row.ticker, db, stale_days=1)
+        price = f.current_price if (f and f.current_price is not None) else row.cost_basis_per_share
+    try:
+        sale_date = datetime.strptime((req.sale_date or datetime.now().date().isoformat())[:10], "%Y-%m-%d").date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="sale_date must be YYYY-MM-DD")
+    realized_gain = (float(price) - row.cost_basis_per_share) * sell_shares
+    proceeds = float(price) * sell_shares
+    ticker = row.ticker
+
+    fully_sold = abs(sell_shares - row.shares) < 1e-9
+    if fully_sold:
+        db.delete(row)
+        remaining = 0.0
+    else:
+        row.shares = round(row.shares - sell_shares, 6)
+        note = f"Sold {sell_shares:g} sh @ ${float(price):.2f} on {sale_date.isoformat()}"
+        row.notes = (f"{row.notes} | {note}" if row.notes else note)
+        remaining = row.shares
+
+    block_created = False
+    if realized_gain < 0 and req.add_wash_sale_block:
+        blocked_until = (sale_date + timedelta(days=31)).isoformat()
+        db.add(TradingBlock(
+            ticker=ticker, block_type="wash_sale",
+            reason=f"Loss sale {sale_date.isoformat()} (~{round(realized_gain):,}) — no re-buys until {blocked_until}.",
+            sale_date=sale_date.isoformat(), realized_loss=realized_gain, shares=sell_shares,
+            blocked_until=blocked_until, active=True, created_at=datetime.now().isoformat(timespec="seconds"),
+        ))
+        block_created = True
+    db.commit()
+    return {
+        "status": "success", "ticker": ticker, "sold_shares": sell_shares, "remaining_shares": remaining,
+        "sale_price": float(price), "proceeds": proceeds, "realized_gain": realized_gain,
+        "is_loss": realized_gain < 0, "fully_sold": fully_sold,
+        "wash_sale_suggested": realized_gain < 0, "wash_sale_block_created": block_created,
+    }
 
 
 @app.get("/api/equity/tax-profile")
@@ -2182,6 +2293,97 @@ def get_equity_forecast(ticker: str, db=Depends(get_db)):
     if not row:
         raise HTTPException(status_code=404, detail="No forecast or local price data available for ticker")
     return _forecast_dict(row)
+
+
+@app.get("/api/equity/grant-timeline/{ticker}")
+def get_equity_grant_timeline(ticker: str, db=Depends(get_db)):
+    """Per-stock grant timeline for the deep-dive chart. From the earliest grant to today returns:
+    the daily market price, the running SHARE-WEIGHTED average cost basis (steps as each grant vests),
+    and the share of granted shares that are in-the-money (price > their own lot basis) vs underwater.
+    The line is downsampled for payload size but every grant day is preserved. Powers the GrantTimeline
+    UI component (reusable across any held ticker)."""
+    ticker = ticker.upper().strip()
+    lots = db.query(EquityLot).filter(EquityLot.ticker == ticker).order_by(
+        EquityLot.acquisition_date.asc()).all()
+    if not lots:
+        raise HTTPException(status_code=404, detail=f"No grants/lots recorded for {ticker}")
+
+    start_date = min(l.acquisition_date[:10] for l in lots)
+    rows = db.query(DailyPrice.date, DailyPrice.close).filter(
+        DailyPrice.ticker == ticker, DailyPrice.date >= start_date
+    ).order_by(DailyPrice.date.asc()).all()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No daily price history for {ticker}")
+
+    grants_by_date = {}
+    for l in lots:
+        grants_by_date.setdefault(l.acquisition_date[:10], []).append(l)
+    grant_dates_sorted = sorted(grants_by_date.keys())
+    grant_dates = set(grant_dates_sorted)
+
+    vested = []          # (shares, basis) for every grant vested up to the current day
+    gi = 0
+    total_points = len(rows)
+    step = max(1, total_points // 750)   # keep ~750 line points; grant days always kept
+
+    series = []
+    for i, (d, close) in enumerate(rows):
+        d10 = d[:10]
+        while gi < len(grant_dates_sorted) and grant_dates_sorted[gi] <= d10:
+            for l in grants_by_date[grant_dates_sorted[gi]]:
+                vested.append((l.shares, l.cost_basis_per_share))
+            gi += 1
+        if not vested:
+            continue
+        total_shares = sum(s for s, _ in vested)
+        cost_sum = sum(s * b for s, b in vested)
+        avg_basis = cost_sum / total_shares if total_shares else 0.0
+        profit_shares = sum(s for s, b in vested if close > b)
+        profitable_pct = 100.0 * profit_shares / total_shares if total_shares else 0.0
+        if i % step == 0 or d10 in grant_dates or i == total_points - 1:
+            series.append({
+                "date": d10,
+                "price": round(close, 2),
+                "avg_basis": round(avg_basis, 2),
+                "shares_held": round(total_shares, 2),
+                "profitable_pct": round(profitable_pct, 1),
+                "underwater_pct": round(100.0 - profitable_pct, 1),
+                "gain_pct": round((close / avg_basis - 1.0) * 100.0, 1) if avg_basis else 0.0,
+                "is_grant": d10 in grant_dates,
+            })
+
+    grant_markers = []
+    for d in grant_dates_sorted:
+        day_lots = grants_by_date[d]
+        sh = sum(l.shares for l in day_lots)
+        wbasis = (sum(l.shares * l.cost_basis_per_share for l in day_lots) / sh) if sh else 0.0
+        mp = next((c for (dt, c) in rows if dt[:10] >= d), None)
+        grant_markers.append({
+            "date": d, "shares": round(sh, 2), "basis": round(wbasis, 2),
+            "price_at_grant": round(mp, 2) if mp is not None else None,
+            "lot_type": day_lots[0].lot_type,
+        })
+
+    latest_close = rows[-1][1]
+    total_shares = sum(l.shares for l in lots)
+    cost_sum = sum(l.shares * l.cost_basis_per_share for l in lots)
+    avg_basis = (cost_sum / total_shares) if total_shares else 0.0
+    profit_shares = sum(l.shares for l in lots if latest_close > l.cost_basis_per_share)
+    summary = {
+        "ticker": ticker,
+        "current_price": round(latest_close, 2),
+        "avg_basis": round(avg_basis, 2),
+        "total_shares": round(total_shares, 2),
+        "market_value": round(latest_close * total_shares, 2),
+        "cost_value": round(cost_sum, 2),
+        "unrealized_gain": round((latest_close - avg_basis) * total_shares, 2),
+        "unrealized_gain_pct": round((latest_close / avg_basis - 1.0) * 100.0, 1) if avg_basis else 0.0,
+        "profitable_pct": round(100.0 * profit_shares / total_shares, 1) if total_shares else 0.0,
+        "num_grants": len(lots),
+        "first_grant": grant_dates_sorted[0],
+        "as_of": rows[-1][0][:10],
+    }
+    return {"summary": summary, "series": series, "grants": grant_markers}
 
 
 @app.post("/api/equity/analyze")
@@ -2590,6 +2792,8 @@ def get_health(db=Depends(get_db)):
         clock = api.get_clock()
         acct = api.get_account()
         svc["alpaca"] = {"status": "up", "market_open": bool(clock.is_open),
+                         "next_open": clock.next_open.isoformat() if clock.next_open else None,
+                         "next_close": clock.next_close.isoformat() if clock.next_close else None,
                          "detail": f"{'market open' if clock.is_open else 'market closed'} · ${float(acct.equity):,.0f}"}
     except Exception as e:
         svc["alpaca"] = {"status": "down", "detail": str(e)[:100]}
