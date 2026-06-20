@@ -292,6 +292,8 @@ def fetch_news_sentiment(db, date_str):
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         print(f"Launching parallel news fetching for {len(active_universe)} tickers...")
+        total_tickers = len(active_universe)
+        completed = 0
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(fetch_single_ticker_news, ticker, date_str): ticker
@@ -299,20 +301,28 @@ def fetch_news_sentiment(db, date_str):
             }
 
             for future in as_completed(futures):
+                completed += 1
                 ticker = futures[future]
+                percent = int(completed / total_tickers * 100)
                 try:
                     ticker_res, items = future.result()
                     if items:
                         ticker_items[ticker_res] = items
+                    print(f"[News Sentiment Progress: {percent}%] Completed {completed}/{total_tickers} - {ticker} ({len(items) if items else 0} articles)", flush=True)
                 except Exception as e:
-                    print(f"Error in parallel news fetch for {ticker}: {e}")
+                    print(f"[News Sentiment Progress: {percent}%] Error in parallel news fetch for {ticker}: {e}", flush=True)
 
         # Score and store sequentially on main thread
-        print("Writing sentiment records to database sequentially...")
+        print("Writing sentiment records to database sequentially...", flush=True)
+        total_to_write = sum(1 for items in ticker_items.values() if items)
+        written = 0
         for ticker, items in ticker_items.items():
             if not items:
                 continue
 
+            written += 1
+            percent = int(written / total_to_write * 100)
+            print(f"[News DB Progress: {percent}%] Writing {written}/{total_to_write} - {ticker}", flush=True)
             score, pos, neg = score_and_log_sources(db, ticker, date_str, "news", items)
 
             existing = db.query(TickerSentiment).filter(
@@ -551,7 +561,9 @@ def backfill_news_sentiment(start_date_str=None):
     universe = get_active_universe(db)
     print(f"Backfilling news sentiment for {len(universe)} tickers ({start} -> {end})...")
 
-    for ticker in universe:
+    for idx, ticker in enumerate(universe, 1):
+        percent = int((idx - 1) / len(universe) * 100)
+        print(f"[News Backfill Progress: {percent}%] Processing ticker {idx}/{len(universe)} - {ticker}...", flush=True)
         enc = urllib.parse.quote(ticker)
         url = (f"{MASSIVE_BASE_URL}/v2/reference/news?ticker={enc}"
                f"&published_utc.gte={start}T00:00:00Z&published_utc.lte={end}T23:59:59Z"

@@ -4,17 +4,21 @@ import sys
 import subprocess
 import os
 
+# Enable unbuffered stdout flushing
+sys.stdout.reconfigure(write_through=True, line_buffering=True)
+
 def run_command(command, description):
-    print(f"=== Running: {description} ===")
+    print(f"\n=== Running: {description} ===", flush=True)
     try:
         # Ensure we run from the backend directory context
         env = os.environ.copy()
         env["PYTHONPATH"] = os.path.dirname(os.path.abspath(__file__))
+        env["PYTHONUNBUFFERED"] = "1"
         result = subprocess.run(command, check=True, env=env)
-        print(f"=== Completed: {description} successfully ===\n")
+        print(f"=== Completed: {description} successfully ===\n", flush=True)
         return result.returncode == 0
     except subprocess.CalledProcessError as e:
-        print(f"Error during execution: {e}", file=sys.stderr)
+        print(f"Error during execution: {e}", file=sys.stderr, flush=True)
         sys.exit(e.returncode)
 
 def fetch():
@@ -32,9 +36,15 @@ def fetch():
     from app.core.config import ALT_DATA_ENABLED
     if ALT_DATA_ENABLED:
         scripts.append([sys.executable, "data_ingestion/alternative_fetcher.py"])  # real Form 4
-    for script in scripts:
+        
+    total_steps = len(scripts)
+    for idx, script in enumerate(scripts, 1):
         script_name = os.path.basename(script[1])
+        percent = int((idx - 1) / total_steps * 100)
+        print(f"\n[Ingestion Progress: {percent}%] Starting Step {idx}/{total_steps} - {script_name}...", flush=True)
         run_command(script, f"Data Ingestion ({script_name})")
+        
+    print(f"\n[Ingestion Progress: 100%] All data ingestion steps completed successfully!", flush=True)
 
 def train(epochs=None):
     run_command([sys.executable, "ml_engine/models.py", "--train"], "ML Model Training")

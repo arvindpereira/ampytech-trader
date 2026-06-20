@@ -16,13 +16,16 @@ _indicator_series_cache = {}
 _spy_records_cache = None
 
 def get_latest_date():
-    """Finds the latest date we have macro indicators for."""
+    """Finds the latest date we have macro indicators for, capped at the current date."""
     db = SessionLocal()
-    r = db.query(MacroIndicator.date).order_by(MacroIndicator.date.desc()).first()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    r = db.query(MacroIndicator.date).filter(
+        MacroIndicator.date <= today_str
+    ).order_by(MacroIndicator.date.desc()).first()
     db.close()
     if r:
         return r[0]
-    return datetime.now().strftime("%Y-%m-%d")
+    return today_str
 
 def normalize_value(val, min_val, max_val, invert=False):
     """Clips and normalizes a value linearly to [0, 100]."""
@@ -86,10 +89,10 @@ def compute_composite_index(as_of_date=None):
     history_map = {}
     for ind in indicators:
         hist = load_historical_series(db, ind)
-        history_map[ind] = hist
-        # Get value as of as_of_date (or latest prior)
+        # Settle look-ahead free history (OOS) up to as_of_date
         hist_prior = hist[hist.index <= pd.to_datetime(as_of_date)]
         raw_vals[ind] = hist_prior.iloc[-1] if not hist_prior.empty else None
+        history_map[ind] = hist_prior
         
     # Helper to calculate normalized/percentile value with robust static fallback
     def get_score(ind, min_val, max_val, invert=False):
@@ -380,6 +383,77 @@ def persist_crash_snapshot(snapshot):
     db.commit()
     db.close()
     print(f"✓ Saved CrashRiskSnapshot for {snapshot.as_of_date} (Index: {snapshot.composite_index:.1f} | Stance: {snapshot.current_posture})")
+
+def get_crash_index_timeline():
+    """
+    Computes/retrieves weekly composite crash index values for the past 5 years.
+    Utilizes CrashRiskSnapshot database table as a persistent cache.
+    """
+    db = SessionLocal()
+    try:
+        latest_date_str = get_latest_date()
+        end_date = pd.to_datetime(latest_date_str)
+        start_date = end_date - pd.DateOffset(years=5)
+        
+        # Generate weekly dates (every Friday)
+        dates_range = pd.date_range(start=start_date, end=end_date, freq="W-FRI")
+        dates = [d.strftime("%Y-%m-%d") for d in dates_range]
+        
+        # Ensure the latest date is also included if it's not a Friday
+        if latest_date_str not in dates:
+            dates.append(latest_date_str)
+            dates = sorted(dates)
+            
+        # Bulk query existing snapshots
+        existing_snaps = db.query(CrashRiskSnapshot).filter(
+            CrashRiskSnapshot.as_of_date.in_(dates)
+        ).all()
+        existing_map = {s.as_of_date: s for s in existing_snaps}
+        
+        timeline = []
+        new_snaps = []
+        
+        # First check macro indicators to prevent out-of-bounds dates
+        min_indicator_date = None
+        for ind in ["cape", "buffett_indicator", "term_spread_10y3m", "fed_funds"]:
+            hist = load_historical_series(db, ind)
+            if not hist.empty:
+                d_min = hist.index.min()
+                if min_indicator_date is None or d_min > min_indicator_date:
+                    min_indicator_date = d_min
+                    
+        for date_str in dates:
+            # Skip dates earlier than our oldest macro data
+            if min_indicator_date and pd.to_datetime(date_str) < min_indicator_date:
+                continue
+                
+            if date_str in existing_map:
+                snap = existing_map[date_str]
+            else:
+                try:
+                    snap, _ = compute_composite_index(date_str)
+                    new_snaps.append(snap)
+                except Exception as e:
+                    # Gracefully skip if calculation fails for some early date with insufficient history
+                    print(f"Skipping timeline calculation for {date_str}: {e}")
+                    continue
+                    
+            timeline.append({
+                "date": date_str,
+                "composite_index": float(snap.composite_index),
+                "risk_band": snap.risk_band,
+                "current_posture": snap.current_posture
+            })
+            
+        # Bulk save any newly computed snapshots
+        if new_snaps:
+            db.bulk_save_objects(new_snaps)
+            db.commit()
+            print(f"✓ Calculated and cached {len(new_snaps)} historical crash snapshots in database.")
+            
+        return timeline
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     snap, scores = compute_composite_index()

@@ -508,16 +508,23 @@ def fetch_recent_prices():
         print("All tickers already up to date (hourly).")
         return
 
-    print(f"Fetching {len(fetch_tasks)} hourly tasks in parallel...")
+    print(f"Fetching {len(fetch_tasks)} hourly tasks in parallel...", flush=True)
     results_map = {}
+    total_tasks = len(fetch_tasks)
+    completed = 0
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(fetch_massive_hourly, tk, s, e): tk for tk, s, e in fetch_tasks}
         for future in as_completed(futures):
+            completed += 1
             tk = futures[future]
+            percent = int(completed / total_tasks * 100)
             try:
-                results_map[tk] = future.result()
+                res = future.result()
+                results_map[tk] = res
+                bars_fetched = len(res) if isinstance(res, list) else 0
+                print(f"[Hourly Fetch Progress: {percent}%] Completed {completed}/{total_tasks} - {tk} ({bars_fetched} bars)", flush=True)
             except Exception as e:
-                print(f"Error fetching hourly {tk}: {e}")
+                print(f"[Hourly Fetch Progress: {percent}%] Error fetching hourly {tk}: {e}", flush=True)
 
     db = SessionLocal()
     try:
@@ -609,22 +616,29 @@ def fetch_daily_history():
     if not fetch_tasks:
         print("All tickers already up to date (daily).")
     else:
-        print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...")
+        print(f"Fetching {len(fetch_tasks)} daily tasks in parallel...", flush=True)
         results_map = {}
+        total_tasks = len(fetch_tasks)
+        completed = 0
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(fetch_yahoo_daily, tk, s, e): (tk, s, e) for tk, s, e in fetch_tasks}
             for future in as_completed(futures):
+                completed += 1
                 tk = futures[future][0]
+                percent = int(completed / total_tasks * 100)
                 try:
                     bars = future.result()
                     results_map.setdefault(tk, [])
                     if bars == "PRE_IPO_LIMIT":
                         results_map[tk] = "PRE_IPO_LIMIT"
+                        print(f"[Daily Fetch Progress: {percent}%] Completed {completed}/{total_tasks} - {tk} (PRE_IPO_LIMIT)", flush=True)
                     else:
                         if isinstance(results_map[tk], list):
                             results_map[tk].extend(bars)
+                        bars_fetched = len(bars) if isinstance(bars, list) else 0
+                        print(f"[Daily Fetch Progress: {percent}%] Completed {completed}/{total_tasks} - {tk} ({bars_fetched} bars)", flush=True)
                 except Exception as e:
-                    print(f"Error fetching daily {tk}: {e}")
+                    print(f"[Daily Fetch Progress: {percent}%] Error fetching daily {tk}: {e}", flush=True)
 
         db = SessionLocal()
         ipo_markers_updated = False

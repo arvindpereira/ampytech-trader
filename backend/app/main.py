@@ -3105,6 +3105,16 @@ def get_crash_index():
     finally:
         db.close()
 
+@app.get("/api/crash/timeline")
+def get_crash_timeline():
+    """Returns the historical composite crash index timeline for the past 5 years."""
+    from ml_engine.crash_radar import get_crash_index_timeline
+    try:
+        return get_crash_index_timeline()
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to calculate timeline: {e}")
+
 @app.post("/api/crash/forecast")
 def trigger_crash_forecast():
     """Spawns background job to calculate experimental drawdown odds."""

@@ -144,6 +144,19 @@ export default function Home() {
   const [applyConfirmOpen, setApplyConfirmOpen] = useState<boolean>(false);
   const [applyResult, setApplyResult] = useState<any>(null);
   const [applyingRebalance, setApplyingRebalance] = useState<boolean>(false);
+  const [timelineData, setTimelineData] = useState<any[]>([]);
+
+  const fetchTimeline = async () => {
+    try {
+      const res = await fetch('http://localhost:8008/api/crash/timeline');
+      if (res.ok) {
+        const data = await res.json();
+        setTimelineData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching crash timeline:', err);
+    }
+  };
 
   const fetchCrashIndex = async () => {
     try {
@@ -201,6 +214,7 @@ export default function Home() {
     if (activeTab === 'crash') {
       fetchCrashIndex();
       fetchPlaybook(preset);
+      fetchTimeline();
     }
   }, [activeTab, preset]);
 
@@ -216,6 +230,7 @@ export default function Home() {
             setForecastStatus('complete');
             setForecastJobId(null);
             fetchCrashIndex(); // reload snapshot to get forecasts
+            fetchTimeline();
           } else if (data.status === 'error') {
             setForecastStatus(`Error: ${data.error}`);
             setForecastJobId(null);
@@ -3709,6 +3724,89 @@ export default function Home() {
         {activeTab === 'crash' && (
           <section style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
             
+            {/* Full-width Timeline Graph Card */}
+            <div className="glass-card" style={{ gridColumn: '1 / -1', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Activity size={20} color="var(--color-accent)" />
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Composite Crash-Risk Timeline (Past 5 Years)</h3>
+                </div>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Weekly Out-of-Sample (OOS) Risk Estimate Index
+                </span>
+              </div>
+              
+              <div style={{ width: '100%', height: '300px' }}>
+                {timelineData && timelineData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorIndex" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="var(--color-accent)" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="var(--color-accent)" stopOpacity={0.0}/>
+                        </linearGradient>
+                      </defs>
+                      <XAxis 
+                        dataKey="date" 
+                        tickFormatter={(tick) => {
+                          const date = new Date(tick);
+                          return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                        }}
+                        stroke="var(--text-secondary)"
+                        fontSize={10}
+                        tickLine={false}
+                      />
+                      <YAxis 
+                        domain={[0, 100]} 
+                        stroke="var(--text-secondary)"
+                        fontSize={10}
+                        tickLine={false}
+                      />
+                      <Tooltip 
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            return (
+                              <div style={{ background: 'rgba(16, 20, 38, 0.95)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>{data.date}</div>
+                                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                                  Index: <span style={{ color: 'var(--color-accent)' }}>{data.composite_index.toFixed(1)}</span>
+                                </div>
+                                <div style={{ fontSize: '12px', fontWeight: 600, display: 'flex', gap: '6px' }}>
+                                  <span style={{ color: 
+                                    data.risk_band === 'Calm' ? '#10B981' :
+                                    data.risk_band === 'Elevated' ? '#3B82F6' :
+                                    data.risk_band === 'High' ? '#F59E0B' : '#EF4444'
+                                  }}>
+                                    {data.risk_band.toUpperCase()}
+                                  </span>
+                                  <span style={{ color: 'var(--text-secondary)' }}>·</span>
+                                  <span style={{ color: '#3B82F6' }}>{data.current_posture}</span>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="composite_index" 
+                        stroke="var(--color-accent)" 
+                        strokeWidth={2}
+                        fillOpacity={1} 
+                        fill="url(#colorIndex)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '14px' }}>
+                    Loading timeline data...
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* COLUMN 1: RISK ASSESSMENT & GLIDE PATH KNOBS */}
             <div style={{ display: 'grid', gap: '20px', alignContent: 'start' }}>
               
@@ -3745,7 +3843,7 @@ export default function Home() {
                       </svg>
                       <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                         <span style={{ fontSize: '32px', fontWeight: 800, color: 'var(--text-primary)' }}>
-                          {crashData.composite_index.toFixed(1)}
+                          {(crashData?.composite_index ?? 0).toFixed(1)}
                         </span>
                         <span style={{ fontSize: '12px', fontWeight: 600, color: 
                           crashData.risk_band === 'Calm' ? '#10B981' :
@@ -3989,11 +4087,11 @@ export default function Home() {
                         </span>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        <div>Debt/GDP: <strong>{crashData?.debt_cycle_metrics?.debt_to_gdp_pct.toFixed(1)}%</strong></div>
-                        <div>Debt Service Ratio: <strong>{crashData?.debt_cycle_metrics?.debt_service_ratio.toFixed(1)}%</strong></div>
-                        <div>Real rates: <strong>{crashData?.debt_cycle_metrics?.real_rates.toFixed(2)}%</strong></div>
-                        <div>Margin debt change: <strong style={{ color: (crashData?.debt_cycle_metrics?.margin_debt_yoy_pct || 0) > 15.0 ? '#EF4444' : 'inherit' }}>
-                          {(crashData?.debt_cycle_metrics?.margin_debt_yoy_pct || 0).toFixed(1)}% YoY
+                        <div>Debt/GDP: <strong>{(crashData?.debt_cycle_metrics?.debt_to_gdp_pct ?? 0).toFixed(1)}%</strong></div>
+                        <div>Debt Service Ratio: <strong>{(crashData?.debt_cycle_metrics?.debt_service_ratio ?? 0).toFixed(1)}%</strong></div>
+                        <div>Real rates: <strong>{(crashData?.debt_cycle_metrics?.real_rates ?? 0).toFixed(2)}%</strong></div>
+                        <div>Margin debt change: <strong style={{ color: (crashData?.debt_cycle_metrics?.margin_debt_yoy_pct ?? 0) > 15.0 ? '#EF4444' : 'inherit' }}>
+                          {(crashData?.debt_cycle_metrics?.margin_debt_yoy_pct ?? 0).toFixed(1)}% YoY
                         </strong></div>
                       </div>
                     </div>

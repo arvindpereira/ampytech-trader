@@ -190,13 +190,17 @@ def train_and_evaluate_forecast():
             X_all = scaler.fit_transform(X)
             y_all = y
             
-            clf = LogisticRegression(penalty="l2", C=1.0, class_weight="balanced", random_state=42)
-            clf.fit(X_all, y_all)
-            
-            # Predict for the current/latest date
-            current_x = latest_row[features].values.reshape(1, -1)
-            current_x_scaled = scaler.transform(current_x)
-            prob = clf.predict_proba(current_x_scaled)[0, 1]
+            if len(np.unique(y_all)) < 2:
+                # If only one class exists in the entire dataset, predict its probability directly (typically 0.0)
+                prob = float(y_all[0])
+            else:
+                clf = LogisticRegression(penalty="l2", C=1.0, class_weight="balanced", random_state=42)
+                clf.fit(X_all, y_all)
+                
+                # Predict for the current/latest date
+                current_x = latest_row[features].values.reshape(1, -1)
+                current_x_scaled = scaler.transform(current_x)
+                prob = clf.predict_proba(current_x_scaled)[0, 1]
             
             results.append({
                 "drawdown": f">={int(level*100)}%",
