@@ -32,6 +32,9 @@ TICKERS  ?=
 BACKUP_KEEP ?= 10
 RESTORE  ?=
 VENV_PY := venv/bin/python3
+FRONTEND_HOST ?= 0.0.0.0
+FRONTEND_PORT ?= 3002
+BACKEND_PORT  ?= 8008
 
 # ----------------------------------------------------------------------------
 # Cache-aware pipeline: TTL stamp files (so `make data`/`make train`/`make up`
@@ -69,7 +72,7 @@ help:
 	@echo "  make data              - All data fetches in one dependency-aware, cached step (FORCE=1 to refetch)"
 	@echo "  make train             - Train ALL served models (HMM + XGBoost + Core/Aggressive swing); depends on data"
 	@echo "  make serve-all         - Just launch backend + frontend + scheduler (no pipeline)"
-	@echo "  make serve             - Just launch backend (:8008) + frontend (:3002)"
+	@echo "  make serve             - Just launch backend (:8008) + frontend (:3002, LAN-friendly)"
 	@echo "  Cache knobs: FORCE=1 (rebuild everything) · DATA_TTL/MODEL_TTL=<minutes> · make clean-cache"
 	@echo ""
 	@echo "Setup:"
@@ -457,28 +460,29 @@ restore-commit: db-restore-commit files-restore-commit
 serve:
 	@echo "========================================================================"
 	@echo "Launching Ampytech Trader full stack..."
-	@echo "🚀 Backend API: http://localhost:8008"
-	@echo "🎨 Web Interface: http://localhost:3002"
+	@echo "🚀 Backend API: http://0.0.0.0:$(BACKEND_PORT) (also http://localhost:$(BACKEND_PORT))"
+	@echo "🎨 Web Interface: http://$(FRONTEND_HOST):$(FRONTEND_PORT) (LAN: use this machine's IP, e.g. http://10.0.0.43:$(FRONTEND_PORT))"
 	@echo "Press Ctrl+C to terminate both servers."
 	@echo "========================================================================"
-	@bash -c 'trap "kill 0" EXIT; (cd backend && $(VENV_PY) run.py serve) & (cd frontend && npm run dev -- -p 3002) & wait'
+	@bash -c 'trap "kill 0" EXIT; (cd backend && $(VENV_PY) run.py serve) & (cd frontend && npm run dev -- -H $(FRONTEND_HOST) -p $(FRONTEND_PORT)) & wait'
 
 serve-backend:
 	cd backend && $(VENV_PY) run.py serve
 
 serve-frontend:
-	cd frontend && npm run dev -- -p 3002
+	cd frontend && npm run dev -- -H $(FRONTEND_HOST) -p $(FRONTEND_PORT)
 
 # Lean: backend (:8008) + frontend (:3002) + scheduler daemon, no pipeline.
 # Kills any pre-existing scheduler first so you never end up with duplicates; Ctrl+C stops all three.
 serve-all:
 	@echo "========================================================================"
-	@echo "🚀 Backend :8008  🎨 Frontend :3002  ⏰ Scheduler — all together. Ctrl+C stops all."
+	@echo "🚀 Backend :$(BACKEND_PORT)  🎨 Frontend :$(FRONTEND_PORT) ($(FRONTEND_HOST))  ⏰ Scheduler — Ctrl+C stops all."
+	@echo "   LAN: open http://<this-machine-ip>:$(FRONTEND_PORT)  (API follows the same host on :$(BACKEND_PORT))"
 	@echo "========================================================================"
 	@pkill -f "run.py schedule" 2>/dev/null || true; pkill -f "execution/scheduler.py" 2>/dev/null || true; sleep 1
 	@bash -c 'trap "kill 0; pkill -f \"execution/scheduler.py\" 2>/dev/null" EXIT; \
 		(cd backend && $(VENV_PY) run.py serve) & \
-		(cd frontend && npm run dev -- -p 3002) & \
+		(cd frontend && npm run dev -- -H $(FRONTEND_HOST) -p $(FRONTEND_PORT)) & \
 		(cd backend && $(VENV_PY) run.py schedule) & wait'
 
 schedule:

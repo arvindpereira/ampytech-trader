@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { apiUrl } from '../lib/api';
 import {
   TrendingUp,
   TrendingDown,
@@ -220,7 +221,7 @@ export default function Home() {
 
   const fetchTimeline = async () => {
     try {
-      const res = await fetch('http://localhost:8008/api/crash/timeline');
+      const res = await fetch(apiUrl('/api/crash/timeline'));
       if (res.ok) {
         const data = await res.json();
         setTimelineData(data);
@@ -232,7 +233,7 @@ export default function Home() {
 
   const fetchCrashIndex = async () => {
     try {
-      const res = await fetch('http://localhost:8008/api/crash/index');
+      const res = await fetch(apiUrl('/api/crash/index'));
       if (res.ok) {
         const data = await res.json();
         setCrashData(data);
@@ -244,7 +245,7 @@ export default function Home() {
 
   const fetchCrashStatus = async () => {
     try {
-      const res = await fetch('http://localhost:8008/api/crash/status');
+      const res = await fetch(apiUrl('/api/crash/status'));
       if (res.ok) setCrashStatus(await res.json());
     } catch (err) {
       console.error('Error fetching crash status:', err);
@@ -254,7 +255,7 @@ export default function Home() {
   // Load the last cached scenario comparison + AI analyst so the Wargame card renders by default.
   const fetchWargameCache = async () => {
     try {
-      const res = await fetch('http://localhost:8008/api/crash/wargame/cache');
+      const res = await fetch(apiUrl('/api/crash/wargame/cache'));
       if (!res.ok) return;
       const data = await res.json();
       if (data.comparison) {
@@ -273,7 +274,7 @@ export default function Home() {
 
   const fetchPlaybook = async (selectedPreset: string) => {
     try {
-      const res = await fetch(`http://localhost:8008/api/crash/playbook?preset=${selectedPreset}`);
+      const res = await fetch(apiUrl(`/api/crash/playbook?preset=${selectedPreset}`));
       if (res.ok) {
         const data = await res.json();
         setPlaybook(data);
@@ -286,7 +287,7 @@ export default function Home() {
   const runPresetComparison = async () => {
     setComparingPresets(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/crash/compare?years=5&theta=${theta}&k=${k}&gamma=${gamma}`);
+      const res = await fetch(apiUrl(`/api/crash/compare?years=5&theta=${theta}&k=${k}&gamma=${gamma}`));
       if (res.ok) {
         setCompareData(await res.json());
       } else {
@@ -311,7 +312,7 @@ export default function Home() {
       const params = preset === 'custom'
         ? `preset=custom&theta=${theta}&k=${k}&gamma=${gamma}`
         : `preset=${preset}`;
-      const res = await fetch(`http://localhost:8008/api/crash/apply/preview?${params}`);
+      const res = await fetch(apiUrl(`/api/crash/apply/preview?${params}`));
       if (res.ok) {
         setPreviewData(await res.json());
       } else {
@@ -329,7 +330,7 @@ export default function Home() {
     setApplyingRebalance(true);
     setApplyConfirmOpen(false);
     try {
-      const res = await fetch('http://localhost:8008/api/crash/apply', {
+      const res = await fetch(apiUrl('/api/crash/apply'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -369,7 +370,7 @@ export default function Home() {
     if (!forecastJobId) return;
     let timer = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8008/api/crash/forecast/result?job_id=${forecastJobId}`);
+        const res = await fetch(apiUrl(`/api/crash/forecast/result?job_id=${forecastJobId}`));
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'completed') {
@@ -396,7 +397,7 @@ export default function Home() {
     if (!wargameJobId) return;
     let timer = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8008/api/crash/wargame/result?job_id=${wargameJobId}`);
+        const res = await fetch(apiUrl(`/api/crash/wargame/result?job_id=${wargameJobId}`));
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'completed') {
@@ -422,7 +423,7 @@ export default function Home() {
     if (!scenarioJobId) return;
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8008/api/crash/wargame/scenarios/result?job_id=${scenarioJobId}`);
+        const res = await fetch(apiUrl(`/api/crash/wargame/scenarios/result?job_id=${scenarioJobId}`));
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'completed') {
@@ -454,7 +455,7 @@ export default function Home() {
     setWargameAnalyst(null);
     try {
       const body = preset === 'custom' ? { theta, k, gamma } : {};
-      const res = await fetch('http://localhost:8008/api/crash/wargame/scenarios', {
+      const res = await fetch(apiUrl('/api/crash/wargame/scenarios'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (res.ok) {
@@ -471,7 +472,7 @@ export default function Home() {
     if (!scenarioData) return;
     setAnalystLoading(true);
     try {
-      const res = await fetch('http://localhost:8008/api/crash/wargame/interpret', {
+      const res = await fetch(apiUrl('/api/crash/wargame/interpret'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comparison: scenarioData }),
       });
@@ -652,8 +653,8 @@ export default function Home() {
   const fetchEquityAdvisor = async () => {
     try {
       const [lotsRes, profileRes] = await Promise.all([
-        fetch('http://localhost:8008/api/equity/lots'),
-        fetch('http://localhost:8008/api/equity/tax-profile')
+        fetch(apiUrl('/api/equity/lots')),
+        fetch(apiUrl('/api/equity/tax-profile'))
       ]);
       if (lotsRes.ok) {
         const data = await lotsRes.json();
@@ -679,7 +680,7 @@ export default function Home() {
 
   const fetchTradingGuard = async () => {
     try {
-      const res = await fetch('http://localhost:8008/api/equity/trading-blocks');
+      const res = await fetch(apiUrl('/api/equity/trading-blocks'));
       if (res.ok) {
         const data = await res.json();
         setTradingBlocks(data.blocks || []);
@@ -691,7 +692,7 @@ export default function Home() {
   };
 
   const setAutoTrading = async (paused: boolean) => {
-    await fetch('http://localhost:8008/api/execution/auto-trading', {
+    await fetch(apiUrl('/api/execution/auto-trading'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paused })
     });
@@ -699,7 +700,7 @@ export default function Home() {
   };
 
   const createTradingBlock = async (body: any) => {
-    await fetch('http://localhost:8008/api/equity/trading-blocks', {
+    await fetch(apiUrl('/api/equity/trading-blocks'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
@@ -707,7 +708,7 @@ export default function Home() {
   };
 
   const releaseTradingBlock = async (id: number) => {
-    await fetch(`http://localhost:8008/api/equity/trading-blocks/${id}`, { method: 'DELETE' });
+    await fetch(apiUrl(`/api/equity/trading-blocks/${id}`), { method: 'DELETE' });
     fetchTradingGuard();
   };
 
@@ -716,7 +717,7 @@ export default function Home() {
   }, [activeTab]);
 
   const saveTaxProfile = async () => {
-    await fetch('http://localhost:8008/api/equity/tax-profile', {
+    await fetch(apiUrl('/api/equity/tax-profile'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(taxProfile)
@@ -725,7 +726,7 @@ export default function Home() {
   };
 
   const saveEquityLot = async () => {
-    await fetch('http://localhost:8008/api/equity/lots', {
+    await fetch(apiUrl('/api/equity/lots'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newEquityLot)
@@ -736,7 +737,7 @@ export default function Home() {
 
   const deleteEquityLot = async (id?: number) => {
     if (!id) return;
-    await fetch(`http://localhost:8008/api/equity/lots/${id}`, { method: 'DELETE' });
+    await fetch(apiUrl(`/api/equity/lots/${id}`), { method: 'DELETE' });
     fetchEquityAdvisor();
   };
 
@@ -748,7 +749,7 @@ export default function Home() {
       form.append('file', file);
       form.append('force_llm', 'false');
       form.append('replace_ticker_account', replaceTickerAccount ? 'true' : 'false');
-      const res = await fetch('http://localhost:8008/api/equity/lots/import', { method: 'POST', body: form });
+      const res = await fetch(apiUrl('/api/equity/lots/import'), { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = typeof data.detail === 'object' ? data.detail.message || JSON.stringify(data.detail) : (data.detail || res.statusText);
@@ -769,7 +770,7 @@ export default function Home() {
   };
 
   const toggleEquityAutoTradeBlock = async (ticker: string, blocked: boolean) => {
-    await fetch('http://localhost:8008/api/equity/auto-trade-block', {
+    await fetch(apiUrl('/api/equity/auto-trade-block'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticker, blocked }),
@@ -779,7 +780,7 @@ export default function Home() {
   };
 
   const saveVestSchedule = async (schedule: any) => {
-    await fetch('http://localhost:8008/api/equity/vest-schedules', {
+    await fetch(apiUrl('/api/equity/vest-schedules'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(schedule),
@@ -800,7 +801,7 @@ export default function Home() {
     if (!sellModal || sellModal.shares <= 0) return;
     setSellBusy(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/equity/lots/${sellModal.id}/sell`, {
+      const res = await fetch(apiUrl(`/api/equity/lots/${sellModal.id}/sell`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shares: sellModal.shares,
@@ -823,14 +824,14 @@ export default function Home() {
     setEquityRunning(true);
     setEquityPlan(null);
     try {
-      const res = await fetch('http://localhost:8008/api/equity/analyze', {
+      const res = await fetch(apiUrl('/api/equity/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ objective: equityObjective, target_amount: parseFloat(equityTarget) || 0, target_ticker: equityTargetTicker || null })
       });
       const { job_id } = await res.json();
       const poll = setInterval(async () => {
-        const r = await fetch(`http://localhost:8008/api/equity/analyze/result?job_id=${job_id}`);
+        const r = await fetch(apiUrl(`/api/equity/analyze/result?job_id=${job_id}`));
         const data = await r.json();
         if (data.status === 'done') {
           clearInterval(poll);
@@ -854,7 +855,7 @@ export default function Home() {
   const fetchSources = async (ticker: string) => {
     setLoadingSources(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/sentiment/sources?ticker=${ticker}&mode=${appMode}`);
+      const res = await fetch(apiUrl(`/api/sentiment/sources?ticker=${ticker}&mode=${appMode}`));
       if (res.ok) {
         const data = await res.json();
         setSentSources(data.sources || []);
@@ -870,7 +871,7 @@ export default function Home() {
 
   const fetchHealth = async () => {
     try {
-      const res = await fetch(`http://localhost:8008/api/health`);
+      const res = await fetch(apiUrl(`/api/health`));
       setHealth(res.ok ? await res.json() : null);
     } catch (err) {
       setHealth(null);
@@ -880,7 +881,7 @@ export default function Home() {
   const fetchPortfolio = async () => {
     setRefreshingPortfolio(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/portfolio?mode=${appMode}`);
+      const res = await fetch(apiUrl(`/api/portfolio?mode=${appMode}`));
       setPortfolio(res.ok ? await res.json() : null);
     } catch (err) {
       setPortfolio(null);
@@ -892,8 +893,8 @@ export default function Home() {
   const fetchJobsAndTraining = async () => {
     try {
       const [jr, tr] = await Promise.all([
-        fetch(`http://localhost:8008/api/jobs`),
-        fetch(`http://localhost:8008/api/train/status`),
+        fetch(apiUrl(`/api/jobs`)),
+        fetch(apiUrl(`/api/train/status`)),
       ]);
       if (jr.ok) setJobs((await jr.json()).jobs || []);
       if (tr.ok) setTrainStatus(await tr.json());
@@ -908,7 +909,7 @@ export default function Home() {
 
   const fetchStrategyConfig = async () => {
     try {
-      const res = await fetch(`http://localhost:8008/api/strategy/config`);
+      const res = await fetch(apiUrl(`/api/strategy/config`));
       if (res.ok) {
         const d = await res.json();
         setStrategyConfig(d);
@@ -919,7 +920,7 @@ export default function Home() {
 
   const handleSetTickerStrategy = async (ticker: string, strategy: string) => {
     try {
-      await fetch(`http://localhost:8008/api/strategy/ticker`, {
+      await fetch(apiUrl(`/api/strategy/ticker`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker, strategy }),
       });
       fetchStrategyConfig();
@@ -932,11 +933,11 @@ export default function Home() {
     setSuggestData(null);
     setSuggestProgress({ pct: 0, stage: 'Starting…' });
     try {
-      const res = await fetch(`http://localhost:8008/api/strategy/suggest?oos_start=2022-01-01`, { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/strategy/suggest?oos_start=2022-01-01`), { method: 'POST' });
       const { job_id } = await res.json();
       const poll = async () => {
         try {
-          const r = await fetch(`http://localhost:8008/api/strategy/suggest/result?job_id=${job_id}`);
+          const r = await fetch(apiUrl(`/api/strategy/suggest/result?job_id=${job_id}`));
           const d = await r.json();
           if (d.status === 'done') { setSuggestData(d.result); setSuggestRunning(false); }
           else if (d.status === 'error' || d.status === 'unknown') { setSuggestProgress({ pct: 0, stage: 'Failed: ' + (d.error || 'job lost') }); setSuggestRunning(false); }
@@ -955,11 +956,11 @@ export default function Home() {
     setValidateData(null);
     setValidateProgress({ pct: 0, stage: 'Starting…' });
     try {
-      const res = await fetch(`http://localhost:8008/api/strategy/validate?oos_start=2022-01-01`, { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/strategy/validate?oos_start=2022-01-01`), { method: 'POST' });
       const { job_id } = await res.json();
       const poll = async () => {
         try {
-          const r = await fetch(`http://localhost:8008/api/strategy/validate/result?job_id=${job_id}`);
+          const r = await fetch(apiUrl(`/api/strategy/validate/result?job_id=${job_id}`));
           const d = await r.json();
           if (d.status === 'done') { setValidateData(d.result); setValidateRunning(false); }
           else if (d.status === 'error' || d.status === 'unknown') { setValidateProgress({ pct: 0, stage: 'Failed: ' + (d.error || 'job lost') }); setValidateRunning(false); }
@@ -978,7 +979,7 @@ export default function Home() {
     setActionBusy(true);
     try {
       for (const s of changes) {
-        await fetch(`http://localhost:8008/api/strategy/ticker`, {
+        await fetch(apiUrl(`/api/strategy/ticker`), {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: s.ticker, strategy: s.recommended }),
         });
       }
@@ -994,7 +995,7 @@ export default function Home() {
     if (s + l + h > 1.0001) { alert('Buckets cannot exceed 100% of equity.'); return; }
     setActionBusy(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/strategy/buckets`, {
+      const res = await fetch(apiUrl(`/api/strategy/buckets`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ swing: s, longterm: l, high_risk: h }),
       });
       if (!res.ok) { const e = await res.json(); alert(e.detail || 'Failed'); }
@@ -1049,10 +1050,10 @@ export default function Home() {
   const setTierOverride = async (ticker: string, tier: string | null) => {
     setTierMenu(null);
     try {
-      await fetch('http://localhost:8008/api/classification/override', {
+      await fetch(apiUrl('/api/classification/override'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker, tier }),
       });
-      const r = await fetch('http://localhost:8008/api/classification');
+      const r = await fetch(apiUrl('/api/classification'));
       if (r.ok) setClassification(await r.json());
     } catch (err) { console.error(err); }
   };
@@ -1084,7 +1085,7 @@ export default function Home() {
     setEvalResult(null);
     setEvalProgress({ pct: 0, stage: 'Starting…' });
     try {
-      const res = await fetch(`http://localhost:8008/api/evaluate`, {
+      const res = await fetch(apiUrl(`/api/evaluate`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strategies, horizon: 5, splits: evalSplits, use_allocation: evalUseAlloc, start_date: start, end_date: end, oos_start: oos, exclude_premium: evalExcludePremium }),
       });
@@ -1092,7 +1093,7 @@ export default function Home() {
       setEvalJobId(job_id);
       const poll = async () => {
         try {
-          const r = await fetch(`http://localhost:8008/api/evaluate/result?job_id=${job_id}`);
+          const r = await fetch(apiUrl(`/api/evaluate/result?job_id=${job_id}`));
           const d = await r.json();
           if (d.status === 'done') { setEvalResult(d.result); setEvalRunning(false); }
           else if (d.status === 'error' || d.status === 'unknown') { setEvalProgress({ pct: 0, stage: 'Failed: ' + (d.error || 'job lost') }); setEvalRunning(false); }
@@ -1107,7 +1108,7 @@ export default function Home() {
     if (!evalJobId) return;
     setInterpLoading(true);
     try {
-      const r = await fetch(`http://localhost:8008/api/evaluate/interpret?job_id=${evalJobId}`, { method: 'POST' });
+      const r = await fetch(apiUrl(`/api/evaluate/interpret?job_id=${evalJobId}`), { method: 'POST' });
       const d = await r.json();
       if (d.interpretation) setEvalResult((prev: any) => ({ ...prev, interpretation: d.interpretation }));
     } catch (err) { console.error(err); } finally { setInterpLoading(false); }
@@ -1126,7 +1127,7 @@ export default function Home() {
     setLlmLoading(true);
     try {
       const s = sinceDate(mode);
-      const r = await fetch(`http://localhost:8008/api/llm/usage${s ? `?since=${s}` : ''}`);
+      const r = await fetch(apiUrl(`/api/llm/usage${s ? `?since=${s}` : ''}`));
       setLlmUsage(await r.json());
     } catch (err) { console.error(err); } finally { setLlmLoading(false); }
   };
@@ -1135,7 +1136,7 @@ export default function Home() {
     setCalMsg('');
     try {
       const s = sinceDate(llmSince);
-      const r = await fetch('http://localhost:8008/api/llm/calibrate', {
+      const r = await fetch(apiUrl('/api/llm/calibrate'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: calModel, actual_cost: parseFloat(calCost), since: s || null }),
       });
@@ -1146,7 +1147,7 @@ export default function Home() {
   };
   const fetchPremiumValue = async () => {
     try {
-      const r = await fetch('http://localhost:8008/api/premium/value');
+      const r = await fetch(apiUrl('/api/premium/value'));
       setPremiumValue(await r.json());
     } catch (err) { console.error(err); }
   };
@@ -1159,7 +1160,7 @@ export default function Home() {
     try {
       // /backfill adds the ticker if missing AND always starts a (visible) backfill job —
       // so "Add & Backfill" works even for a ticker already in the universe.
-      await fetch(`http://localhost:8008/api/universe/backfill`, {
+      await fetch(apiUrl(`/api/universe/backfill`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: t }),
       });
       setAddStockTicker('');
@@ -1171,7 +1172,7 @@ export default function Home() {
 
   const handleBackfillTicker = async (ticker: string) => {
     try {
-      await fetch(`http://localhost:8008/api/universe/backfill`, {
+      await fetch(apiUrl(`/api/universe/backfill`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker }),
       });
       fetchJobsAndTraining();
@@ -1181,7 +1182,7 @@ export default function Home() {
   const handleRemoveMonitored = async (ticker: string) => {
     if (!confirm(`Stop monitoring ${ticker}? (It has no open position.)`)) return;
     try {
-      await fetch(`http://localhost:8008/api/universe/remove`, {
+      await fetch(apiUrl(`/api/universe/remove`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker }),
       });
       fetchData();
@@ -1194,7 +1195,7 @@ export default function Home() {
     if (!shares || shares <= 0) return;
     setActionBusy(true);
     try {
-      const res = await fetch(`http://localhost:8008/api/positions/liquidate?mode=${appMode}`, {
+      const res = await fetch(apiUrl(`/api/positions/liquidate?mode=${appMode}`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker: liquidateModal.ticker, shares }),
       });
@@ -1211,14 +1212,14 @@ export default function Home() {
   const handleRetrain = async () => {
     setActionBusy(true);
     try {
-      await fetch(`http://localhost:8008/api/train/start`, { method: 'POST' });
+      await fetch(apiUrl(`/api/train/start`), { method: 'POST' });
       fetchJobsAndTraining();
     } catch (err) { console.error(err); } finally { setActionBusy(false); }
   };
 
   const fetchLlmNews = async (ticker: string) => {
     try {
-      const res = await fetch(`http://localhost:8008/api/news/llm?ticker=${ticker}&limit=40`);
+      const res = await fetch(apiUrl(`/api/news/llm?ticker=${ticker}&limit=40`));
       setLlmNews(res.ok ? ((await res.json()).articles || []) : []);
     } catch (err) {
       setLlmNews([]);
@@ -1230,7 +1231,7 @@ export default function Home() {
     setPremiumStatus('Analyzing content...');
     try {
       if (backendOnline) {
-        const res = await fetch('http://localhost:8008/api/sentiment/premium', {
+        const res = await fetch(apiUrl('/api/sentiment/premium'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(premiumForm)
@@ -1256,7 +1257,7 @@ export default function Home() {
     setLoading(true);
     try {
       // 1. Fetch Suggestions
-      const sugRes = await fetch(`http://localhost:8008/api/suggestions?mode=${appMode}&hedge_mode=${hedgeMode}`);
+      const sugRes = await fetch(apiUrl(`/api/suggestions?mode=${appMode}&hedge_mode=${hedgeMode}`));
       if (sugRes.ok) {
         const sugData = await sugRes.json();
         setSuggestions(sugData.short_term_suggestions || []);
@@ -1270,7 +1271,7 @@ export default function Home() {
       }
 
       // 2. Fetch Performance Curve based on mode
-      const perfRes = await fetch(`http://localhost:8008/api/performance?mode=${appMode === 'real' ? 'live' : perfMode}`);
+      const perfRes = await fetch(apiUrl(`/api/performance?mode=${appMode === 'real' ? 'live' : perfMode}`));
       if (perfRes.ok) {
         const perfData = await perfRes.json();
         setPerfCurve(perfData.equity_curve || []);
@@ -1278,20 +1279,20 @@ export default function Home() {
       }
 
       // 3. Fetch Universe Tickers
-      const uniRes = await fetch('http://localhost:8008/api/universe');
+      const uniRes = await fetch(apiUrl('/api/universe'));
       if (uniRes.ok) {
         const uniData = await uniRes.json();
         setUniverseTickers(uniData.tickers || []);
       }
 
       // 4. Fetch User Holdings & Virtual Account
-      const holdRes = await fetch(`http://localhost:8008/api/holdings?mode=${appMode}`);
+      const holdRes = await fetch(apiUrl(`/api/holdings?mode=${appMode}`));
       if (holdRes.ok) {
         const holdData = await holdRes.json();
         setHoldings(holdData || []);
       }
 
-      const accRes = await fetch(`http://localhost:8008/api/virtual_alpaca/v2/account?mode=${appMode}`);
+      const accRes = await fetch(apiUrl(`/api/virtual_alpaca/v2/account?mode=${appMode}`));
       if (accRes.ok) {
         const accData = await accRes.json();
         setAccountCash(parseFloat(accData.cash) || 0);
@@ -1299,28 +1300,28 @@ export default function Home() {
       }
 
       // 5. Fetch Virtual Positions
-      const vposRes = await fetch(`http://localhost:8008/api/virtual_alpaca/v2/positions?mode=${appMode}`);
+      const vposRes = await fetch(apiUrl(`/api/virtual_alpaca/v2/positions?mode=${appMode}`));
       if (vposRes.ok) {
         const vposData = await vposRes.json();
         setVirtualPositions(vposData || []);
       }
 
       // 6. Fetch Sentiment list
-      const sentRes = await fetch(`http://localhost:8008/api/sentiment?mode=${appMode}`);
+      const sentRes = await fetch(apiUrl(`/api/sentiment?mode=${appMode}`));
       if (sentRes.ok) {
         const sentData = await sentRes.json();
         setSentimentList(sentData.sentiment || []);
       }
 
       // 7. Fetch per-ticker price summary (live price + 1D/1W/1M/1Y changes)
-      const priceRes = await fetch(`http://localhost:8008/api/prices/summary`);
+      const priceRes = await fetch(apiUrl(`/api/prices/summary`));
       if (priceRes.ok) {
         const priceData = await priceRes.json();
         setPriceSummary(priceData.prices || []);
       }
 
       // 8. Fetch portfolio (holdings enriched with live value + P&L)
-      const portRes = await fetch(`http://localhost:8008/api/portfolio?mode=${appMode}`);
+      const portRes = await fetch(apiUrl(`/api/portfolio?mode=${appMode}`));
       if (portRes.ok) {
         setPortfolio(await portRes.json());
       }
@@ -1330,7 +1331,7 @@ export default function Home() {
 
       // 10. Per-ticker risk × quality tier (for the badges)
       try {
-        const clsRes = await fetch('http://localhost:8008/api/classification');
+        const clsRes = await fetch(apiUrl('/api/classification'));
         if (clsRes.ok) setClassification(await clsRes.json());
       } catch { /* non-fatal */ }
 
@@ -1384,7 +1385,7 @@ export default function Home() {
 
     setActionBusy(true);
     try {
-      await fetch(`http://localhost:8008/api/universe/add`, {
+      await fetch(apiUrl(`/api/universe/add`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker: tickerUpper })
@@ -1403,7 +1404,7 @@ export default function Home() {
     if (!confirm(`Stop monitoring ${ticker}?`)) return;
     setActionBusy(true);
     try {
-      await fetch(`http://localhost:8008/api/universe/remove`, {
+      await fetch(apiUrl(`/api/universe/remove`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker })
@@ -1431,7 +1432,7 @@ export default function Home() {
 
     if (backendOnline) {
       try {
-        const res = await fetch(`http://localhost:8008/api/holdings?mode=${appMode}`, {
+        const res = await fetch(apiUrl(`/api/holdings?mode=${appMode}`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -1460,7 +1461,7 @@ export default function Home() {
   const handleDeleteHolding = async (ticker: string) => {
     if (backendOnline) {
       try {
-        const res = await fetch(`http://localhost:8008/api/holdings/${ticker}?mode=${appMode}`, {
+        const res = await fetch(apiUrl(`/api/holdings/${ticker}?mode=${appMode}`), {
           method: 'DELETE'
         });
         if (res.ok) {
@@ -1478,7 +1479,7 @@ export default function Home() {
     const payload = { ticker, quantity, entry_price, policy };
     if (backendOnline) {
       try {
-        const res = await fetch(`http://localhost:8008/api/holdings?mode=${appMode}`, {
+        const res = await fetch(apiUrl(`/api/holdings?mode=${appMode}`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -1506,7 +1507,7 @@ export default function Home() {
 
     if (backendOnline) {
       try {
-        const res = await fetch(`http://localhost:8008/api/account?mode=${appMode}`, {
+        const res = await fetch(apiUrl(`/api/account?mode=${appMode}`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cash: cashVal })
@@ -3671,7 +3672,7 @@ export default function Home() {
                               onClick={async () => {
                                 setRunningSim(true);
                                 try {
-                                  const res = await fetch(`http://localhost:8008/api/simulate?days=${simDays}`, { method: 'POST' });
+                                  const res = await fetch(apiUrl(`/api/simulate?days=${simDays}`), { method: 'POST' });
                                   if (res.ok) {
                                     setTimeout(fetchData, 1500);
                                   }
@@ -3703,7 +3704,7 @@ export default function Home() {
                               onClick={async () => {
                                 setRunningSim(true);
                                 try {
-                                  const res = await fetch(`http://localhost:8008/api/backtest-virtual?months=${replayMonths}`, { method: 'POST' });
+                                  const res = await fetch(apiUrl(`/api/backtest-virtual?months=${replayMonths}`), { method: 'POST' });
                                   if (res.ok) {
                                     setTimeout(fetchData, 1500);
                                   }
@@ -4616,7 +4617,7 @@ export default function Home() {
                     onClick={async () => {
                       setForecastStatus('Queued...');
                       try {
-                        const res = await fetch('http://localhost:8008/api/crash/forecast', { method: 'POST' });
+                        const res = await fetch(apiUrl('/api/crash/forecast'), { method: 'POST' });
                         if (res.ok) {
                           const data = await res.json();
                           setForecastJobId(data.job_id);

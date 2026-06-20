@@ -51,6 +51,7 @@ from ml_engine.models import PortfolioOptimizer
 app = FastAPI(title="Ampytech Trader API", version="1.0.0")
 
 # Enable Cross-Origin Resource Sharing (CORS)
+# localhost + private LAN IPs (10.x, 192.168.x, 172.16–31.x) on common dev ports.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -59,6 +60,7 @@ app.add_middleware(
         "http://localhost:3002",
         "http://localhost:3003",
     ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

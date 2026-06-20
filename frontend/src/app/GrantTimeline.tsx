@@ -101,7 +101,8 @@ const fmtDateFull = (t: number) =>
  *   3. Share of granted shares that are in profit vs underwater (stacked green/red, 0-100%).
  * Drop it anywhere with a ticker that has recorded equity lots/grants.
  */
-export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008', compact = false }: GrantTimelineProps) {
+export default function GrantTimeline({ ticker, apiBase: apiBaseProp, compact = false }: GrantTimelineProps) {
+  const apiBaseResolved = apiBaseProp ?? (typeof window !== 'undefined' ? `http://${window.location.hostname}:8008` : 'http://localhost:8008');
   const [data, setData] = useState<TimelineResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +111,7 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`${apiBase}/api/equity/grant-timeline/${encodeURIComponent(ticker)}`)
+    fetch(`${apiBaseResolved}/api/equity/grant-timeline/${encodeURIComponent(ticker)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
         return r.json();
@@ -119,7 +120,7 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
       .catch((e) => { if (!cancelled) setError(String(e.message || e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [ticker, apiBase]);
+  }, [ticker, apiBaseResolved]);
 
   // Merge the price series and the grant markers onto one numeric (timestamp) x-axis so the grant
   // scatter dots align exactly with the lines even when grants fall between downsampled points.
