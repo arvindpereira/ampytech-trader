@@ -14,9 +14,9 @@ fixed. The honest concern now is subtler: the strategies *work*, but mostly in b
 - **Volatility Sizing**: Per-ticker volatility target scaling (`min(1.0, 0.35 / name_vol)`) to dynamically reduce size for high-beta tickers.
 - **Honest, look-ahead-free evaluation** (`make swing-eval`, Model Evaluation tab) with a movable `oos_start`, stress windows, and explicit caveats.
 - **Per-stock strategy suggester** that is **self-validated** (following it lifted blended OOS Sharpe), plus a **regime overlay** that auto-shrinks swing in defensive regimes.
-- **Crash Radar & Defensive Strategist**: Real-time Composite Crash-Risk Index (OOS, Winsorized, percentile and z-score normalized), Posture State Machine stances (Normal, Froth, De-Risk, Protect, Deploy, Recover), defensive playbooks (Buffett, Dalio, Taleb, Stagflation/Deflation asset branches), parameter sweeps (Minimax Regret wargaming), and gated execution rebalancing.
+- **Crash Radar & Defensive Strategist**: Real-time Composite Crash-Risk Index (OOS, Winsorized, percentile and z-score normalized), Posture State Machine stances (Normal, Froth, De-Risk, Protect, Deploy, Recover), defensive playbooks (Buffett, Dalio, Taleb, Stagflation/Deflation asset branches), coherent (monotone-projected) experimental drawdown odds, a **policy-comparison Scenario Wargame** (Buy & Hold → static → glide-path/custom across Dot-Com/GFC/COVID/2022 + synthetic crashes) with an **OpenAI wargame analyst**, and a **preview-then-confirm** gated paper rebalance (read-only plan with real tickers/prices before any order). Crash artifacts refresh on a **data-change fingerprint** (not blindly on a clock); the wargame comparison + analyst are cached to disk and surface "last run / next auto-update / stale" indicators in the UI.
 - **Capital buckets + soft caps**: execution never exceeds the user's per-strategy limits.
-- **Data safety**: commit-stamped Google-Drive DB backups with verified restore.
+- **Data safety**: commit-stamped Google-Drive backups (DB + a files zip of models and **all cached JSON** — wargame/forecast caches included; OAuth token excluded) with verified restore.
 
 ## The honest verdict on the strategies
 
@@ -34,7 +34,7 @@ See [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) for the
 - **MPT absolute returns are not a forward estimate.**
 - **HMM regime classifier** drives the overlay/scaling but hasn't been stress-validated as rigorously as the swing/MPT eval — treat the overlay as a sensible guardrail, not a precise bear-timer.
 - **Experimental Drawdown Odds**: High regularized forecasting model is trained on only 3-4 historical bear episodes since 1998; outputs are strictly illustrative/experimental.
-- **Wargaming sweeps**: MiniMax Regret knob sweep assumes historical crisis envelopes (2000, 2008, 2020, 2022) represent future downside boundaries.
+- **Scenario Wargame**: policy comparison replays assume the historical crisis envelopes (2000, 2008, 2020, 2022) and the synthetic crash shapes represent plausible future downside boundaries; the AI analyst summarizes those results and is not an independent forecast.
 - **Ollama dependency**: swing news scoring stalls if Ollama is down (degrades gracefully to stale news or falls back to OpenAI if key is present).
 - **GitHub LFS**: ~1.1 GB of historical DB snapshots remain (capped; would need repo recreation to reclaim). The DB is no longer tracked.
 - **Fictional `SPACE` ticker** is synthetic (GE-proxy) — not a tradeable signal.

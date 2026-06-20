@@ -23,6 +23,12 @@ MASSIVE_SYMBOL_OVERRIDES = {"BRK-B": "BRK.B"}
 # Fictional tickers (e.g. SpaceX SPACE) that should be generated synthetically.
 FICTIONAL_TICKERS = {"SPACE"}
 
+# Safe-asset ETFs used by the Crash Radar defensive playbook. They are NOT part of the tradeable
+# universe (so they stay out of the screener/sentiment pipeline), but the paper rebalancer needs
+# realistic prices for them. They are stored only in daily_prices, which is never purged by
+# universe membership.
+DEFENSIVE_ETFS = ["TLT", "IEF", "BIL", "LQD", "TIP", "GLD", "GSG"]
+
 
 def map_ticker_to_massive(ticker):
     return MASSIVE_SYMBOL_OVERRIDES.get(ticker, ticker)
@@ -573,6 +579,36 @@ def fetch_recent_prices():
 # DAILY: daily_prices (Yahoo, full history)
 # ---------------------------------------------------------------------------
 
+def fetch_defensive_etf_prices(force=False):
+    """Fetches DAILY history (Yahoo) for the Crash Radar safe-asset ETFs into daily_prices.
+
+    Stored only in daily_prices (not recent_prices) so the universe-purge in fetch_recent_prices()
+    can't delete them. Skips tickers already fresh (<=2 days old) unless force=True.
+    """
+    init_db()
+    end_date = datetime.now()
+    default_start = datetime.strptime(DAILY_HISTORY_START, "%Y-%m-%d")
+    db = SessionLocal()
+    summary = {}
+    try:
+        for ticker in DEFENSIVE_ETFS:
+            earliest, latest = _earliest_latest(db, DailyPrice, ticker)
+            if latest is not None and not force and latest >= end_date - timedelta(days=2):
+                summary[ticker] = "fresh"
+                continue
+            start = default_start if latest is None else latest
+            bars = fetch_yahoo_daily(ticker, start, end_date)
+            if isinstance(bars, str) or not bars:
+                summary[ticker] = "no-data"
+                continue
+            added, updated = _write_bars(db, DailyPrice, ticker, bars, daily=True)
+            summary[ticker] = f"+{added}/{updated}"
+    finally:
+        db.close()
+    print(f"Defensive ETF daily price fetch: {summary}")
+    return summary
+
+
 def fetch_daily_history():
     """Fetches full multi-decade DAILY history (Yahoo) into daily_prices."""
     init_db()
@@ -699,6 +735,13 @@ def fetch_daily_history():
                     print(f"Synthesized {len(new_space_prices)} daily prices for SPACE using GE as proxy (multiplier: {mult:.4f}).")
     finally:
         db.close()
+
+    # Keep the defensive safe-asset ETFs fresh alongside the regular daily refresh.
+    try:
+        fetch_defensive_etf_prices()
+    except Exception as e:
+        print(f"Defensive ETF price fetch failed (non-fatal): {e}")
+
     print("Daily history fetch completed.\n")
 
 

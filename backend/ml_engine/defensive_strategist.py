@@ -10,6 +10,18 @@ from app.database import SessionLocal, CrashRiskSnapshot, VirtualPosition, Macro
 from ml_engine.models import PortfolioOptimizer
 from ml_engine.glide import get_standardized_score, compute_defensive_coefficient, PRESETS
 
+# Human-readable names for the safe-asset ETFs used in the defensive mix. The mix itself is
+# keyed by the real, tradeable ticker so paper-rebalance previews price and order realistically.
+SAFE_ASSET_LABELS = {
+    "TLT": "Long-Term US Treasuries",
+    "IEF": "Intermediate US Treasuries",
+    "BIL": "Short T-Bills",
+    "LQD": "Investment-Grade Corp Bonds",
+    "TIP": "TIPS (Inflation-Protected)",
+    "GLD": "Gold",
+    "GSG": "Broad Commodities",
+}
+
 def load_latest_snapshot():
     """Loads the newest CrashRiskSnapshot from SQLite."""
     db = SessionLocal()
@@ -35,10 +47,14 @@ def get_spy_trend_score():
     # In live run, it evaluates the SPY position relative to historical prices
     return 1.0
 
-def build_defensive_playbook(preset_name="balanced"):
+def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
     """
     Computes stances, staged cash ladders, hedges, and the regret matrix.
     Returns: JSON-serializable playbook dictionary.
+
+    If ``custom_knobs`` (a dict possibly containing theta/k/gamma/L/U) is given,
+    it overrides the named preset so the user's live glide-path curve is honored
+    end-to-end. ``preset_applied`` is reported as "custom" in that case.
     """
     snap = load_latest_snapshot()
     if not snap:
@@ -48,8 +64,13 @@ def build_defensive_playbook(preset_name="balanced"):
     risk_band = snap.risk_band
     posture = snap.current_posture
     
-    # Load glide path settings
-    knobs = PRESETS.get(preset_name, PRESETS["balanced"])
+    # Load glide path settings (custom knobs override the named preset)
+    if custom_knobs:
+        knobs = dict(PRESETS["balanced"])
+        knobs.update({kk: vv for kk, vv in custom_knobs.items() if vv is not None})
+        preset_name = "custom"
+    else:
+        knobs = PRESETS.get(preset_name, PRESETS["balanced"])
     z = get_standardized_score(comp_idx)
     trend = get_spy_trend_score()
     
@@ -117,18 +138,18 @@ def build_defensive_playbook(preset_name="balanced"):
     
     if is_inflationary:
         safe_asset_mix = {
-            "Gold (GLD)": 35.0,
-            "Commodities (GSG)": 25.0,
-            "Short T-Bills (BIL)": 20.0,
-            "TIPS (TIP)": 20.0
+            "GLD": 35.0,
+            "GSG": 25.0,
+            "BIL": 20.0,
+            "TIP": 20.0
         }
         active_branch = "Stagflation / Inflationary"
         safe_asset_explanation = "Elevated inflation expectations (Breakeven > 2.5%). Long bonds excluded due to rate volatility risk (e.g. 2022 shock)."
     else:
         safe_asset_mix = {
-            "Long-Term Treasuries (TLT)": 45.0,
-            "Short T-Bills (BIL)": 45.0,
-            "High-Quality Corporate Bonds (LQD)": 10.0
+            "TLT": 45.0,
+            "BIL": 45.0,
+            "LQD": 10.0
         }
         active_branch = "Deflationary Bust"
         safe_asset_explanation = "Low inflation expectations (Breakeven <= 2.5%). Safe capital yields to long-term bonds for deflation protection."
@@ -201,7 +222,8 @@ def build_defensive_playbook(preset_name="balanced"):
             "safe_asset_selection": {
                 "active_branch": active_branch,
                 "explanation": safe_asset_explanation,
-                "mix": safe_asset_mix
+                "mix": safe_asset_mix,
+                "mix_labels": {t: SAFE_ASSET_LABELS.get(t, t) for t in safe_asset_mix}
             }
         },
         "regret_matrix": regret_matrix,

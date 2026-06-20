@@ -32,11 +32,12 @@ make install            # backend venv + Python deps + frontend npm deps
 - `make swing-eval` / `make longterm-eval` / `make longterm-tilt` — research evaluations.
 - `make backtest` — in-sample PyBroker audit.
 
-**DB backup (Google Drive)** — the DB is **not** in git/LFS; back it up here:
-- `make db-backup [BACKUP_KEEP=10]` — upload a commit-stamped copy.
-- `make db-backup-list` — list backups (with their commit).
-- `make db-verify` — download + validate a backup WITHOUT touching the live DB.
-- `make db-restore` / `make db-restore-commit` — restore newest / the one matching the current commit.
+**Backups (Google Drive)** — the DB and large artifacts are **not** in git/LFS; back them up here. Every backup is **commit-stamped** so a restore matches the code version that produced it.
+- `make backup [BACKUP_KEEP=10]` — upload BOTH a DB copy and a files zip. The files zip = trained models (`ml_engine/saved_models/`), archived premium news, and **all cached JSON in `backend/data/`** (Crash Radar `crash_forecast_state.json`, the cached scenario wargame + AI analyst `wargame_cache.json`, IPO markers, LLM pricing, premium-ingest state). The OAuth token `gdrive_token.json` is excluded.
+- `make db-backup` / `make files-backup` — upload just one side.
+- `make db-backup-list` / `make files-backup-list` — list backups (with their commit).
+- `make db-verify` / `make files-verify` — download + validate a backup WITHOUT touching the live data.
+- `make restore` / `make restore-commit` — restore newest / the one matching the current commit (DB + files). Existing files move aside to `*.pre-restore`.
 
 **Run**
 - `make serve-backend` (FastAPI :8008) · `make serve-frontend` (Next.js :3002) · `make schedule` (daemon).

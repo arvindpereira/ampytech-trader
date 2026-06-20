@@ -22,6 +22,7 @@ backend/data/scheduler_heartbeat.txt
 backend/data/llm_pricing.json
 backend/data/premium_ingest_state.json
 backend/data/crash_forecast_state.json
+backend/data/wargame_cache.json
 
 # Caches
 pybroker_cache/

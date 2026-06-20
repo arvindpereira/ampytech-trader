@@ -9,11 +9,51 @@ from datetime import datetime, timedelta
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import SessionLocal, DailyPrice, CrisisPrice, MacroIndicator, CrashRiskSnapshot
+from app.core.config import DATA_STORAGE_DIR
 from ml_engine.glide import compute_defensive_coefficient, PRESETS
 from ml_engine.crash_radar import compute_composite_index
 
 # Global memory cache for pre-computed risk indices to keep sweeps fast
 _risk_index_cache = {}
+
+# On-disk cache for the (expensive) scenario comparison + AI analyst interpretation so the last
+# run is shown by default and the OpenAI analyst is not re-billed on every page load.
+WARGAME_CACHE_PATH = os.path.join(DATA_STORAGE_DIR, "wargame_cache.json")
+
+
+def load_wargame_cache():
+    """Returns the persisted wargame cache dict (comparison, analyst, timestamps, fingerprints)."""
+    try:
+        with open(WARGAME_CACHE_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_wargame_cache(data):
+    try:
+        with open(WARGAME_CACHE_PATH, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"⚠ Could not persist wargame cache: {e}")
+
+
+def save_wargame_comparison(comparison, fingerprint=None):
+    """Persist the latest scenario comparison so it renders by default on the next page load."""
+    cache = load_wargame_cache()
+    cache["comparison"] = comparison
+    cache["comparison_generated_at"] = datetime.now().isoformat()
+    cache["fingerprint"] = fingerprint
+    _save_wargame_cache(cache)
+
+
+def save_wargame_analyst(analyst, fingerprint=None):
+    """Persist the AI analyst interpretation alongside the comparison it was generated for."""
+    cache = load_wargame_cache()
+    cache["analyst"] = analyst
+    cache["analyst_generated_at"] = datetime.now().isoformat()
+    cache["analyst_fingerprint"] = fingerprint
+    _save_wargame_cache(cache)
 
 def get_historical_era_dates(era):
     """Returns the start and end dates for historical eras."""
@@ -119,9 +159,14 @@ def precompute_risk_indices(era, dates_list):
     for k, v in weekly_vals.items():
         series[pd.to_datetime(k)] = v
     series = series.interpolate().ffill().bfill()
-    
-    _risk_index_cache[cache_key] = series.to_dict()
-    return _risk_index_cache[cache_key]
+
+    # Key by "YYYY-MM-DD" strings so the per-day lookups in the simulator (which format dates to
+    # strings) actually hit. A Timestamp-keyed dict here silently fell back to 50.0 for every day,
+    # which made glide policies look inert over historical eras.
+    result = {(k.strftime("%Y-%m-%d") if hasattr(k, "strftime") else str(k)[:10]): float(v)
+              for k, v in series.items()}
+    _risk_index_cache[cache_key] = result
+    return result
 
 def generate_bootstrap_scenario(spy_returns, target_dd=0.30, horizon=252, recovery="V", inflation="deflation"):
     """
@@ -186,107 +231,101 @@ def generate_bootstrap_scenario(spy_returns, target_dd=0.30, horizon=252, recove
     })
     return df
 
-def run_simulation(prices_df, risk_indices, theta, k, gamma, L=0.0, U=0.90, fee_pct=0.0005):
+def _defensive_weight_series(prices_df, risk_indices, policy):
+    """Per-day target defensive weight d_t in [0,1] for a policy.
+
+    policy["type"] is one of:
+      - "buyhold": always 0 (100% SPY).
+      - "static":  constant policy["d"] (e.g. Dalio All-Weather, Taleb Barbell).
+      - "glide":   dynamic logistic glide on the standardized crash-risk score with a trend gate,
+                   using policy["theta"]/["k"]/["gamma"]/["L"]/["U"].
     """
-    Runs daily portfolio simulation for a given knob configuration.
-    Blends aggressive (SPY) and defensive (TLT) portfolios.
-    Returns: Ending Value, Max Drawdown, Ulcer Index, CVaR, Turnover, and daily equity curve.
-    """
-    V = 100000.0 # Starting capital
-    V_history = [V]
-    
-    # Pre-calculate SPY 200 SMA for trend gate
-    spy_close = prices_df["SPY"].values
-    tlt_close = prices_df["TLT"].values
-    dates = prices_df["date"].values
     n = len(prices_df)
-    
-    # 200-day rolling window for trend gate
-    # In eras like Dot-Com / GFC we have daily prices leading into the era, so we can calculate SMA.
-    # For synthetic, we can approximate trend score by local price direction.
+    ptype = policy.get("type", "glide")
+    if ptype == "buyhold":
+        return np.zeros(n)
+    if ptype == "static":
+        return np.full(n, float(policy.get("d", 0.0)))
+
+    spy_close = prices_df["SPY"].values
+    dates = prices_df["date"].values
     spy_sma200 = pd.Series(spy_close).rolling(200, min_periods=1).mean().values
-    
-    w_agg = 1.0
-    w_def = 0.0
-    
-    turnover = 0.0
-    
-    for t in range(1, n):
-        # 1. Compute standardized risk score z
+    theta, k, gamma = policy["theta"], policy["k"], policy["gamma"]
+    L, U = policy.get("L", 0.0), policy.get("U", 0.90)
+
+    d = np.zeros(n)
+    for t in range(n):
         dt_str = dates[t].strftime("%Y-%m-%d") if hasattr(dates[t], "strftime") else str(dates[t])[:10]
         comp_idx = risk_indices.get(dt_str, 50.0)
         z = (comp_idx - 50.0) / 15.0
-        
-        # 2. Trend score
         denom = (spy_sma200[t] * 0.05) if spy_sma200[t] > 0 else 1.0
         trend_score = np.clip((spy_close[t] - spy_sma200[t]) / denom, -1.0, 1.0)
-        
-        # 3. Defensive blending weight
-        d_val = compute_defensive_coefficient(z, trend_score, theta, k, L=L, U=U, gamma=gamma)
-        
-        target_w_agg = 1.0 - d_val
-        target_w_def = d_val
-        
-        # Calculate daily asset returns
+        d[t] = compute_defensive_coefficient(z, trend_score, theta, k, L=L, U=U, gamma=gamma)
+    return d
+
+
+def _simulate_curve(prices_df, d_series, fee_pct=0.0005):
+    """Daily SPY/TLT blend simulation given a target defensive-weight series. Starts fully in SPY
+    and rebalances toward d_t when drift exceeds 2%. Returns (equity_curve ndarray, turnover)."""
+    spy_close = prices_df["SPY"].values
+    tlt_close = prices_df["TLT"].values
+    n = len(prices_df)
+
+    V = 100000.0
+    V_history = [V]
+    w_agg, w_def = 1.0, 0.0
+    turnover = 0.0
+
+    for t in range(1, n):
+        target_w_agg = 1.0 - d_series[t]
+        target_w_def = d_series[t]
+
         ret_agg = (spy_close[t] - spy_close[t-1]) / spy_close[t-1]
         ret_def = (tlt_close[t] - tlt_close[t-1]) / tlt_close[t-1]
-        
-        # Prior portfolio value before rebalancing
-        V_prior = V * (1 + w_agg * ret_agg + w_def * ret_def)
-        
-        # Drifted weights before rebalancing
-        w_agg_drift = (w_agg * (1 + ret_agg)) / (1 + w_agg * ret_agg + w_def * ret_def)
-        w_def_drift = (w_def * (1 + ret_def)) / (1 + w_agg * ret_agg + w_def * ret_def)
-        
-        # Rebalance threshold (2% deviation)
+
+        gross = 1 + w_agg * ret_agg + w_def * ret_def
+        V_prior = V * gross
+        w_agg_drift = (w_agg * (1 + ret_agg)) / gross
+        w_def_drift = (w_def * (1 + ret_def)) / gross
+
         if abs(target_w_agg - w_agg_drift) > 0.02:
-            # Execute trade
-            trade_size_agg = abs(target_w_agg - w_agg_drift)
-            trade_size_def = abs(target_w_def - w_def_drift)
-            rebalance_cost = V_prior * (trade_size_agg + trade_size_def) * fee_pct
-            
-            V = V_prior - rebalance_cost
-            w_agg = target_w_agg
-            w_def = target_w_def
-            turnover += (trade_size_agg + trade_size_def)
+            trade_size = abs(target_w_agg - w_agg_drift) + abs(target_w_def - w_def_drift)
+            V = V_prior - V_prior * trade_size * fee_pct
+            w_agg, w_def = target_w_agg, target_w_def
+            turnover += trade_size
         else:
             V = V_prior
-            w_agg = w_agg_drift
-            w_def = w_def_drift
-            
+            w_agg, w_def = w_agg_drift, w_def_drift
+
         V_history.append(V)
-        
-    # Metrics calculations
-    V_history = np.array(V_history)
+
+    return np.array(V_history), turnover
+
+
+def run_simulation(prices_df, risk_indices, theta, k, gamma, L=0.0, U=0.90, fee_pct=0.0005):
+    """
+    Runs daily portfolio simulation for a given GLIDE knob configuration (kept for the existing
+    sweep/comparison callers). Blends aggressive (SPY) and defensive (TLT) portfolios.
+    Returns: Ending Value, Max Drawdown, Ulcer Index, CVaR, Turnover, and daily equity curve.
+    """
+    policy = {"type": "glide", "theta": theta, "k": k, "gamma": gamma, "L": L, "U": U}
+    d_series = _defensive_weight_series(prices_df, risk_indices, policy)
+    V_history, turnover = _simulate_curve(prices_df, d_series, fee_pct=fee_pct)
+
     returns = np.diff(V_history) / V_history[:-1]
-    
-    # Ending Value
     ending_val = V_history[-1]
-    
-    # Max Drawdown
     peaks = np.maximum.accumulate(V_history)
     drawdowns = (peaks - V_history) / peaks
-    max_dd = np.max(drawdowns)
-    
-    # Ulcer Index
-    ulcer_index = np.sqrt(np.mean(drawdowns ** 2))
-    
-    # CVaR (5% tail)
-    if len(returns) > 0:
-        cvar = np.mean(np.sort(returns)[:max(1, int(len(returns) * 0.05))])
-    else:
-        cvar = 0.0
-        
-    total_return = (ending_val - 100000.0) / 100000.0 * 100.0
-    
+    cvar = np.mean(np.sort(returns)[:max(1, int(len(returns) * 0.05))]) if len(returns) > 0 else 0.0
+
     return {
         "ending_value": float(ending_val),
-        "total_return": float(total_return),
-        "max_drawdown": float(max_dd * 100.0),
-        "ulcer_index": float(ulcer_index * 100.0),
+        "total_return": float((ending_val - 100000.0) / 100000.0 * 100.0),
+        "max_drawdown": float(np.max(drawdowns) * 100.0),
+        "ulcer_index": float(np.sqrt(np.mean(drawdowns ** 2)) * 100.0),
         "cvar": float(cvar * 100.0),
         "turnover": float(turnover),
-        "equity_curve": V_history.tolist()
+        "equity_curve": V_history.tolist(),
     }
 
 def _metrics_from_curve(V_history):
@@ -418,6 +457,182 @@ def run_preset_comparison(lookback_years=5, custom_knobs=None):
         "dates": sampled_dates,
         "benchmark": benchmark,
         "series": series,
+    }
+
+
+KNOB_GLOSSARY = {
+    "theta": {
+        "symbol": "θ",
+        "name": "De-risking threshold",
+        "desc": "How high the standardized crash-risk score must climb before you start shifting "
+                "from stocks into defense. Higher θ = wait longer before de-risking (more aggressive); "
+                "lower θ = bail to safety sooner (more defensive).",
+    },
+    "k": {
+        "symbol": "k",
+        "name": "Curve steepness",
+        "desc": "How sharply the switch from offense to defense happens around θ. Higher k = a fast, "
+                "almost all-or-nothing flip; lower k = a gradual glide that scales in over a range.",
+    },
+    "gamma": {
+        "symbol": "γ",
+        "name": "Trend gate",
+        "desc": "Raises the threshold while the market is in an uptrend so you don't bail out early "
+                "during a melt-up. Higher γ = keep participating longer in strong uptrends.",
+    },
+}
+
+# Scenario display metadata.
+SCENARIO_META = {
+    "dotcom": {"label": "Dot-Com Bust (2000–02)",
+               "subtitle": "Nasdaq −78% over ~2.5y; slow grind down. (Defense = cash-like; TLT not available pre-2002.)"},
+    "gfc": {"label": "Global Financial Crisis (2008)",
+            "subtitle": "S&P −57% peak-to-trough; credit seizure, flight to Treasuries."},
+    "covid": {"label": "COVID Crash (2020)",
+              "subtitle": "−34% in 5 weeks, then a V-shaped rebound — punishes over-reaction."},
+    "2022": {"label": "2022 Rate-Shock Bear",
+             "subtitle": "−25% grind; bonds fell WITH stocks (defense hurt too)."},
+    "synth_deflation": {"label": "Synthetic −35% (deflationary, U-shaped)",
+                        "subtitle": "Bonds hedge stocks; delayed recovery off the bottom."},
+    "synth_stagflation": {"label": "Synthetic −30% (stagflation, V-shaped)",
+                          "subtitle": "Bonds fall with stocks; fast snap-back recovery."},
+}
+
+
+def _policy_roster(custom_knobs=None):
+    """The fixed set of strategies compared head-to-head, from 'do nothing' to fully defensive."""
+    P = PRESETS
+    roster = [
+        {"id": "buyhold", "label": "Buy & Hold", "type": "buyhold", "color": "#9CA3AF",
+         "desc": "100% SPY, never de-risk — the 'do nothing' baseline."},
+        {"id": "aggressive", "label": "Aggressive Glide", "type": "glide", "color": "#F59E0B",
+         "theta": P["aggressive"]["theta"], "k": P["aggressive"]["k"], "gamma": P["aggressive"]["gamma"],
+         "L": P["aggressive"]["L"], "U": P["aggressive"]["U"],
+         "desc": "Stays in stocks and only de-risks when risk is extreme (late, shallow)."},
+        {"id": "balanced", "label": "Balanced Glide", "type": "glide", "color": "#3B82F6",
+         "theta": P["balanced"]["theta"], "k": P["balanced"]["k"], "gamma": P["balanced"]["gamma"],
+         "L": P["balanced"]["L"], "U": P["balanced"]["U"],
+         "desc": "Moderate, symmetric de-risking around average risk."},
+        {"id": "conservative", "label": "Conservative Glide", "type": "glide", "color": "#10B981",
+         "theta": P["conservative"]["theta"], "k": P["conservative"]["k"], "gamma": P["conservative"]["gamma"],
+         "L": P["conservative"]["L"], "U": P["conservative"]["U"],
+         "desc": "De-risks early and holds more defense (cautious)."},
+        {"id": "allweather", "label": "All-Weather (Dalio)", "type": "static", "d": 0.60, "color": "#A78BFA",
+         "desc": "Fixed ~40% SPY / 60% defense at all times, ignoring the signal (Ray Dalio archetype)."},
+        {"id": "taleb", "label": "Taleb Barbell", "type": "static", "d": 0.90, "color": "#EF4444",
+         "desc": "Fixed 90% safe / 10% risk — extreme caution (Nassim Taleb archetype)."},
+    ]
+    if custom_knobs:
+        roster.append({
+            "id": "custom", "label": "Your Custom Knobs", "type": "glide", "color": "#EC4899",
+            "theta": float(custom_knobs.get("theta", 0.85)),
+            "k": float(custom_knobs.get("k", 2.0)),
+            "gamma": float(custom_knobs.get("gamma", 0.25)),
+            "L": 0.0, "U": 0.90,
+            "desc": "The glide-path curve currently set on your knobs.",
+        })
+    return roster
+
+
+def run_scenario_comparison(custom_knobs=None, progress_cb=None):
+    """Replays every policy in the roster across historical bear regimes (Dot-Com, GFC, COVID, 2022)
+    and two synthetic crash shapes, returning downsampled equity curves + risk/return metrics per
+    (scenario, policy). Read-only — never touches the live/paper portfolio.
+    """
+    def report(p, s):
+        if progress_cb:
+            progress_cb(int(p), s)
+
+    roster = _policy_roster(custom_knobs)
+    scenarios_def = [
+        ("dotcom", "historical"), ("gfc", "historical"), ("covid", "historical"), ("2022", "historical"),
+        ("synth_deflation", "synthetic"), ("synth_stagflation", "synthetic"),
+    ]
+
+    # Daily SPY log-returns feed the synthetic bootstrap. Seed for reproducible scenarios.
+    np.random.seed(42)
+    db = SessionLocal()
+    spy_rows = db.query(DailyPrice.close).filter(DailyPrice.ticker == "SPY").order_by(DailyPrice.date.asc()).all()
+    db.close()
+    if spy_rows:
+        spy_close_all = np.array([float(r[0]) for r in spy_rows])
+        spy_returns = np.diff(np.log(spy_close_all))
+    else:
+        spy_returns = np.random.normal(0.0003, 0.01, 1000)
+
+    out_scenarios = []
+    total = len(scenarios_def)
+    for i, (sid, kind) in enumerate(scenarios_def):
+        report(8 + i / total * 84, f"Simulating {SCENARIO_META.get(sid, {}).get('label', sid)}")
+        if kind == "historical":
+            prices = load_era_prices(sid)
+            dates_list = prices["date"].tolist()
+            risk = precompute_risk_indices(sid, dates_list)
+        else:
+            if sid == "synth_deflation":
+                prices = generate_bootstrap_scenario(spy_returns, target_dd=0.35, horizon=252,
+                                                     recovery="U", inflation="deflation")
+            else:
+                prices = generate_bootstrap_scenario(spy_returns, target_dd=0.30, horizon=252,
+                                                     recovery="V", inflation="stagflation")
+            n_days = len(prices)
+            synth_risk = 40.0 + 45.0 * np.sin(np.pi * np.arange(n_days) / n_days)
+            dl = prices["date"].tolist()
+            risk = {dl[j].strftime("%Y-%m-%d"): float(synth_risk[j]) for j in range(n_days)}
+
+        n = len(prices)
+        step = max(1, n // 120)
+        idx = list(range(0, n, step))
+        if idx[-1] != n - 1:
+            idx.append(n - 1)
+        date_col = prices["date"]
+        dates_fmt = []
+        for j in idx:
+            dv = date_col.iloc[j]
+            dates_fmt.append(dv.strftime("%Y-%m-%d") if hasattr(dv, "strftime") else str(dv)[:10])
+
+        series = {}
+        for pol in roster:
+            d_series = _defensive_weight_series(prices, risk, pol)
+            curve, turnover = _simulate_curve(prices, d_series)
+            m = _metrics_from_curve(curve)
+            series[pol["id"]] = {
+                "equity_curve": [round(float(curve[j]), 2) for j in idx],
+                "turnover": round(float(turnover), 2),
+                "total_return": round(m["total_return"], 2),
+                "max_drawdown": round(m["max_drawdown"], 2),
+                "ulcer_index": round(m["ulcer_index"], 2),
+                "cvar": round(m["cvar"], 3),
+                "sharpe": round(m["sharpe"], 2),
+                "final_value": round(float(curve[-1]), 0),
+            }
+
+        # Perfect-foresight reference: hold SPY to the peak, TLT through the trough, SPY after.
+        spy = prices["SPY"].values
+        tlt = prices["TLT"].values
+        peak = int(np.argmax(spy))
+        trough = peak + int(np.argmin(spy[peak:]))
+        pf_val = 100000.0 * (spy[peak] / spy[0]) * (tlt[trough] / tlt[peak]) * (spy[-1] / spy[trough])
+        pf_ret = (pf_val - 100000.0) / 100000.0 * 100.0
+
+        meta = SCENARIO_META.get(sid, {})
+        out_scenarios.append({
+            "id": sid,
+            "kind": kind,
+            "label": meta.get("label", sid),
+            "subtitle": meta.get("subtitle", ""),
+            "dates": dates_fmt,
+            "series": series,
+            "perfect_foresight_return": round(float(pf_ret), 1),
+        })
+
+    report(96, "Finalizing")
+    return {
+        "policies": roster,
+        "knob_glossary": KNOB_GLOSSARY,
+        "scenarios": out_scenarios,
+        "has_custom": custom_knobs is not None,
+        "generated_at": datetime.now().isoformat(),
     }
 
 

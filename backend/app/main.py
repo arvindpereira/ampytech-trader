@@ -2991,16 +2991,28 @@ from pydantic import BaseModel as _BaseModel
 
 _FORECAST_RESULTS = {}
 _WARGAME_RESULTS = {}
+_SCENARIO_RESULTS = {}
 
 class WargameSweepRequest(_BaseModel):
     theta_range: Optional[dict] = None
     k_range: Optional[dict] = None
     gamma_range: Optional[dict] = None
 
+class ScenarioComparisonRequest(_BaseModel):
+    theta: Optional[float] = None
+    k: Optional[float] = None
+    gamma: Optional[float] = None
+
+class WargameInterpretRequest(_BaseModel):
+    comparison: dict
+
 class ApplyRebalancingRequest(_BaseModel):
     confirm_execution: bool
     target_posture: str
     preset: Optional[str] = "balanced"
+    theta: Optional[float] = None
+    k: Optional[float] = None
+    gamma: Optional[float] = None
 
 def _run_forecast_job(jid):
     try:
@@ -3035,6 +3047,25 @@ def _run_wargame_job(jid, theta_range, k_range, gamma_range):
         _job_update(jid, progress=40, stage="Running sweeps")
         res = run_wargame_sweep(theta_range, k_range, gamma_range)
         _WARGAME_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
+def _run_scenario_job(jid, custom_knobs):
+    try:
+        from ml_engine.wargame import run_scenario_comparison, save_wargame_comparison
+        res = run_scenario_comparison(
+            custom_knobs=custom_knobs,
+            progress_cb=lambda p, s: _job_update(jid, progress=p, stage=s),
+        )
+        _SCENARIO_RESULTS[jid] = res
+        # Persist so the last comparison renders by default on the next page load.
+        try:
+            from ml_engine.crash_model import crash_data_fingerprint
+            save_wargame_comparison(res, crash_data_fingerprint())
+        except Exception as ce:
+            print(f"⚠ Could not cache scenario comparison: {ce}")
         _job_update(jid, progress=100, stage="Complete", status="done")
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -3195,96 +3226,329 @@ def get_crash_wargame_result(job_id: str):
         return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
     return {"status": "unknown"}
 
+@app.post("/api/crash/wargame/scenarios")
+def trigger_scenario_comparison(req: ScenarioComparisonRequest):
+    """Spawns a background job replaying every defensive policy across historical bear regimes
+    and synthetic crashes. Read-only; passes the user's custom knobs through when supplied."""
+    custom = None
+    if req.theta is not None and req.k is not None and req.gamma is not None:
+        custom = {"theta": req.theta, "k": req.k, "gamma": req.gamma}
+    jid = _job_new("crash_scenarios", "Replaying policies over historical & synthetic crashes")
+    threading.Thread(target=_run_scenario_job, args=(jid, custom), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/crash/wargame/scenarios/result")
+def get_scenario_comparison_result(job_id: str):
+    """Polls the scenario comparison job."""
+    if job_id in _SCENARIO_RESULTS:
+        return {"status": "completed", "result": _SCENARIO_RESULTS[job_id]}
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.post("/api/crash/wargame/interpret")
+def interpret_wargame_endpoint(req: WargameInterpretRequest):
+    """AI analyst: plain-English summary of a scenario comparison result (mirrors the tab-2
+    expert interpretation). Synchronous OpenAI call. The result is cached to disk so it shows by
+    default and is not re-billed on every page load."""
+    from ml_engine.wargame_analyst import interpret_wargame
+    from ml_engine.wargame import save_wargame_analyst
+    try:
+        result = interpret_wargame(req.comparison)
+        try:
+            from ml_engine.crash_model import crash_data_fingerprint
+            save_wargame_analyst(result, crash_data_fingerprint())
+        except Exception as ce:
+            print(f"⚠ Could not cache wargame analyst: {ce}")
+        return result
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _next_weekday_run_iso(hour, minute, tz="America/New_York"):
+    """Next occurrence of a Mon–Fri HH:MM wall-clock time in the given timezone, as ISO-8601.
+
+    Mirrors the Crash Radar scheduler trigger (CronTrigger mon-fri) so the UI can show when the
+    next automatic refresh is due."""
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo(tz))
+    except Exception:
+        now = datetime.now()
+    cand = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if cand <= now:
+        cand += timedelta(days=1)
+    while cand.weekday() >= 5:  # Sat=5, Sun=6
+        cand += timedelta(days=1)
+    return cand.isoformat()
+
+
+@app.get("/api/crash/wargame/cache")
+def get_wargame_cache():
+    """Returns the last persisted scenario comparison + AI analyst so the Wargame card can render
+    immediately without re-running anything. Includes staleness flags (true when new forecast data
+    has arrived since the cached result was produced)."""
+    from ml_engine.wargame import load_wargame_cache
+    cache = load_wargame_cache()
+    cur_fp = None
+    try:
+        from ml_engine.crash_model import crash_data_fingerprint
+        cur_fp = crash_data_fingerprint()
+    except Exception:
+        pass
+    comp_fp = cache.get("fingerprint")
+    analyst_fp = cache.get("analyst_fingerprint")
+    return {
+        "comparison": cache.get("comparison"),
+        "analyst": cache.get("analyst"),
+        "comparison_generated_at": cache.get("comparison_generated_at"),
+        "analyst_generated_at": cache.get("analyst_generated_at"),
+        "comparison_stale": bool(cur_fp and comp_fp and cur_fp != comp_fp),
+        "analyst_stale": bool(cur_fp and analyst_fp and cur_fp != analyst_fp),
+        "next_scheduled": _next_weekday_run_iso(9, 30),
+    }
+
+
+@app.get("/api/crash/status")
+def get_crash_status():
+    """Timing metadata for the Crash Radar artifacts: when each was last refreshed and when the
+    next automatic, data-gated refresh is due. Drives the "Last updated / Next auto-update" badges."""
+    from app.database import SessionLocal, CrashRiskSnapshot
+    from ml_engine.crash_radar import get_latest_date
+    from ml_engine.wargame import load_wargame_cache
+
+    forecast_updated_at = None
+    try:
+        from ml_engine.crash_model import _FORECAST_STATE_PATH
+        with open(_FORECAST_STATE_PATH) as f:
+            forecast_updated_at = _json.load(f).get("updated_at")
+    except Exception:
+        pass
+
+    snap_created_at, as_of_date = None, None
+    cur_fp = None
+    db = SessionLocal()
+    try:
+        latest = get_latest_date()
+        snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest).first()
+        if snap:
+            snap_created_at = snap.created_at
+            as_of_date = snap.as_of_date
+    finally:
+        db.close()
+    try:
+        from ml_engine.crash_model import crash_data_fingerprint
+        cur_fp = crash_data_fingerprint()
+    except Exception:
+        pass
+
+    cache = load_wargame_cache()
+    next_run = _next_weekday_run_iso(9, 30)
+    schedule = "Weekdays 9:30 AM ET, only when new data has arrived"
+
+    return {
+        "data_fingerprint": (cur_fp or "")[:12],
+        "next_scheduled": next_run,
+        "index": {
+            "last_refresh": forecast_updated_at or snap_created_at,
+            "as_of_date": as_of_date,
+            "next_scheduled": next_run,
+            "schedule": schedule,
+        },
+        "forecast": {
+            "last_refresh": forecast_updated_at or snap_created_at,
+            "next_scheduled": next_run,
+            "schedule": schedule,
+        },
+        "wargame": {
+            "last_run": cache.get("comparison_generated_at"),
+            "next_scheduled": next_run,
+            "schedule": schedule,
+            "stale": bool(cur_fp and cache.get("fingerprint") and cur_fp != cache.get("fingerprint")),
+        },
+        "analyst": {
+            "last_run": cache.get("analyst_generated_at"),
+            "next_scheduled": None,
+            "schedule": "On demand (cached; not auto-run to control cost)",
+            "stale": bool(cur_fp and cache.get("analyst_fingerprint") and cur_fp != cache.get("analyst_fingerprint")),
+        },
+    }
+
+def _latest_paper_price(db, symbol):
+    """Latest price for a paper-rebalance ticker: prefer hourly recent_prices, then fall back to
+    daily_prices (where the defensive ETFs live, since they are outside the tradeable universe),
+    and finally to a neutral $100 placeholder."""
+    from app.database import RecentPrice, DailyPrice
+    r = db.query(RecentPrice).filter(RecentPrice.ticker == symbol).order_by(RecentPrice.date.desc()).first()
+    if r and r.close:
+        return float(r.close)
+    d = db.query(DailyPrice).filter(DailyPrice.ticker == symbol).order_by(DailyPrice.date.desc()).first()
+    if d and d.close:
+        return float(d.close)
+    return 100.0
+
+
+def _compute_rebalance_plan(db, preset: str = "balanced", custom_knobs=None):
+    """
+    Pure (read-only) computation of the defensive rebalancing plan: diffs target
+    blended weights against current paper positions and returns the proposed
+    orders plus validation. Shared by the preview (dry-run) and execute endpoints
+    so the preview is guaranteed to match what execution will do.
+    """
+    from ml_engine.defensive_strategist import build_defensive_playbook
+    from app.database import VirtualAccount, VirtualPosition, RecentPrice
+
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
+    account_exists = account is not None
+    cash = float(account.cash) if account else 100000.0
+
+    positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
+
+    def get_latest_price(symbol):
+        return _latest_paper_price(db, symbol)
+
+    portfolio_value = cash
+    current_values = {}
+    for pos in positions:
+        price = get_latest_price(pos.ticker)
+        current_values[pos.ticker] = float(pos.quantity) * price
+        portfolio_value += current_values[pos.ticker]
+
+    pb = build_defensive_playbook(preset_name=preset, custom_knobs=custom_knobs)
+    if pb.get("error"):
+        return {"error": pb["error"]}
+    d = float(pb.get("de_risk_coefficient", 0.0))
+
+    # Aggressive sleeve: current holdings proportions, or 100% SPY if account is empty
+    has_positions = bool(current_values) and sum(current_values.values()) > 0
+    if has_positions:
+        total_pos_val = sum(current_values.values())
+        w_agg = {t: v / total_pos_val for t, v in current_values.items()}
+    else:
+        w_agg = {"SPY": 1.0}
+
+    # Defensive sleeve: the active inflation/deflation safe-asset mix
+    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
+    w_def = {k: float(v) / 100.0 for k, v in safe_mix.items()}
+
+    all_tickers = set(w_agg) | set(w_def)
+    w_target = {t: (1.0 - d) * w_agg.get(t, 0.0) + d * w_def.get(t, 0.0) for t in all_tickers}
+
+    orders = []
+    for t in sorted(all_tickers):
+        target_val = portfolio_value * w_target[t]
+        curr_val = current_values.get(t, 0.0)
+        diff_val = target_val - curr_val
+        price = get_latest_price(t)
+        cur_w = (curr_val / portfolio_value * 100.0) if portfolio_value > 0 else 0.0
+        if abs(diff_val) > 50.0:
+            orders.append({
+                "ticker": t,
+                "side": "buy" if diff_val > 0 else "sell",
+                "qty": round(abs(diff_val) / price, 4),
+                "price": round(price, 2),
+                "value": round(abs(diff_val), 2),
+                "current_weight": round(cur_w, 2),
+                "target_weight": round(w_target[t] * 100.0, 2),
+            })
+
+    buy_total = sum(o["value"] for o in orders if o["side"] == "buy")
+    sell_total = sum(o["value"] for o in orders if o["side"] == "sell")
+    turnover = (buy_total + sell_total) / portfolio_value if portfolio_value > 0 else 0.0
+    est_cash_after = cash + sell_total - buy_total
+
+    warnings, errors = [], []
+    if not account_exists:
+        warnings.append("No paper account exists yet; a fresh $100,000 virtual account is created on execution.")
+    if portfolio_value <= 0:
+        errors.append("Portfolio value is zero or negative; nothing to rebalance.")
+    if not has_positions:
+        warnings.append("No current holdings — the aggressive sleeve defaults to 100% SPY before de-risking.")
+    if d <= 0.001:
+        warnings.append("De-risk coefficient is ~0% (the glide path says stay invested); few or no orders are expected.")
+    if not orders and portfolio_value > 0:
+        warnings.append("Portfolio is already within $50 of every target weight — no orders needed.")
+    if buy_total > cash + sell_total + 1.0:
+        warnings.append("Planned buys exceed cash available after sells; buy orders are capped to available cash on execution.")
+    if turnover > 0.6:
+        warnings.append(f"High turnover (~{turnover*100:.0f}% of the portfolio). Consider a more gradual preset.")
+
+    return {
+        "preset_applied": pb.get("preset_applied", preset),
+        "de_risk_coefficient": d,
+        "composite_index": pb.get("composite_index"),
+        "risk_band": pb.get("risk_band"),
+        "current_posture": pb.get("current_posture"),
+        "as_of_date": pb.get("as_of_date"),
+        "portfolio_value": round(portfolio_value, 2),
+        "cash_before": round(cash, 2),
+        "est_cash_after": round(est_cash_after, 2),
+        "buy_total": round(buy_total, 2),
+        "sell_total": round(sell_total, 2),
+        "turnover_pct": round(turnover * 100.0, 1),
+        "orders": orders,
+        "validation": {"ok": len(errors) == 0, "warnings": warnings, "errors": errors},
+    }
+
+
+def _knobs_from(theta, k, gamma):
+    if theta is not None and k is not None and gamma is not None:
+        return {"theta": theta, "k": k, "gamma": gamma}
+    return None
+
+
+@app.get("/api/crash/apply/preview")
+def preview_crash_rebalancing(
+    preset: str = "balanced",
+    theta: Optional[float] = None,
+    k: Optional[float] = None,
+    gamma: Optional[float] = None,
+    db=Depends(get_db),
+):
+    """Read-only dry run: returns the exact orders + validation that 'apply' would
+    execute, without touching the paper account."""
+    plan = _compute_rebalance_plan(db, preset=preset, custom_knobs=_knobs_from(theta, k, gamma))
+    if plan.get("error"):
+        raise HTTPException(status_code=422, detail=plan["error"])
+    plan["dry_run"] = True
+    return plan
+
+
 @app.post("/api/crash/apply")
 def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
     """
-    Diffs target defensive portfolio weights against current paper trading positions
-    and executes buy/sell rebalancing orders in the paper/virtual account.
+    Recomputes the validated rebalancing plan and executes its buy/sell orders in
+    the paper/virtual account (id=1). Never places live trades.
     """
     if not req.confirm_execution:
         raise HTTPException(status_code=400, detail="Execution must be explicitly confirmed.")
-        
-    from ml_engine.defensive_strategist import build_defensive_playbook
+
     from app.database import VirtualAccount, VirtualPosition, VirtualOrder, RecentPrice
-    
-    # 1. Fetch virtual account (id=1)
+
+    plan = _compute_rebalance_plan(
+        db, preset=req.preset or "balanced", custom_knobs=_knobs_from(req.theta, req.k, req.gamma)
+    )
+    if plan.get("error"):
+        raise HTTPException(status_code=422, detail=plan["error"])
+    if not plan["validation"]["ok"]:
+        raise HTTPException(status_code=422, detail="; ".join(plan["validation"]["errors"]))
+
+    # Ensure the paper account exists
     account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
     if not account:
         account = VirtualAccount(id=1, cash=100000.0, buying_power=100000.0, equity=100000.0)
         db.add(account)
         db.commit()
-        
-    # 2. Get current holdings & calculate total portfolio value
-    positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
-    
-    # Helper to get latest price for ticker
+
     def get_latest_price(symbol):
-        p_rec = db.query(RecentPrice).filter(RecentPrice.ticker == symbol).order_by(RecentPrice.date.desc()).first()
-        if p_rec:
-            return float(p_rec.close)
-        return 100.0
-        
-    portfolio_value = float(account.cash)
-    current_shares = {}
-    current_values = {}
-    
-    for pos in positions:
-        price = get_latest_price(pos.ticker)
-        current_shares[pos.ticker] = float(pos.quantity)
-        current_values[pos.ticker] = float(pos.quantity) * price
-        portfolio_value += current_values[pos.ticker]
-        
-    # 3. Load target defensive weights
-    pb = build_defensive_playbook(preset_name=req.preset)
-    d = float(pb.get("de_risk_coefficient", 0.0))
-    
-    # Target allocations
-    # Aggressive side: represent using our current holdings scaled, or SPY/QQQ equal weights if empty
-    w_agg = {}
-    if current_shares:
-        total_pos_val = sum(current_values.values())
-        if total_pos_val > 0:
-            w_agg = {t: v / total_pos_val for t, v in current_values.items()}
-        else:
-            w_agg = {"SPY": 1.0}
-    else:
-        w_agg = {"SPY": 1.0}
-        
-    # Defensive side: load from safe asset branch selection mix
-    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
-    w_def = {k: float(v) / 100.0 for k, v in safe_mix.items()}
-    
-    # Blended target weights
-    all_tickers = set(w_agg.keys()).union(w_def.keys())
-    w_target = {}
-    for ticker in all_tickers:
-        agg_part = (1.0 - d) * w_agg.get(ticker, 0.0)
-        def_part = d * w_def.get(ticker, 0.0)
-        w_target[ticker] = agg_part + def_part
-        
-    # 4. Generate order diffs (target value - current value)
-    orders_to_submit = []
-    
-    for ticker in all_tickers:
-        target_val = portfolio_value * w_target[ticker]
-        curr_val = current_values.get(ticker, 0.0)
-        diff_val = target_val - curr_val
-        price = get_latest_price(ticker)
-        
-        if abs(diff_val) > 50.0:
-            qty = abs(diff_val) / price
-            side = "buy" if diff_val > 0 else "sell"
-            orders_to_submit.append({
-                "ticker": ticker,
-                "side": side,
-                "qty": qty,
-                "price": price,
-                "value": abs(diff_val)
-            })
-            
+        return _latest_paper_price(db, symbol)
+
+    orders_to_submit = plan["orders"]
     sell_orders = [o for o in orders_to_submit if o["side"] == "sell"]
     buy_orders = [o for o in orders_to_submit if o["side"] == "buy"]
-    
+
     executed = []
     
     # Execute Sells
@@ -3375,6 +3639,9 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
     return {
         "status": "executed",
         "posture_applied": req.target_posture,
+        "preset_applied": plan["preset_applied"],
+        "de_risk_coefficient": plan["de_risk_coefficient"],
         "orders_submitted": executed,
-        "cash_transferred_to_reserve": float(account.cash)
+        "cash_transferred_to_reserve": float(account.cash),
+        "final_equity": float(account.equity),
     }
