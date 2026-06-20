@@ -629,9 +629,15 @@ export default function Home() {
   const [equityImportBusy, setEquityImportBusy] = useState<boolean>(false);
   const [equityImportReplace, setEquityImportReplace] = useState<boolean>(false);
 
+  const asNum = (v: any) => typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
   const money = (v: any) => {
-    const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
-    return Number.isFinite(n) ? `$${n.toLocaleString(undefined, { maximumFractionDigits: n < 1000 ? 2 : 0 })}` : '—';
+    const n = asNum(v);
+    return Number.isFinite(n) ? `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
+  };
+  /** Per-share quotes, cost basis, analyst targets — always show cents. */
+  const sharePrice = (v: any) => {
+    const n = asNum(v);
+    return Number.isFinite(n) ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
   };
   const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
 
@@ -3882,7 +3888,7 @@ export default function Home() {
                         <tr key={a.ticker}>
                           <td><strong>{a.ticker}</strong>{a.tier_label && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{a.tier_label} · {pct(a.weight)} · {a.universe_strategy || 'hold'}</div>}</td>
                           <td>{Math.round(a.shares).toLocaleString()}</td>
-                          <td>{money(a.avg_cost_basis)}</td>
+                          <td>{sharePrice(a.avg_cost_basis)}</td>
                           <td>{money(a.market_value)}</td>
                           <td style={{ color: (a.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(a.unrealized_gain)} / {pct(a.unrealized_pct)}</td>
                           <td style={{ fontSize: '12px' }}>{Math.round(a.lt_shares).toLocaleString()} / {Math.round(a.st_shares).toLocaleString()}</td>
@@ -3922,8 +3928,8 @@ export default function Home() {
                     <tr key={lot.id}>
                       <td>{lot.ticker}<div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{lot.acquisition_date}</div></td>
                       <td>{lot.shares.toFixed(2)}</td>
-                      <td>{money(lot.cost_basis_per_share)}</td>
-                      <td>{money(lot.current_price)}</td>
+                      <td>{sharePrice(lot.cost_basis_per_share)}</td>
+                      <td>{sharePrice(lot.current_price)}</td>
                       <td>{money(lot.market_value)}</td>
                       <td style={{ color: (lot.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(lot.unrealized_gain)} / {pct(lot.unrealized_gain_pct)}</td>
                       <td>{lot.is_long_term ? 'LT' : `ST ${lot.days_to_long_term}d`}</td>
@@ -4072,9 +4078,9 @@ export default function Home() {
                   <div key={f.ticker} style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
                     <strong>{f.ticker}</strong>
                     <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{f.source} · {f.as_of_date}</div>
-                    <div>Price: {money(f.current_price)}</div>
-                    {f.target_mean != null && <div>Target mean: {money(f.target_mean)} ({pct(f.upside_pct)})</div>}
-                    {f.target_high != null && <div>Range: {money(f.target_low)} - {money(f.target_high)}</div>}
+                    <div>Price: {sharePrice(f.current_price)}</div>
+                    {f.target_mean != null && <div>Target mean: {sharePrice(f.target_mean)} ({pct(f.upside_pct)})</div>}
+                    {f.target_high != null && <div>Range: {sharePrice(f.target_low)} - {sharePrice(f.target_high)}</div>}
                     {f.num_analysts != null && <div>Analysts: {f.num_analysts}</div>}
                     {f.recommendation_key && <div>Rating: {f.recommendation_key}</div>}
                   </div>
@@ -4986,7 +4992,7 @@ export default function Home() {
           <div onClick={() => !sellBusy && setSellModal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
             <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '420px', maxWidth: '92vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
               <h2 style={{ marginTop: 0, marginBottom: '4px' }}>Sell {sellModal.ticker}</h2>
-              <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>Record a sale from this lot ({sellModal.max} sh held, basis {money(sellModal.basis)}). Updates your remaining shares — it does not place a broker order.</p>
+              <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>Record a sale from this lot ({sellModal.max} sh held, basis {sharePrice(sellModal.basis)}). Updates your remaining shares — it does not place a broker order.</p>
               <div style={{ display: 'grid', gap: '10px' }}>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Shares to sell
                   <input type="number" max={sellModal.max} value={sellModal.shares} onChange={(e) => setSellModal({ ...sellModal, shares: Math.min(sellModal.max, parseFloat(e.target.value) || 0) })} style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
