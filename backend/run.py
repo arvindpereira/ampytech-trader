@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import json
 import sys
 import subprocess
 import os
@@ -107,14 +108,24 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker", "crash-forecast", "crash-backfill", "crash-refresh", "defensive-prices"],
+        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker", "crash-forecast", "crash-backfill", "crash-refresh", "defensive-prices", "import-equity-lots"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
-        "--symbol",
+        "--file",
         type=str,
         default=None,
-        help="Ticker symbol to add (for add-ticker action)"
+        help="Path to PDF for import-equity-lots"
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace existing lots for the same ticker/account (import-equity-lots)"
+    )
+    parser.add_argument(
+        "--force-llm",
+        action="store_true",
+        help="Force gpt-4o-mini parsing instead of deterministic parsers (import-equity-lots)"
     )
     parser.add_argument(
         "--tickers",
@@ -217,6 +228,24 @@ def main():
     elif args.action == "defensive-prices":
         from data_ingestion.price_fetcher import fetch_defensive_etf_prices
         fetch_defensive_etf_prices(force=True)
+    elif args.action == "import-equity-lots":
+        if not args.file:
+            print("Please specify --file path/to/export.pdf")
+            sys.exit(1)
+        from app.database import SessionLocal, init_db
+        from data_ingestion.equity_lot_importer import import_equity_lot_pdf
+        init_db()
+        with open(args.file, "rb") as fh:
+            data = fh.read()
+        db = SessionLocal()
+        try:
+            result = import_equity_lot_pdf(
+                db, data, filename=os.path.basename(args.file),
+                force_llm=args.force_llm, replace_ticker_account=args.replace,
+            )
+            print(json.dumps(result, indent=2))
+        finally:
+            db.close()
 
 if __name__ == "__main__":
     main()

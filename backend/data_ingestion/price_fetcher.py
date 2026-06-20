@@ -609,6 +609,83 @@ def fetch_defensive_etf_prices(force=False):
     return summary
 
 
+def equity_lot_tickers(db):
+    """Distinct tickers held in the Equity Advisor lot table (may be outside the trade universe)."""
+    from app.database.models import EquityLot
+    rows = db.query(EquityLot.ticker).distinct().all()
+    return sorted({r[0].upper().strip() for r in rows if r[0]})
+
+
+def _equity_lot_history_start(db, ticker):
+    """Earliest date we need daily_prices for grant-timeline charts (first lot minus buffer)."""
+    from app.database.models import EquityLot
+    from sqlalchemy import func
+    d = db.query(func.min(EquityLot.acquisition_date)).filter(EquityLot.ticker == ticker).scalar()
+    default_start = datetime.strptime(DAILY_HISTORY_START, "%Y-%m-%d")
+    if not d:
+        return default_start
+    lot_start = datetime.strptime(str(d)[:10], "%Y-%m-%d") - timedelta(days=45)
+    return max(lot_start, default_start)
+
+
+def ensure_equity_daily_prices(db, ticker, force=False):
+    """Ensure daily_prices covers an equity-advisor ticker from first grant through today.
+
+    These names (e.g. ADBE, PINS) are often held externally and not in the trade universe, so the
+    main fetch_daily_history() pipeline never pulls them. Returns True if rows exist afterward."""
+    ticker = ticker.upper().strip()
+    if ticker in FICTIONAL_TICKERS:
+        return False
+    end_date = datetime.now()
+    lot_start = _equity_lot_history_start(db, ticker)
+    earliest, latest = _earliest_latest(db, DailyPrice, ticker)
+
+    tasks = []
+    if force or latest is None:
+        tasks.append((lot_start, end_date))
+    else:
+        if latest < end_date - timedelta(days=1):
+            tasks.append((latest, end_date))
+        if earliest is None or earliest > lot_start + timedelta(days=5):
+            tasks.append((lot_start, earliest or end_date))
+
+    if not tasks:
+        return db.query(DailyPrice).filter(DailyPrice.ticker == ticker).count() > 0
+
+    for start, end in tasks:
+        if start >= end - timedelta(days=1):
+            continue
+        bars = fetch_yahoo_daily(ticker, start, end)
+        if bars == "PRE_IPO_LIMIT":
+            continue
+        if not bars:
+            continue
+        _write_bars(db, DailyPrice, ticker, bars, daily=True)
+
+    return db.query(DailyPrice).filter(DailyPrice.ticker == ticker).count() > 0
+
+
+def fetch_equity_advisor_prices(db=None, tickers=None, force=False):
+    """Fetch/update daily_prices for all Equity Advisor holdings (external RSU/ESPP tickers)."""
+    close_db = False
+    if db is None:
+        init_db()
+        db = SessionLocal()
+        close_db = True
+    summary = {}
+    try:
+        targets = sorted({t.upper().strip() for t in (tickers or equity_lot_tickers(db)) if t})
+        for ticker in targets:
+            ok = ensure_equity_daily_prices(db, ticker, force=force)
+            summary[ticker] = "ok" if ok else "no-data"
+        if summary:
+            print(f"Equity Advisor daily price fetch: {summary}")
+        return summary
+    finally:
+        if close_db:
+            db.close()
+
+
 def fetch_daily_history():
     """Fetches full multi-decade DAILY history (Yahoo) into daily_prices."""
     init_db()
@@ -741,6 +818,17 @@ def fetch_daily_history():
         fetch_defensive_etf_prices()
     except Exception as e:
         print(f"Defensive ETF price fetch failed (non-fatal): {e}")
+
+    # External RSU/ESPP holdings → universe (strategy=hold) so the main pipeline ingests them too.
+    try:
+        from data_ingestion.equity_universe_sync import sync_equity_advisor_universe
+        _sync_db = SessionLocal()
+        try:
+            sync_equity_advisor_universe(_sync_db)
+        finally:
+            _sync_db.close()
+    except Exception as e:
+        print(f"Equity Advisor universe sync failed (non-fatal): {e}")
 
     print("Daily history fetch completed.\n")
 

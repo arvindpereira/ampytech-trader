@@ -180,7 +180,11 @@ def refresh_forecasts(tickers: Iterable[str], db=None):
         db = SessionLocal()
         close_db = True
     try:
-        return [snapshot_forecast(t, db=db, refresh=True) for t in sorted({t.upper().strip() for t in tickers if t})]
+        from data_ingestion.price_fetcher import equity_lot_tickers, fetch_equity_advisor_prices
+        requested = {t.upper().strip() for t in tickers if t}
+        held = set(equity_lot_tickers(db))
+        fetch_equity_advisor_prices(db, tickers=sorted(requested | held))
+        return [snapshot_forecast(t, db=db, refresh=True) for t in sorted(requested | held)]
     finally:
         if close_db:
             db.close()

@@ -205,6 +205,10 @@ fetch-forecasts:
 	cd backend && $(VENV_PY) run.py fetch-forecasts --tickers $(if $(TICKERS),$(TICKERS),ADBE,PINS)
 	@echo "✅ Forecast refresh complete."
 
+import-equity-lots:
+	@test -n "$(FILE)" || (echo "Usage: make import-equity-lots FILE=path/to/export.pdf [REPLACE=1] [FORCE_LLM=1]" && exit 1)
+	cd backend && $(VENV_PY) run.py import-equity-lots --file "$(FILE)" $(if $(REPLACE),--replace,) $(if $(FORCE_LLM),--force-llm,)
+
 backfill-news:
 	@echo "========================================================================"
 	@echo "📰 Backfilling historical daily news sentiment (~2021 -> now)..."

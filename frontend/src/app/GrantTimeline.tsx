@@ -18,6 +18,14 @@ import {
 export interface GrantTimelineProps {
   ticker: string;
   apiBase?: string;
+  compact?: boolean;
+}
+
+interface UpcomingVest {
+  date: string;
+  est_shares?: number | null;
+  lot_type?: string;
+  cadence?: string;
 }
 
 interface SeriesPoint {
@@ -58,6 +66,16 @@ interface TimelineResponse {
   summary: Summary;
   series: SeriesPoint[];
   grants: GrantMarker[];
+  vest_schedules?: Array<{
+    lot_type: string;
+    cadence: string;
+    next_vest_date: string;
+    days_until_next?: number | null;
+    est_shares?: number | null;
+    vesting_complete?: boolean;
+    upcoming?: UpcomingVest[];
+  }>;
+  upcoming_vests?: UpcomingVest[];
 }
 
 const GREEN = '#10B981';
@@ -83,7 +101,7 @@ const fmtDateFull = (t: number) =>
  *   3. Share of granted shares that are in profit vs underwater (stacked green/red, 0-100%).
  * Drop it anywhere with a ticker that has recorded equity lots/grants.
  */
-export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008' }: GrantTimelineProps) {
+export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008', compact = false }: GrantTimelineProps) {
   const [data, setData] = useState<TimelineResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -154,13 +172,20 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
     return max / (max - min);
   }, [merged]);
 
-  if (loading) return <Shell ticker={ticker}><Muted>Loading grant history…</Muted></Shell>;
-  if (error) return <Shell ticker={ticker}><Muted style={{ color: RED }}>Could not load: {error}</Muted></Shell>;
-  if (!data || !merged.length) return <Shell ticker={ticker}><Muted>No grant/price history.</Muted></Shell>;
+  if (loading) return <Shell ticker={ticker} compact={compact}><Muted>Loading grant history…</Muted></Shell>;
+  if (error) return <Shell ticker={ticker} compact={compact}><Muted style={{ color: RED }}>Could not load: {error}</Muted></Shell>;
+  if (!data || !merged.length) return <Shell ticker={ticker} compact={compact}><Muted>No grant/price history.</Muted></Shell>;
 
   const s = data.summary;
   const gainPositive = s.unrealized_gain >= 0;
   const xDomain = [merged[0].t, merged[merged.length - 1].t];
+  const upcoming = data.upcoming_vests || [];
+  const maxTs = merged[merged.length - 1].t;
+  const futureVests = upcoming.filter((v) => new Date(v.date).getTime() <= maxTs + 365 * 86400000);
+  const gainGradId = `gainSplit-${ticker}`;
+  const gainStrokeId = `gainStroke-${ticker}`;
+  const priceH = compact ? 170 : 230;
+  const subH = compact ? 105 : 140;
   const xAxisCommon = {
     dataKey: 't' as const,
     type: 'number' as const,
@@ -172,30 +197,67 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
   };
 
   return (
-    <Shell ticker={ticker}>
+    <Shell ticker={ticker} compact={compact}>
+      {(data.vest_schedules || []).length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '10px' }}>
+          {data.vest_schedules!.map((vs) => (
+            <div key={vs.lot_type} style={{
+              fontSize: '11.5px', padding: '6px 10px', borderRadius: '8px',
+              border: vs.vesting_complete ? '1px solid rgba(148,163,184,0.35)' : '1px solid rgba(167,139,250,0.35)',
+              background: vs.vesting_complete ? 'rgba(148,163,184,0.08)' : 'rgba(167,139,250,0.08)',
+            }}>
+              <strong style={{ color: vs.vesting_complete ? 'var(--text-secondary)' : '#A78BFA' }}>{vs.lot_type.toUpperCase()}</strong>
+              {vs.vesting_complete ? (
+                <span style={{ color: 'var(--text-secondary)' }}> · Grants complete</span>
+              ) : (
+                <>
+                  {' · '}{vs.cadence.replace('_', '-')}
+                  {' · '}Next: <strong>{vs.next_vest_date}</strong>
+                  {vs.days_until_next != null && (
+                    <span style={{ color: vs.days_until_next <= 14 ? '#F59E0B' : 'var(--text-secondary)' }}>
+                      {' '}({vs.days_until_next === 0 ? 'today' : vs.days_until_next === 1 ? 'tomorrow' : `in ${vs.days_until_next}d`})
+                    </span>
+                  )}
+                  {vs.est_shares != null && <span style={{ color: 'var(--text-secondary)' }}>{' '}~{fmtNum(vs.est_shares)} sh</span>}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Summary stat row */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', marginBottom: '14px' }}>
-        <Stat label="Shares held" value={fmtNum(s.total_shares)} />
-        <Stat label="Avg cost basis" value={fmtUsd(s.avg_basis, 2)} color={BASIS} />
-        <Stat label="Market price" value={fmtUsd(s.current_price, 2)} color={PRICE} />
-        <Stat
-          label="Unrealized P/L"
-          value={`${gainPositive ? '+' : ''}${fmtUsd(s.unrealized_gain)} (${s.unrealized_gain_pct > 0 ? '+' : ''}${s.unrealized_gain_pct}%)`}
-          color={gainPositive ? GREEN : RED}
-        />
-        <Stat label="Shares in profit" value={`${s.profitable_pct}%`} color={s.profitable_pct >= 50 ? GREEN : RED} />
-        <Stat label="Grants" value={`${s.num_grants} · since ${s.first_grant}`} />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: compact ? '12px' : '20px', marginBottom: compact ? '8px' : '14px' }}>
+        <Stat label="Shares held" value={fmtNum(s.total_shares)} compact={compact} />
+        <Stat label="Avg cost basis" value={fmtUsd(s.avg_basis, 2)} color={BASIS} compact={compact} />
+        <Stat label="Market price" value={fmtUsd(s.current_price, 2)} color={PRICE} compact={compact} />
+        {!compact && (
+          <>
+            <Stat
+              label="Unrealized P/L"
+              value={`${gainPositive ? '+' : ''}${fmtUsd(s.unrealized_gain)} (${s.unrealized_gain_pct > 0 ? '+' : ''}${s.unrealized_gain_pct}%)`}
+              color={gainPositive ? GREEN : RED}
+            />
+            <Stat label="Shares in profit" value={`${s.profitable_pct}%`} color={s.profitable_pct >= 50 ? GREEN : RED} />
+            <Stat label="Grants" value={`${s.num_grants} · since ${s.first_grant}`} />
+          </>
+        )}
       </div>
 
       {/* Panel 1 — Price vs. weighted-average cost basis, with grant markers */}
-      <PanelTitle>Market price vs. average cost basis</PanelTitle>
-      <ResponsiveContainer width="100%" height={230}>
+      <PanelTitle compact={compact}>Market price vs. average cost basis</PanelTitle>
+      <ResponsiveContainer width="100%" height={priceH}>
         <ComposedChart data={merged} margin={{ top: 6, right: 12, left: 4, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
           <XAxis {...xAxisCommon} />
           <YAxis stroke="var(--text-secondary)" tick={{ fontSize: 10 }} width={48}
             tickFormatter={(v) => `$${v}`} domain={['auto', 'auto']} />
           <Tooltip content={<PriceTooltip />} />
+          {futureVests.map((v) => (
+            <ReferenceLine key={`${v.lot_type}-${v.date}`} x={new Date(v.date).getTime()}
+              stroke="#A78BFA" strokeDasharray="4 4" strokeOpacity={0.85}
+              label={{ value: `Next ${v.lot_type?.toUpperCase() || 'VEST'}`, position: 'insideTopRight', fill: '#A78BFA', fontSize: 9 }} />
+          ))}
           <Line type="monotone" dataKey="price" name="Market price" stroke={PRICE} strokeWidth={2}
             dot={false} isAnimationActive={false} />
           <Line type="stepAfter" dataKey="avg_basis" name="Avg cost basis" stroke={BASIS} strokeWidth={1.5}
@@ -205,17 +267,17 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
       </ResponsiveContainer>
 
       {/* Panel 2 — Unrealized gain/loss % over time (above/below the basis line) */}
-      <PanelTitle>How far above / below the line (unrealized %)</PanelTitle>
-      <ResponsiveContainer width="100%" height={140}>
+      <PanelTitle compact={compact}>How far above / below the line (unrealized %)</PanelTitle>
+      <ResponsiveContainer width="100%" height={subH}>
         <AreaChart data={merged} margin={{ top: 6, right: 12, left: 4, bottom: 0 }}>
           <defs>
-            <linearGradient id="gainSplit" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={gainGradId} x1="0" y1="0" x2="0" y2="1">
               <stop offset={0} stopColor={GREEN} stopOpacity={0.7} />
               <stop offset={gainOffset} stopColor={GREEN} stopOpacity={0.15} />
               <stop offset={gainOffset} stopColor={RED} stopOpacity={0.15} />
               <stop offset={1} stopColor={RED} stopOpacity={0.7} />
             </linearGradient>
-            <linearGradient id="gainStroke" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id={gainStrokeId} x1="0" y1="0" x2="0" y2="1">
               <stop offset={gainOffset} stopColor={GREEN} />
               <stop offset={gainOffset} stopColor={RED} />
             </linearGradient>
@@ -226,14 +288,14 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
             tickFormatter={(v) => `${v}%`} />
           <Tooltip content={<GainTooltip />} />
           <ReferenceLine y={0} stroke="var(--text-secondary)" strokeOpacity={0.5} />
-          <Area type="monotone" dataKey="gain_pct" name="Unrealized %" stroke="url(#gainStroke)"
-            strokeWidth={1.5} fill="url(#gainSplit)" isAnimationActive={false} />
+          <Area type="monotone" dataKey="gain_pct" name="Unrealized %" stroke={`url(#${gainStrokeId})`}
+            strokeWidth={1.5} fill={`url(#${gainGradId})`} isAnimationActive={false} />
         </AreaChart>
       </ResponsiveContainer>
 
       {/* Panel 3 — Ratio of granted shares profitable vs underwater */}
-      <PanelTitle>Ratio of granted shares profitable (green) vs. at a loss (red)</PanelTitle>
-      <ResponsiveContainer width="100%" height={140}>
+      <PanelTitle compact={compact}>Ratio of granted shares profitable (green) vs. at a loss (red)</PanelTitle>
+      <ResponsiveContainer width="100%" height={subH}>
         <AreaChart data={merged} margin={{ top: 6, right: 12, left: 4, bottom: 4 }} stackOffset="expand">
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
           <XAxis {...xAxisCommon} />
@@ -247,13 +309,15 @@ export default function GrantTimeline({ ticker, apiBase = 'http://localhost:8008
         </AreaChart>
       </ResponsiveContainer>
 
-      <div style={{ display: 'flex', gap: '16px', marginTop: '8px', flexWrap: 'wrap' }}>
-        <LegendDot color={PRICE} label="Market price" />
-        <LegendDot color={BASIS} label="Avg cost basis (stepped)" />
-        <LegendDot color="#A78BFA" label="Grant (dot size = shares)" />
-        <LegendDot color={GREEN} label="Profitable" />
-        <LegendDot color={RED} label="At a loss" />
-      </div>
+      {!compact && (
+        <div style={{ display: 'flex', gap: '16px', marginTop: '8px', flexWrap: 'wrap' }}>
+          <LegendDot color={PRICE} label="Market price" />
+          <LegendDot color={BASIS} label="Avg cost basis (stepped)" />
+          <LegendDot color="#A78BFA" label="Grant / upcoming vest" />
+          <LegendDot color={GREEN} label="Profitable" />
+          <LegendDot color={RED} label="At a loss" />
+        </div>
+      )}
     </Shell>
   );
 }
@@ -330,35 +394,35 @@ function Row({ label, value, color }: { label: string; value: string; color?: st
   );
 }
 
-function Shell({ ticker, children }: { ticker: string; children: React.ReactNode }) {
+function Shell({ ticker, children, compact }: { ticker: string; children: React.ReactNode; compact?: boolean }) {
   return (
     <div style={{
       background: 'var(--bg-glass, rgba(255,255,255,0.02))', border: '1px solid var(--border-glass)',
-      borderRadius: '12px', padding: '18px',
+      borderRadius: '12px', padding: compact ? '14px' : '18px', height: '100%',
     }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '12px' }}>
-        <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>{ticker}</h3>
-        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>grant deep-dive</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: compact ? '8px' : '12px' }}>
+        <h3 style={{ margin: 0, fontSize: compact ? '16px' : '18px', fontWeight: 700, color: 'var(--text-primary)' }}>{ticker}</h3>
+        {!compact && <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>grant deep-dive</span>}
       </div>
       {children}
     </div>
   );
 }
 
-function PanelTitle({ children }: { children: React.ReactNode }) {
+function PanelTitle({ children, compact }: { children: React.ReactNode; compact?: boolean }) {
   return (
-    <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
-      color: 'var(--text-secondary)', margin: '10px 0 2px' }}>
+    <div style={{ fontSize: compact ? '10px' : '11px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+      color: 'var(--text-secondary)', margin: compact ? '6px 0 2px' : '10px 0 2px' }}>
       {children}
     </div>
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+function Stat({ label, value, color, compact }: { label: string; value: string; color?: string; compact?: boolean }) {
   return (
     <div>
       <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '2px' }}>{label}</div>
-      <div style={{ fontSize: '15px', fontWeight: 700, color: color || 'var(--text-primary)' }}>{value}</div>
+      <div style={{ fontSize: compact ? '13px' : '15px', fontWeight: 700, color: color || 'var(--text-primary)' }}>{value}</div>
     </div>
   );
 }

@@ -152,7 +152,14 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
             swing_ret = raw["swing"].pct_change().fillna(0.0)
             lt_ret = raw["longterm"].pct_change().fillna(0.0) if "longterm" in raw else pd.Series(0.0, index=all_dates)
             hr_ret = raw["high_risk"].pct_change().fillna(0.0) if "high_risk" in raw else pd.Series(0.0, index=all_dates)
-            raw["blended"] = (1.0 + (sw * swing_ret + lt * lt_ret + hr * hr_ret)).cumprod() * 100000.0
+            blended = (1.0 + (sw * swing_ret + lt * lt_ret + hr * hr_ret)).cumprod() * 100000.0
+            # When allocation is 100% one bucket the blended curve duplicates that strategy exactly.
+            # The chart draws later series on top, so a redundant blended line would hide the component
+            # (e.g. cyan Swing + News buried under orange Blended when buckets are 100% swing).
+            active = [(w, k) for w, k in ((sw, "swing"), (lt if "longterm" in raw else 0, "longterm"),
+                                            (hr if "high_risk" in raw else 0, "high_risk")) if w > 1e-6]
+            if len(active) != 1 or active[0][0] < 0.999:
+                raw["blended"] = blended
 
         report(85, "Loading benchmarks (SPY / QQQ / BRK-B)…")
         for sym, key in BENCHMARKS:
