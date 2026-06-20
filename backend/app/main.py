@@ -3147,6 +3147,30 @@ def get_crash_playbook(preset: str = "balanced"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/crash/compare")
+def compare_glide_presets(
+    years: int = 5,
+    theta: Optional[float] = None,
+    k: Optional[float] = None,
+    gamma: Optional[float] = None,
+):
+    """Read-only walk-forward backtest comparing the glide-path presets (and optional custom
+    knobs) vs Buy & Hold over the real cached crash-risk history. Does NOT touch any portfolio."""
+    from ml_engine.wargame import run_preset_comparison
+    custom = None
+    if theta is not None and k is not None and gamma is not None:
+        custom = {"theta": theta, "k": k, "gamma": gamma}
+    try:
+        result = run_preset_comparison(lookback_years=years, custom_knobs=custom)
+        if isinstance(result, dict) and result.get("error"):
+            raise HTTPException(status_code=422, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/crash/wargame")
 def trigger_wargame(req: WargameSweepRequest):
     """Spawns background wargame parameter sweep job."""

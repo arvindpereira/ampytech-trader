@@ -46,6 +46,9 @@ body {
   padding: 24px;
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
   transition: var(--transition-smooth);
+  /* Allow grid/flex children (e.g. Recharts ResponsiveContainer) to shrink instead of
+     overflowing the card into the adjacent column. */
+  min-width: 0;
 }
 
 .glass-card:hover {
@@ -66,6 +69,23 @@ body {
 
 @media (max-width: 1024px) {
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Crash Radar: explicit two-column layout (two stacked card columns + full-width rows).
+   auto-fit previously spawned a phantom 3rd track at wide widths, squeezing each column
+   below its content width and overflowing tables/charts. */
+.crash-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .crash-grid {
     grid-template-columns: 1fr;
   }
 }

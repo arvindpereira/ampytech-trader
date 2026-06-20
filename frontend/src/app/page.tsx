@@ -134,10 +134,27 @@ export default function Home() {
   const [crashData, setCrashData] = useState<any>(null);
   const [playbook, setPlaybook] = useState<any>(null);
   const [wargameResults, setWargameResults] = useState<any>(null);
-  const [preset, setPreset] = useState<'balanced' | 'conservative' | 'aggressive'>('balanced');
+  const [preset, setPreset] = useState<'balanced' | 'conservative' | 'aggressive' | 'custom'>('balanced');
   const [theta, setTheta] = useState<number>(0.85);
   const [k, setK] = useState<number>(2.0);
   const [gamma, setGamma] = useState<number>(0.25);
+  const [compareData, setCompareData] = useState<any>(null);
+  const [comparingPresets, setComparingPresets] = useState<boolean>(false);
+
+  // Glide-path knob presets (mirrors backend ml_engine/glide.py PRESETS).
+  const GLIDE_PRESETS: Record<'conservative' | 'balanced' | 'aggressive', { theta: number; k: number; gamma: number }> = {
+    conservative: { theta: 0.60, k: 3.0, gamma: 0.15 },
+    balanced: { theta: 0.85, k: 2.0, gamma: 0.25 },
+    aggressive: { theta: 1.10, k: 1.5, gamma: 0.40 },
+  };
+
+  const applyPreset = (p: 'conservative' | 'balanced' | 'aggressive') => {
+    const cfg = GLIDE_PRESETS[p];
+    setTheta(cfg.theta);
+    setK(cfg.k);
+    setGamma(cfg.gamma);
+    setPreset(p);
+  };
   const [forecastJobId, setForecastJobId] = useState<string | null>(null);
   const [forecastStatus, setForecastStatus] = useState<string>('');
   const [wargameJobId, setWargameJobId] = useState<string | null>(null);
@@ -183,6 +200,24 @@ export default function Home() {
     }
   };
 
+  const runPresetComparison = async () => {
+    setComparingPresets(true);
+    try {
+      const res = await fetch(`http://localhost:8008/api/crash/compare?years=5&theta=${theta}&k=${k}&gamma=${gamma}`);
+      if (res.ok) {
+        setCompareData(await res.json());
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Comparison failed: ${errData.detail || res.statusText}`);
+      }
+    } catch (err: any) {
+      console.error('Error running preset comparison:', err);
+      alert(`Error: ${err.message || err}`);
+    } finally {
+      setComparingPresets(false);
+    }
+  };
+
   const handleApplyRebalance = async () => {
     setApplyingRebalance(true);
     setApplyConfirmOpen(false);
@@ -193,7 +228,7 @@ export default function Home() {
         body: JSON.stringify({
           confirm_execution: true,
           target_posture: crashData?.current_posture || 'Normal',
-          preset: preset
+          preset: preset === 'custom' ? 'balanced' : preset
         })
       });
       if (res.ok) {
@@ -214,7 +249,7 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === 'crash') {
       fetchCrashIndex();
-      fetchPlaybook(preset);
+      fetchPlaybook(preset === 'custom' ? 'balanced' : preset);
       fetchTimeline();
     }
   }, [activeTab, preset]);
@@ -3723,7 +3758,7 @@ export default function Home() {
         )}
 
         {activeTab === 'crash' && (
-          <section style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+          <section className="crash-grid">
             
             {/* Full-width Timeline Graph Card */}
             <div className="glass-card" style={{ gridColumn: '1 / -1', padding: '24px' }}>
@@ -3929,7 +3964,7 @@ export default function Home() {
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '22px' }}>
                   {(['conservative', 'balanced', 'aggressive'] as const).map(p => (
                     <button key={p} 
-                      onClick={() => setPreset(p)}
+                      onClick={() => applyPreset(p)}
                       className={`toggle-btn ${preset === p ? 'active' : ''}`}
                       style={{ flex: 1, textTransform: 'capitalize' }}
                     >
@@ -3944,7 +3979,7 @@ export default function Home() {
                       <span>De-risking Threshold (θ)</span>
                       <strong style={{ color: 'var(--text-primary)' }}>{theta.toFixed(2)}</strong>
                     </div>
-                    <input type="range" min="0.4" max="1.4" step="0.05" value={theta} onChange={(e) => setTheta(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                    <input type="range" min="0.4" max="1.4" step="0.05" value={theta} onChange={(e) => { setTheta(parseFloat(e.target.value)); setPreset('custom'); }} style={{ width: '100%' }} />
                     <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Standardized score above which de-allocating equities begins.</span>
                   </div>
                   
@@ -3953,7 +3988,7 @@ export default function Home() {
                       <span>Curve Steepness (k)</span>
                       <strong style={{ color: 'var(--text-primary)' }}>{k.toFixed(1)}</strong>
                     </div>
-                    <input type="range" min="1.0" max="5.0" step="0.1" value={k} onChange={(e) => setK(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                    <input type="range" min="1.0" max="5.0" step="0.1" value={k} onChange={(e) => { setK(parseFloat(e.target.value)); setPreset('custom'); }} style={{ width: '100%' }} />
                     <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Determines how rapidly the de-risking blends cash as risk increases.</span>
                   </div>
                   
@@ -3962,9 +3997,97 @@ export default function Home() {
                       <span>Trend Gate Strength (γ)</span>
                       <strong style={{ color: 'var(--text-primary)' }}>{gamma.toFixed(2)}</strong>
                     </div>
-                    <input type="range" min="0.0" max="0.5" step="0.05" value={gamma} onChange={(e) => setGamma(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                    <input type="range" min="0.0" max="0.5" step="0.05" value={gamma} onChange={(e) => { setGamma(parseFloat(e.target.value)); setPreset('custom'); }} style={{ width: '100%' }} />
                     <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Raises de-risking threshold during active market uptrends.</span>
                   </div>
+                </div>
+
+                {/* Preset comparison (read-only walk-forward backtest) */}
+                <div style={{ marginTop: '24px', borderTop: '1px solid var(--border-color)', paddingTop: '18px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <strong style={{ fontSize: '13.5px' }}>Compare Policies (Backtest)</strong>
+                    <button
+                      className="toggle-btn"
+                      disabled={comparingPresets}
+                      onClick={runPresetComparison}
+                      style={{ fontSize: '12px', padding: '6px 12px' }}
+                    >
+                      {comparingPresets ? 'Running…' : 'Run Comparison'}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: '10.5px', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: '1.4' }}>
+                    Walk-forward simulation of each preset (and your current Custom knobs) steering an SPY/TLT blend with the real historical crash-risk index, vs passive Buy &amp; Hold. Analysis only — this does not change your portfolio.
+                  </p>
+
+                  {compareData && compareData.series && (
+                    <>
+                      <div style={{ width: '100%', height: '220px', marginBottom: '12px' }}>
+                        <ResponsiveContainer>
+                          <LineChart
+                            data={(compareData.dates || []).map((d: string, i: number) => {
+                              const row: any = { date: d };
+                              compareData.series.forEach((s: any) => { row[s.label] = s.equity_curve[i]; });
+                              row['benchmark'] = compareData.benchmark?.equity_curve[i];
+                              return row;
+                            })}
+                            margin={{ top: 5, right: 10, left: 0, bottom: 0 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                            <XAxis dataKey="date" tick={{ fontSize: 9 }} minTickGap={40} />
+                            <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} width={42} />
+                            <Tooltip
+                              contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', fontSize: '11px' }}
+                              formatter={(v: any, name: any) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name]}
+                            />
+                            <Legend wrapperStyle={{ fontSize: '10.5px' }} />
+                            {(() => {
+                              const colors: Record<string, string> = { conservative: '#10B981', balanced: '#3B82F6', aggressive: '#F59E0B', custom: '#A855F7' };
+                              const lines = compareData.series.map((s: any) => (
+                                <Line key={s.label} type="monotone" dataKey={s.label} stroke={colors[s.label] || '#888'} dot={false} strokeWidth={1.8} name={s.label} />
+                              ));
+                              lines.push(<Line key="benchmark" type="monotone" dataKey="benchmark" stroke="#9CA3AF" strokeDasharray="5 4" dot={false} strokeWidth={1.5} name="Buy & Hold" />);
+                              return lines;
+                            })()}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      <table className="trade-table" style={{ fontSize: '11.5px' }}>
+                        <thead>
+                          <tr>
+                            <th>Policy</th>
+                            <th>Return</th>
+                            <th>Max DD</th>
+                            <th>Ulcer</th>
+                            <th>Sharpe</th>
+                            <th>Turnover</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...compareData.series, compareData.benchmark].map((s: any, idx: number) => (
+                            <tr key={idx}>
+                              <td style={{ textTransform: 'capitalize', fontWeight: 600 }}>
+                                {s.label}
+                                {s.theta != null && (
+                                  <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '10px' }}>
+                                    {` (θ${s.theta.toFixed(2)}, k${s.k.toFixed(1)}, γ${s.gamma.toFixed(2)})`}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ color: '#10B981', fontWeight: 600 }}>{s.total_return.toFixed(1)}%</td>
+                              <td style={{ color: '#EF4444' }}>-{s.max_drawdown.toFixed(1)}%</td>
+                              <td>{s.ulcer_index.toFixed(2)}</td>
+                              <td>{s.sharpe.toFixed(2)}</td>
+                              <td>{s.turnover.toFixed(1)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p style={{ fontSize: '10px', color: 'var(--text-secondary)', margin: '10px 0 0', lineHeight: '1.4' }}>
+                        {compareData.start_date} → {compareData.end_date}. Lower Max DD/Ulcer = smoother ride; higher Return/Sharpe = more upside. Defensive presets trade upside for drawdown protection. Past simulation is not a predictor.
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
               
@@ -4448,7 +4571,7 @@ export default function Home() {
               Are you sure you want to apply defensive stance rebalancing? This will:
             </p>
             <ul style={{ fontSize: '12.5px', color: 'var(--text-secondary)', paddingLeft: '20px', margin: '0 0 16px', display: 'grid', gap: '6px' }}>
-              <li>Calculate target weights based on the <strong>{preset}</strong> defensive playbook preset.</li>
+              <li>Calculate target weights based on the <strong>{preset === 'custom' ? 'balanced' : preset}</strong> defensive playbook preset.</li>
               <li>Read the current system posture (<strong>{crashData?.current_posture || 'Normal'}</strong>) and de-risk coefficient (<strong>{playbook ? `${(playbook.de_risk_coefficient * 100).toFixed(0)}%` : 'Loading...'}</strong>).</li>
               <li>Submit virtual buy/sell orders in the <strong>paper-trading virtual account (ID=1)</strong> to match target weights.</li>
             </ul>

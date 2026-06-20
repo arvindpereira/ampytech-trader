@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database import SessionLocal, DailyPrice, CrisisPrice, MacroIndicator
-from ml_engine.glide import compute_defensive_coefficient
+from app.database import SessionLocal, DailyPrice, CrisisPrice, MacroIndicator, CrashRiskSnapshot
+from ml_engine.glide import compute_defensive_coefficient, PRESETS
 from ml_engine.crash_radar import compute_composite_index
 
 # Global memory cache for pre-computed risk indices to keep sweeps fast
@@ -186,7 +186,7 @@ def generate_bootstrap_scenario(spy_returns, target_dd=0.30, horizon=252, recove
     })
     return df
 
-def run_simulation(prices_df, risk_indices, theta, k, gamma, fee_pct=0.0005):
+def run_simulation(prices_df, risk_indices, theta, k, gamma, L=0.0, U=0.90, fee_pct=0.0005):
     """
     Runs daily portfolio simulation for a given knob configuration.
     Blends aggressive (SPY) and defensive (TLT) portfolios.
@@ -222,7 +222,7 @@ def run_simulation(prices_df, risk_indices, theta, k, gamma, fee_pct=0.0005):
         trend_score = np.clip((spy_close[t] - spy_sma200[t]) / denom, -1.0, 1.0)
         
         # 3. Defensive blending weight
-        d_val = compute_defensive_coefficient(z, trend_score, theta, k, L=0.0, U=0.90, gamma=gamma)
+        d_val = compute_defensive_coefficient(z, trend_score, theta, k, L=L, U=U, gamma=gamma)
         
         target_w_agg = 1.0 - d_val
         target_w_def = d_val
@@ -288,6 +288,138 @@ def run_simulation(prices_df, risk_indices, theta, k, gamma, fee_pct=0.0005):
         "turnover": float(turnover),
         "equity_curve": V_history.tolist()
     }
+
+def _metrics_from_curve(V_history):
+    """Compute summary risk/return metrics from an equity curve (numpy array)."""
+    V_history = np.asarray(V_history, dtype=float)
+    if len(V_history) < 2:
+        return {"total_return": 0.0, "max_drawdown": 0.0, "ulcer_index": 0.0,
+                "cvar": 0.0, "sharpe": 0.0}
+    returns = np.diff(V_history) / V_history[:-1]
+    peaks = np.maximum.accumulate(V_history)
+    drawdowns = (peaks - V_history) / peaks
+    cvar = float(np.mean(np.sort(returns)[:max(1, int(len(returns) * 0.05))])) if len(returns) else 0.0
+    sharpe = float(np.mean(returns) / np.std(returns) * np.sqrt(252)) if np.std(returns) > 0 else 0.0
+    return {
+        "total_return": float((V_history[-1] - V_history[0]) / V_history[0] * 100.0),
+        "max_drawdown": float(np.max(drawdowns) * 100.0),
+        "ulcer_index": float(np.sqrt(np.mean(drawdowns ** 2)) * 100.0),
+        "cvar": float(cvar * 100.0),
+        "sharpe": sharpe,
+    }
+
+
+def run_preset_comparison(lookback_years=5, custom_knobs=None):
+    """Read-only walk-forward backtest comparing the glide-path presets (and an optional custom
+    knob set) against a passive Buy & Hold benchmark, using the REAL historical Composite
+    Crash-Risk Index cached in crash_risk_snapshots.
+
+    This NEVER touches the live/paper portfolio — it only simulates how each policy WOULD have
+    steered an SPY/TLT blend over the available history. Returns aligned (downsampled) equity
+    curves plus full-resolution metrics for each policy.
+    """
+    db = SessionLocal()
+    try:
+        snaps = db.query(CrashRiskSnapshot.as_of_date, CrashRiskSnapshot.composite_index).order_by(
+            CrashRiskSnapshot.as_of_date.asc()
+        ).all()
+        if not snaps or len(snaps) < 10:
+            return {"error": "Not enough cached crash-risk history to run a comparison."}
+
+        risk_series = pd.Series(
+            {pd.to_datetime(d): float(v) for d, v in snaps if v is not None}
+        ).sort_index()
+        end_date = risk_series.index.max()
+        start_date = end_date - pd.DateOffset(years=lookback_years)
+        risk_series = risk_series[risk_series.index >= start_date]
+
+        # Daily SPY (aggressive) + TLT (defensive) prices over the window.
+        rows = db.query(DailyPrice.date, DailyPrice.ticker, DailyPrice.close).filter(
+            DailyPrice.ticker.in_(["SPY", "TLT"]),
+            DailyPrice.date >= start_date.strftime("%Y-%m-%d"),
+            DailyPrice.date <= end_date.strftime("%Y-%m-%d"),
+        ).order_by(DailyPrice.date.asc()).all()
+    finally:
+        db.close()
+
+    if not rows:
+        return {"error": "No SPY price history available for the comparison window."}
+
+    px = pd.DataFrame(rows, columns=["date", "ticker", "close"])
+    px["date"] = pd.to_datetime(px["date"])
+    px = px.pivot(index="date", columns="ticker", values="close")
+    if "SPY" not in px.columns:
+        return {"error": "SPY price history missing for the comparison window."}
+    if "TLT" not in px.columns:
+        # Defensive proxy: steady ~2% annualized T-bill-like cash if TLT not ingested.
+        px["TLT"] = 100.0 * np.exp(0.02 * np.arange(len(px)) / 252)
+    px = px.ffill().bfill().dropna()
+    if len(px) < 30:
+        return {"error": "Insufficient overlapping price data for the comparison window."}
+
+    prices_df = px.reset_index()
+    dates = prices_df["date"]
+
+    # Daily risk index aligned to price dates (weekly snapshots forward-filled / interpolated).
+    risk_daily = risk_series.reindex(dates).interpolate().ffill().bfill()
+    risk_indices = {d.strftime("%Y-%m-%d"): float(v) for d, v in risk_daily.items()}
+
+    # Policies to compare: the three presets + optional current custom knobs.
+    policies = []
+    for name in ["conservative", "balanced", "aggressive"]:
+        p = PRESETS[name]
+        policies.append({"label": name, "theta": p["theta"], "k": p["k"],
+                         "gamma": p["gamma"], "L": p["L"], "U": p["U"]})
+    if custom_knobs:
+        policies.append({
+            "label": "custom",
+            "theta": float(custom_knobs.get("theta", 0.85)),
+            "k": float(custom_knobs.get("k", 2.0)),
+            "gamma": float(custom_knobs.get("gamma", 0.25)),
+            "L": 0.0, "U": 0.90,
+        })
+
+    # Downsample the x-axis/equity curves to weekly to keep the payload light.
+    n = len(prices_df)
+    step = max(1, n // 260)
+    idx_sample = list(range(0, n, step))
+    if idx_sample[-1] != n - 1:
+        idx_sample.append(n - 1)
+    sampled_dates = [dates.iloc[i].strftime("%Y-%m-%d") for i in idx_sample]
+
+    series = []
+    for pol in policies:
+        sim = run_simulation(prices_df, risk_indices, pol["theta"], pol["k"], pol["gamma"],
+                             L=pol["L"], U=pol["U"])
+        curve = np.asarray(sim["equity_curve"], dtype=float)
+        metrics = _metrics_from_curve(curve)
+        series.append({
+            "label": pol["label"],
+            "theta": pol["theta"], "k": pol["k"], "gamma": pol["gamma"],
+            "equity_curve": [round(float(curve[i]), 2) for i in idx_sample],
+            "turnover": float(sim["turnover"]),
+            **metrics,
+        })
+
+    # Buy & Hold (SPY only) benchmark on the same capital base.
+    spy = prices_df["SPY"].values
+    bh_curve = 100000.0 * spy / spy[0]
+    bh_metrics = _metrics_from_curve(bh_curve)
+    benchmark = {
+        "label": "Buy & Hold (SPY)",
+        "equity_curve": [round(float(bh_curve[i]), 2) for i in idx_sample],
+        "turnover": 0.0,
+        **bh_metrics,
+    }
+
+    return {
+        "start_date": sampled_dates[0],
+        "end_date": sampled_dates[-1],
+        "dates": sampled_dates,
+        "benchmark": benchmark,
+        "series": series,
+    }
+
 
 def run_wargame_sweep(theta_range=None, k_range=None, gamma_range=None):
     """
