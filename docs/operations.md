@@ -14,23 +14,38 @@ make install            # backend venv + Python deps + frontend npm deps
 
 ## 2. Day-to-day commands (Makefile → `run.py` / scripts)
 
-**Data**
-- `make fetch` — hourly+daily prices, macro, sentiment, crisis eras.
-- `make fetch-valuation` — fetch Robert Shiller CAPE and compute Buffett Indicator ratios.
-- `make fetch-market-stress` — fetch credit spreads, financial conditions, Sahm Rule, building permits, and Excess Bond Premium (EBP).
-- `make fundamentals [TICKERS=NVDA,AAPL]` — fetch company financial statements (Polygon API) and calculate ratios.
-- `make classify` — tier the universe by risk × fundamental-quality (runs quantitative metrics + LLM overlay).
-- `make news-llm [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]` — LLM-score news for the swing model. Default provider is local **Ollama** (free); `PROVIDER=openai` is a fast bulk backfill (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`). Batches score concurrently.
-- `make news-llm-batch [START=… TICKERS=…]` — submit the same via OpenAI's **Batch API** (50% cheaper, unattended, up to 24h); `make news-llm-batch-collect BATCH_ID=<id>` ingests it (resumable).
-- `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP, LLM-extract per-ticker scores into the swing news feed. Set `IMAP_USER`/`IMAP_PASSWORD` (an **app-password**, not your main password), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Runs in the daily scheduler job when creds are present. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml` (also `.html/.txt/.md`); preview without scoring: `make premium-ingest DRY_RUN=1`. Only content you receive by email is read, and only derived scores (not article text) are stored.
-- `make insider` — real SEC Form 4 (only when `ALT_DATA_ENABLED`).
+The everyday targets are **dependency-aware and cache-aware**: each pipeline step writes a stamp under
+`backend/.make/`, and a step is skipped while its stamp is still fresh (per-step TTL in minutes). So you
+can re-run them freely and only stale work actually executes. `FORCE=1` invalidates every cache; per-step
+windows are overridable (`DATA_TTL`, `NEWS_TTL`, `FUND_TTL`, `CLASSIFY_TTL`, `MODEL_TTL`); `make clean-cache`
+wipes the stamps. The dependency graph is: `data → {train-core, classify(+fundamentals), news-recent}`,
+`classify+news-recent → swing-train`, and `train = train-core + swing-train + crash-refresh`.
 
-**Models**
-- `make train [EPOCHS=]` — XGBoost (hourly breakout) + HMM regime + PyTorch.
-- `make swing-train [SWING_HORIZON=5]` — train + save both the **Core** (`swing_model.json`) and **Aggressive** (`swing_aggressive_model.json`) swing models served in the UI.
-- `make walkforward [SPLITS=]` / `make calibrate` — honest OOS check / threshold calibration.
-- `make swing-eval` / `make longterm-eval` / `make longterm-tilt` — research evaluations.
-- `make backtest` — in-sample PyBroker audit.
+**Everyday (just these four cover normal use):**
+- `make up` — bring up the **whole system in order**: refresh data → models (in dependency order, cache-aware) → then launch backend + frontend + scheduler. A same-day run is a fast no-op on the data/model side.
+- `make data` — run **all** core fetches (prices hourly+daily, macro, crisis eras, sentiment, CAPE/valuation, market-stress) as one cached step. `make fetch` forces a refresh now.
+- `make train` — train **all served models**: HMM regime + short-term XGBoost (`train-core`) + Core/Aggressive swing (`swing-train`), pulling `fundamentals`/`classify`/`news-recent` as needed, then refreshing crash odds. Depends on `data`, so fetches happen first.
+- `make serve-all` — just launch backend + frontend + scheduler (no pipeline). `make serve` is backend+frontend only.
+
+**Pipeline internals (run automatically by the above; call directly only for targeted work):**
+- `make fundamentals [TICKERS=NVDA,AAPL]` — company financials (Polygon) → ratios (cached).
+- `make classify` — risk × fundamental-quality tiering, quant + LLM overlay (cached; needs data + fundamentals).
+- `make news-recent` — incremental LLM-scoring of the **last 7 days** of news for the swing model (cached; needs Ollama, or `PROVIDER=openai`).
+- `make train-core` / `make swing-train [SWING_HORIZON=5]` — train just the core or just the swing models.
+- `make train-deep [EPOCHS=]` — the optional PyTorch temporal-attention net (**not served by default**; `SERVED_MODEL=xgboost`). Run occasionally.
+- `make crash-refresh [FORCE=1]` — refresh the Crash Radar snapshot + coherent odds if inputs changed.
+
+**Evaluation & research (auto-fetch fresh data first):**
+- `make walkforward [SPLITS=]` — honest OOS edge check. `make calibrate` — threshold calibration (needs the trained core model).
+- `make swing-eval` / `make longterm-eval` / `make longterm-tilt` / `make exec-timing` / `make stop-opt` / `make horizon-opt` — research evaluations.
+- `make backtest` — in-sample PyBroker audit (needs trained models). `make simulate [DAYS=]` / `make backtest-virtual [MONTHS=]` — Virtual Broker forward sim / look-ahead-free replay.
+
+**Occasional data ops:**
+- `make news-llm [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]` — full/range LLM news backfill. Default provider is local **Ollama** (free); `PROVIDER=openai` is a fast bulk backfill (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`).
+- `make news-llm-batch [START=… TICKERS=…]` — submit via OpenAI's **Batch API** (50% cheaper, unattended); `make news-llm-batch-collect BATCH_ID=<id>` ingests it (resumable).
+- `make backfill-news` — backfill historical daily VADER news sentiment (~2021→now).
+- `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP, LLM-extract per-ticker scores. Set `IMAP_USER`/`IMAP_PASSWORD` (an **app-password**), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml`; preview: `DRY_RUN=1`. Only derived scores (not article text) are stored.
+- `make insider` — real SEC Form 4 (only when `ALT_DATA_ENABLED`). `make fetch-forecasts` — Equity Advisor forecasts. `make fetch-valuation` / `make fetch-market-stress` — fetch just that one source. `make popular-tickers` / `make add-ticker TICKER=SYM` — universe maintenance. `make llm-usage` — token usage/cost ledger.
 
 **Backups (Google Drive)** — the DB and large artifacts are **not** in git/LFS; back them up here. Every backup is **commit-stamped** so a restore matches the code version that produced it.
 - `make backup [BACKUP_KEEP=10]` — upload BOTH a DB copy and a files zip. The files zip = trained models (`ml_engine/saved_models/`), archived premium news, and **all cached JSON in `backend/data/`** (Crash Radar `crash_forecast_state.json`, the cached scenario wargame + AI analyst `wargame_cache.json`, IPO markers, LLM pricing, premium-ingest state). The OAuth token `gdrive_token.json` is excluded.
@@ -60,24 +75,25 @@ as standalone processes and are resumable.
 
 ## 4. Retraining + restarting
 
+The dependency-aware targets collapse the old multi-step dance into one command:
+
 ```bash
-# 1. retrain legacy hourly XGBoost + daily HMM regime models:
-cd backend && venv/bin/python3 ml_engine/models.py --train
+# Refresh data (if stale) + retrain ALL served models in dependency order
+# (fundamentals → classify, news-recent → swing; data → core; then crash odds):
+make train                 # add FORCE=1 to ignore caches and rebuild everything
 
-# 2. refresh company financials & risk-quality classification:
-make fundamentals
-make classify
+# Or do the whole thing AND (re)launch backend + frontend + scheduler:
+make up
 
-# 3. train production Core and Aggressive swing models on 2021→present:
-make swing-train
-
-# 4. restart servers (scheduler can stay up):
-make serve-backend    # in one terminal
-make serve-frontend   # in another
+# Just restart the servers (scheduler can stay up):
+make serve-backend         # in one terminal
+make serve-frontend        # in another
 # verify: http://localhost:8008/api/train/status  +  http://localhost:8008/api/health
 ```
 
-You can also retrain from the UI (Portfolio tab → **Model Training → Retrain**, a background job).
+Run a single layer when that's all you need: `make train-core`, `make swing-train`, or `make train-deep`
+(the optional PyTorch net, not served by default). You can also retrain from the UI
+(Portfolio tab → **Model Training → Retrain**, a background job).
 
 ## 5. Google-Drive DB backup — one-time auth
 

@@ -89,15 +89,18 @@ Now, open your web browser and navigate to: **`http://localhost:3002`**
 
 ## ⚙️ CLI Reference Table
 
-All backend operations are centralized under the `backend/run.py` master utility script:
+The Makefile is **dependency-aware and cache-aware**: each pipeline step stamps `backend/.make/` and is skipped while still fresh (per-step TTL), so the everyday targets below can be re-run freely and only stale work executes. `FORCE=1` rebuilds everything; `make clean-cache` clears the stamps. Most operations ultimately run through the `backend/run.py` master utility script.
 
 | CLI Command / Make Target | Purpose | When to Use |
 | :--- | :--- | :--- |
-| `python run.py fetch` / `make fetch` | Refreshes recent stock prices, FRED macro indices, scans for premium news, and processes active sentiment feeds. | Daily, before market open (around 09:00 ET). |
+| `make up` | Bring up the **whole system in order**: refresh data → train all served models (in dependency order, cache-aware) → launch backend + frontend + scheduler. | The one command to start working; same-day runs are a fast no-op on data/models. |
+| `make data` | Run **all** core data fetches as one cached step (prices hourly+daily, macro, crisis eras, sentiment, CAPE/valuation, market-stress). `make fetch` forces a refresh now. | Whenever you want fresh inputs; cheap when already fresh. |
+| `make train` | Train **all served models**: HMM regime + short-term XGBoost + Core/Aggressive swing (pulling `fundamentals`/`classify`/`news-recent` as deps), then refresh crash odds. Depends on `data`. | After new data, or weekly. `make train-deep` adds the optional PyTorch net. |
+| `python run.py fetch` / `make fetch` | Force-refresh recent stock prices, FRED macro indices, sentiment, valuation, and market-stress inputs (invalidates the data cache). | Daily, before market open (around 09:00 ET). |
 | `make fundamentals` | Ingests company financials (Polygon financials API) and calculates derived balance sheet/income statement ratios. | As needed when adding new tickers or quarterly updates. |
 | `make classify` | Runs the risk × quality universe classification (blending quant ratios and LLM qualitative overlay) to assign tickers to routing tiers. | Weekly or after updating company financials/LLM flags. |
-| `python run.py train` / `make train` | Retrains the legacy short-term hourly XGBoost model and the daily HMM macro regime model. | Weekly (every Sunday). |
-| `python run.py swing-train` / `make swing-train` | Retrains both the **Core** swing model (on core/quality_growth/unrated names) and the **Aggressive** swing model (on all names). | Weekly, after running classification. |
+| `make train-core` (`python run.py train` adds the PyTorch net) | Lower-level: retrain just the short-term hourly XGBoost + daily HMM regime models. Prefer `make train` (above) for the full served set. | When iterating on only the core models. |
+| `python run.py swing-train` / `make swing-train` | Retrains both the **Core** swing model (on core/quality_growth/unrated names) and the **Aggressive** swing model (on all names); cache-aware, depends on `classify` + `news-recent`. | Pulled in automatically by `make train`. |
 | `python run.py news-llm` / `make news-llm` | Scores news headlines using local Ollama (or OpenAI) to generate directional signals. | Daily or in bulk backfills. |
 | `make premium-ingest` | Polls IMAP subscriber email folder for premium newsletters (e.g. The Information) and LLM-extracts ticker sentiment impact. | Daily (via scheduler) or manually via files. |
 | `python run.py serve` / `make serve` | Launches FastAPI backend (port 8008) and Next.js frontend (port 3002). | Required to run the full dashboard web application. |

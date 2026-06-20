@@ -25,6 +25,7 @@ backend/data/crash_forecast_state.json
 backend/data/wargame_cache.json
 
 # Caches
+backend/.make/
 pybroker_cache/
 backend/pybroker_cache/
 .next/
