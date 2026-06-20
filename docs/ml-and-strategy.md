@@ -87,6 +87,50 @@ MPT-leaning variant) and returns a verdict; it confirmed the suggestions lift bl
 (~1.48 → 1.77 at a 50/45 split). **v2 regime overlay** (in execution) shrinks swing capital in
 defensive regimes. Surfaced in the Portfolio tab ("Suggest per-stock strategies", "Validate vs current").
 
+## Composite Crash-Risk Index & Playbook
+
+The **Crash Radar** introduces a deterministic, look-ahead-free risk measurement framework that scales equity exposures dynamically to prevent catastrophic drawdowns during structural crises.
+
+### 1. Index Normalization Math
+For each raw macroeconomic indicator $X_{i,t}$, we compute a stationary normalized stress score $Z_{i,t} \in [0, 100]$:
+1. **Outlier Winsorization**: Inputs are clipped at their rolling 1st and 99th percentiles over a lookback window $W$ to neutralize extreme outliers:
+   \[ \tilde{X}_{i,t} = \max\left(P_{1}(X_{i}, W), \min\left(P_{99}(X_{i}, W), X_{i,t}\right)\right) \]
+2. **Rolling Percentile Transformation (ECDF)**: For non-Gaussian indicators (e.g., CAPE, Buffett Indicator, Spreads), we compute the rolling Empirical Cumulative Distribution Function:
+   \[ Z_{i,t} = \frac{1}{W} \sum_{\tau=t-W}^{t} \mathbb{I}(\tilde{X}_{i,\tau} \le \tilde{X}_{i,t}) \times 100 \]
+3. **Z-Score Normalization**: For cyclical indicators (e.g., Term Spread, Sahm Rule, NFCI):
+   \[ Z_{i,t} = \Phi\left(\frac{\tilde{X}_{i,t} - \mu_i(W)}{\sigma_i(W)}\right) \times 100 \]
+   where $\Phi(\cdot)$ is the standard normal cumulative distribution function.
+
+### 2. Thematic Bucket Weights
+The Composite Crash-Risk Index $I_t$ aggregates 10 structural dimensions:
+- **Valuation (15%)**: Shiller CAPE (60%), Buffett Indicator (40%)
+- **Monetary (15%)**: 10Y-3M Term Spread (50%), Fed Funds Real Rate (50%)
+- **Credit (15%)**: Fed Excess Bond Premium (60%), High-Yield OAS (40%)
+- **Financial Conditions (10%)**: NFCI (50%), NFCI Leverage Subindex (50%)
+- **Lending Standards (8%)**: SLOOS Tightening standards (100%)
+- **Labor Market (8%)**: Sahm Rule (50%), 4W Initial Claims (50%)
+- **Real Activity (8%)**: Building Permits YoY % (100%)
+- **Market Internals (8%)**: SPY Drawdown (40%), % Tickers above 200 SMA (30%), Mag-7 Concentration (30%)
+- **Cycle Seasonality (5%)**: Presidential/Midterm Cycle Phase (100%)
+- **HMM Regime Overlay (8%)**: Hidden Markov Model Crisis Probability (100%)
+
+The final index $I_t$ maps into severity bands: **Calm** ($<40$), **Elevated** ($40-65$), **High** ($65-80$), and **Extreme** ($\ge 80$).
+
+### 3. Wargaming Knobs & Parameter Sweeps
+The wargaming engine (`wargame.py`) simulates de-risking policy parameters $(\theta, k, \gamma)$ over a scenario ensemble containing:
+1. **Historical Crises**: Dot-Com crash (2000-2002), GFC (2008), COVID-19 crash (2020), and 2022 rate hike drawdown.
+2. **Synthetic Scenarios**: 500 block-bootstrapped daily returns paths (varying depth, speed, recovery shape, and inflation).
+
+For each configuration, we apply transactional friction ($0.05\%$ execution slippage) and evaluate the **Minimax Regret** against a Perfect-Foresight benchmark:
+\[ \mathbf{\theta}^* = \arg\min_{\mathbf{\theta}} \max_{s \in \mathcal{S}} \mathcal{R}_{\text{PF}}(\mathbf{\theta}, s) \]
+
+### 4. Experimental Drawdown Odds Model (Purged & Embargoed CV)
+To forecast the probability of a $\ge X\%$ drawdown over a forward horizon of $N$ days without data leakage, we train penalized Ridge/Lasso logistic models. Because labels overlap across time (creating serial correlation), we implement **Marcos López de Prado's Purged and Embargoed K-Fold Cross-Validation**:
+- **Purging**: Removes any training samples whose evaluation windows overlap with the testing test block.
+- **Embargoing**: Discards a 30-day window of training samples immediately following the testing block to neutralize serial correlation leakage.
+
+---
+
 ## Evaluation harness (`ml_engine/evaluate.py`, Model Evaluation tab)
 
 `run_evaluation` plots growth-of-$100k for the chosen strategies + a blended (by current buckets) curve

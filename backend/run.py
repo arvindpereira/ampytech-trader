@@ -107,7 +107,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker"],
+        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker", "crash-forecast", "crash-backfill", "crash-refresh"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -205,6 +205,15 @@ def main():
             run_command([sys.executable, "data_ingestion/popular_tickers.py", "--add", args.symbol], f"Add Ticker {args.symbol}")
         else:
             print("Please specify a ticker symbol to add using --symbol.")
+    elif args.action == "crash-forecast":
+        from ml_engine.crash_model import update_latest_forecast_odds
+        update_latest_forecast_odds()
+    elif args.action == "crash-backfill":
+        from ml_engine.crash_model import backfill_historical_forecast_odds
+        backfill_historical_forecast_odds()
+    elif args.action == "crash-refresh":
+        from ml_engine.crash_model import refresh_crash_forecast
+        refresh_crash_forecast()
 
 if __name__ == "__main__":
     main()

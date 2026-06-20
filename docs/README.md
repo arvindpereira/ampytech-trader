@@ -28,11 +28,11 @@ explorations are preserved at the bottom for history).
 
 | Doc | What it covers |
 | :-- | :-- |
-| [architecture.md](./architecture.md) | Components, processes (API / scheduler / servers), data flows, deployment |
-| [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider), the DB schema (ERD) |
-| [ml-and-strategy.md](./ml-and-strategy.md) | Features, the strategies (swing+news, long-term MPT, regime HMM, legacy short-term), the suggester, the evaluation harness |
-| [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca paper execution, capital buckets, regime overlay, intraday re-execution, liquidation, virtual broker, sim/replay |
-| [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns |
+| [architecture.md](./architecture.md) | Components, processes (API / scheduler / servers), data flows, deployment, **Crash Radar components** |
+| [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider, **stress indicators**), the DB schema (ERD, **snapshots**) |
+| [ml-and-strategy.md](./ml-and-strategy.md) | Features, the strategies (swing+news, long-term MPT, regime HMM, **Composite Crash Index**, legacy short-term), the suggester, the evaluation harness |
+| [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca paper execution, capital buckets, regime overlay, intraday re-execution, liquidation, virtual broker, sim/replay, **defensive playbook stances** |
+| [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns (including **/api/crash/\***) |
 | [operations.md](./operations.md) | Setup, Makefile/CLI, the scheduler jobs, model retraining, Google-Drive DB backup runbook |
 | [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) | **Honest OOS results.** The 2022-bear test, swing-as-bull-amplifier, MPT survivorship, the blend |
 | [strategy-suggester-plan.md](./strategy-suggester-plan.md) | The per-ticker suggester design (v1 + self-validation + v2 regime overlay), all shipped |
@@ -53,34 +53,36 @@ flowchart LR
         N["news_llm<br/>headlines → Ollama/OpenAI"]
         FUND["fundamentals_fetcher<br/>Polygon financials API"]
         PREM["premium_ingest & premium_llm<br/>IMAP email newsletter scan"]
+        STRESS["market_stress & valuation_fetchers<br/>credit, NFCI, Sahm, CAPE, Buffett"]
     end
-    DB[(SQLite DB<br/>prices · fundamentals<br/>classifications · news_llm_scores)]
+    DB[(SQLite DB<br/>prices · macro · sentiments<br/>news_llm_scores · crash_snapshots)]
     subgraph ML["2 · Models & Classify (make classify / swing-train)"]
         CLASS["classify.py<br/>quant ratios + LLM overlay"]
         F[features.py<br/>technicals + LLM-news + macro]
         SW_CORE["Swing Core XGBoost<br/>(Hot / Solid names)"]
         SW_AGG["Swing Aggressive XGBoost<br/>(Speculative names)"]
         H[HMM regime + MPT optimizer]
+        CRASH["crash_radar.py & wargame.py<br/>Composite Index & parameter sweeps"]
     end
     subgraph Serve["3 · API (make serve)"]
-        API["FastAPI :8008<br/>/api/suggestions, /portfolio,<br/>/api/classification, /evaluate, /health"]
+        API["FastAPI :8008<br/>/api/suggestions, /api/crash/*,<br/>/api/classification, /health"]
     end
     subgraph Exec["4 · Execution"]
-        BUCK["bucket-aware run_execution<br/>core vs speculative sleeves<br/>vol target scaling"]
+        BUCK["Stance Rebalance (Paper)<br/>Defensive Playbook (Buffett/Dalio/Taleb)<br/>vol target scaling"]
         ALP[Alpaca paper API]
     end
-    UI["Next.js :3002<br/>Suggestions · Model Evaluation · Portfolio"]
+    UI["Next.js :3002<br/>Suggestions · Model Evaluation · Portfolio · Crash Radar"]
     SCH["scheduler.py<br/>daily + intraday + weekly retrain"]
     GD["Google Drive<br/>commit-stamped DB backups"]
 
-    P & M & S & N & FUND & PREM --> DB
+    P & M & S & N & FUND & PREM & STRESS --> DB
     DB --> CLASS
     DB --> F
     CLASS -.tier filtering.-> SW_CORE & SW_AGG
     F --> SW_CORE & SW_AGG
-    SW_CORE & SW_AGG & H -.saved models.-> API
+    SW_CORE & SW_AGG & H & CRASH -.saved models & snapshots.-> API
     DB --> API --> UI
-    UI -->|edit universe/buckets/strategy<br/>run suggest/eval/backup/overrides| API
+    UI -->|edit universe/buckets/strategy<br/>run suggest/eval/wargame/apply| API
     API --> BUCK --> ALP
     SCH --> DB & API & BUCK
     DB -. make db-backup .-> GD

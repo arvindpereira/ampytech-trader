@@ -16,6 +16,8 @@ make install            # backend venv + Python deps + frontend npm deps
 
 **Data**
 - `make fetch` — hourly+daily prices, macro, sentiment, crisis eras.
+- `make fetch-valuation` — fetch Robert Shiller CAPE and compute Buffett Indicator ratios.
+- `make fetch-market-stress` — fetch credit spreads, financial conditions, Sahm Rule, building permits, and Excess Bond Premium (EBP).
 - `make fundamentals [TICKERS=NVDA,AAPL]` — fetch company financial statements (Polygon API) and calculate ratios.
 - `make classify` — tier the universe by risk × fundamental-quality (runs quantitative metrics + LLM overlay).
 - `make news-llm [START=2021-01-01 PROVIDER=openai TICKERS=AAPL,NVDA]` — LLM-score news for the swing model. Default provider is local **Ollama** (free); `PROVIDER=openai` is a fast bulk backfill (10–50× faster, **<~$1** full backfill; needs `OPENAI_API_KEY`). Batches score concurrently.

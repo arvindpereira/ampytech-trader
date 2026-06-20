@@ -21,6 +21,7 @@ backend/data/*.db-shm
 backend/data/scheduler_heartbeat.txt
 backend/data/llm_pricing.json
 backend/data/premium_ingest_state.json
+backend/data/crash_forecast_state.json
 
 # Caches
 pybroker_cache/

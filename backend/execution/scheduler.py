@@ -157,6 +157,19 @@ def intraday_price_fetch_job():
     except Exception as e:
         print(f"Error during Intraday Price Fetch: {e}")
 
+def crash_radar_refresh_job():
+    """Refresh the Crash Radar's composite snapshot + coherent drawdown odds, but only when the
+    underlying macro/price inputs have actually advanced. The refresh is internally gated by a
+    data fingerprint, so running this daily is cheap and a no-op on days with no new data."""
+    print(f"\n[{datetime.now()}] Triggering Crash Radar Refresh Job...")
+    try:
+        from ml_engine.crash_model import refresh_crash_forecast
+        refresh_crash_forecast()
+        print("Crash Radar Refresh Job completed.")
+    except Exception as e:
+        print(f"Error during Crash Radar Refresh: {e}")
+
+
 def heartbeat_job():
     _write_heartbeat()
 
@@ -215,6 +228,7 @@ def test_single_scheduler_tick():
 
     daily_data_fetch_job()
     weekly_model_retrain_job() # Train models once so we have files ready
+    crash_radar_refresh_job()
     daily_trade_execution_job()
 
     print("==================================================")
@@ -276,7 +290,17 @@ def main():
         name="Retrain models on rolling window"
     )
 
-    # 5. Intraday LLM news scoring — hourly during market hours so swing signals use same-day news
+    # 5. Crash Radar refresh — every weekday at 09:30 EST, shortly after the daily data fetch. The job
+    #    itself is data-change gated (fingerprint of macro features + SPY), so it only recomputes the
+    #    coherent drawdown odds on days when fresh inputs actually arrived.
+    scheduler.add_job(
+        crash_radar_refresh_job,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=market_tz),
+        id="crash_radar_refresh",
+        name="Refresh crash radar odds when data changes"
+    )
+
+    # 6. Intraday LLM news scoring — hourly during market hours so swing signals use same-day news
     if SWING_ENABLED:
         scheduler.add_job(
             intraday_news_scoring_job,
@@ -285,7 +309,7 @@ def main():
             name="Intraday LLM news scoring + swing re-execution (hourly, market hours)"
         )
 
-    # 6. Intraday price fetch — every 5 minutes during market hours Monday-Friday (9 AM to 5 PM Eastern)
+    # 7. Intraday price fetch — every 5 minutes during market hours Monday-Friday (9 AM to 5 PM Eastern)
     scheduler.add_job(
         intraday_price_fetch_job,
         trigger=CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*/5", timezone=market_tz),
@@ -293,7 +317,7 @@ def main():
         name="Fetch intraday prices (every 5 minutes, market hours)"
     )
 
-    # 7. Liveness heartbeat (every minute) so /api/health can report the daemon as up.
+    # 8. Liveness heartbeat (every minute) so /api/health can report the daemon as up.
     scheduler.add_job(heartbeat_job, trigger=IntervalTrigger(seconds=60),
                       id="heartbeat", name="Scheduler liveness heartbeat")
     _write_heartbeat()

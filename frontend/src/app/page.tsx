@@ -3981,7 +3981,7 @@ export default function Home() {
                 </div>
                 
                 <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
-                  Estimates forward probability odds of a systematic market crash using penalized regularized logistic regressions.
+                  Forward probability odds of an SPY drawdown, from penalized L2 logistic regressions. Odds are calibrated to historical base rates and projected onto a logically-coherent grid (deeper drawdowns are never more likely than shallower ones; longer horizons never less likely than shorter ones). <strong>Reliability</strong> reflects purged-embargo cross-validated AUC &mdash; values near 0.5 mean the model has little skill beyond the base rate.
                 </p>
                 
                 {crashData?.experimental_forecast_odds && crashData.experimental_forecast_odds.length > 0 ? (
@@ -3991,18 +3991,36 @@ export default function Home() {
                         <th>Drawdown</th>
                         <th>Horizon</th>
                         <th>Probability</th>
+                        <th>Base Rate</th>
+                        <th>Reliability</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {crashData.experimental_forecast_odds.map((item: any, idx: number) => (
-                        <tr key={idx}>
-                          <td><strong>{item.drawdown}</strong></td>
-                          <td>{item.horizon_days} Days</td>
-                          <td style={{ color: item.probability > 0.3 ? '#EF4444' : '#10B981', fontWeight: 700 }}>
-                            {(item.probability * 100).toFixed(0)}%
-                          </td>
-                        </tr>
-                      ))}
+                      {crashData.experimental_forecast_odds.map((item: any, idx: number) => {
+                        const auc = item.cv_auc;
+                        const skill = auc == null
+                          ? { label: 'n/a', color: 'var(--text-secondary)' }
+                          : auc >= 0.60
+                            ? { label: `AUC ${auc.toFixed(2)}`, color: '#10B981' }
+                            : auc >= 0.55
+                              ? { label: `AUC ${auc.toFixed(2)}`, color: '#F59E0B' }
+                              : { label: `AUC ${auc.toFixed(2)}`, color: '#EF4444' };
+                        return (
+                          <tr key={idx}>
+                            <td><strong>{item.drawdown}</strong></td>
+                            <td>{item.horizon_days} Days</td>
+                            <td style={{ color: item.probability > 0.3 ? '#EF4444' : '#10B981', fontWeight: 700 }}>
+                              {(item.probability * 100).toFixed(0)}%
+                            </td>
+                            <td style={{ color: 'var(--text-secondary)' }}>
+                              {item.base_rate != null ? `${(item.base_rate * 100).toFixed(0)}%` : '\u2014'}
+                            </td>
+                            <td style={{ color: skill.color, fontSize: '11.5px', fontWeight: 600 }}>
+                              {skill.label}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 ) : (

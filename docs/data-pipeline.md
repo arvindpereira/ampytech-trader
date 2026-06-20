@@ -9,6 +9,8 @@ in git/LFS — back it up with `make db-backup` (see [operations.md](./operation
 | :-- | :-- | :-- | :-- |
 | `price_fetcher.py` | Massive/Polygon (hourly ~5y) + Yahoo (daily 1998+) | `recent_prices`, `daily_prices` | computes SMA/RSI/MACD/ATR locally; `backfill_ticker()` does a single new ticker (prices **+ news**) |
 | `macro_fetcher.py` | Massive/FRED | `macro_indicators` | treasury yields, fed funds |
+| `market_stress_fetcher.py` | FRED / FRB | `macro_indicators` | credit spreads (hy, ig), NFCI (financial conditions, leverage), SLOOS tightening supply, labor indicators (initial claims, Sahm rule), Excess Bond Premium (EBP) |
+| `valuation_fetcher.py` | Yale CAPE / Multpl / Polygon WILL5000 | `macro_indicators` | Shiller CAPE, Buffett Indicator (market cap/GDP) |
 | `sentiment_fetcher.py` | News API / Reddit / premium uploads | `ticker_sentiments`, `sentiment_source_logs` | VADER-scored; `is_mock` flag separates real vs mock |
 | `news_llm.py` | Polygon news → **LLM (Ollama or OpenAI)** | `news_llm_scores` | per-ticker directional + relevance score; the **swing** edge; dense from ~2021. Pluggable provider (`NEWS_LLM_PROVIDER`); batches score **concurrently** |
 | `premium_ingest.py` + `premium_llm.py` | **Premium newsletter emails** (e.g. The Information) via IMAP → LLM | `news_llm_scores` | reads subscriber emails you receive, LLM-extracts which **universe tickers** an article materially affects (incl. indirect/private-company knock-ons), writes scores tagged `premium:<source>`. Only derived scores are stored, not article text |
@@ -39,6 +41,7 @@ Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempo
 - `daily_prices` — daily bars 1998+ (+ indicators); features + MPT + regime use these.
 - `crisis_prices` — historic crash-era daily bars.
 - `macro_indicators` — `(date, indicator_name, value)`.
+- `crash_risk_snapshots` — **`as_of_date` PK**, composite risk index, risk band, posture, trigger reasons, subscores (valuation, monetary, credit, etc.), debt cycle read, and experimental forecasts. Acts as timeline cache.
 
 **Fundamentals & Quality Tiers**
 - `ticker_fundamentals` — **`(ticker, end_date)` PK**, financial statement line items (revenues, gross profit, capex, assets, debt) + computed ratios (margins, FCF, ROE, debt-to-equity). Feeds fundamental classification.

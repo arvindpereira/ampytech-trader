@@ -2,7 +2,8 @@
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit backup restore restore-commit \
-        simulate backtest-virtual schedule serve serve-all serve-backend serve-frontend bootstrap lint test popular-tickers add-ticker
+        simulate backtest-virtual schedule serve serve-all serve-backend serve-frontend bootstrap lint test popular-tickers add-ticker \
+        crash-forecast crash-backfill crash-refresh
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
 EPOCHS ?= 10
@@ -69,6 +70,11 @@ help:
 	@echo "  make stop-opt          - Forward-walk: optimize swing stop-loss & take-profit params [OOS_START=2022-01-01]"
 	@echo "  make horizon-opt       - Forward-walk: optimize swing holding horizon [OOS_START=2022-01-01]"
 	@echo "  make backtest          - In-sample PyBroker audit (short- + long-term)"
+	@echo ""
+	@echo "Crash Radar:"
+	@echo "  make crash-refresh     - Refresh latest crash snapshot + coherent odds IF inputs changed (FORCE=1 to force)"
+	@echo "  make crash-forecast    - Recompute coherent drawdown odds for the latest snapshot only"
+	@echo "  make crash-backfill    - Recompute coherent point-in-time odds for the ENTIRE snapshot history"
 	@echo ""
 	@echo "Simulation:"
 	@echo "  make simulate          - Forward Virtual Broker simulation              [DAYS=$(DAYS)]"
@@ -292,6 +298,27 @@ backtest:
 	@echo "📈 In-sample PyBroker audit (short-term hourly + long-term daily MPT)..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py backtest
+
+# ----------------------------------------------------------------------------
+# Crash Radar (defensive strategist)
+# ----------------------------------------------------------------------------
+crash-refresh:
+	@echo "========================================================================"
+	@echo "🛡️  Crash Radar: refreshing snapshot + coherent drawdown odds if data changed$(if $(FORCE), [FORCE]) ..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) -m ml_engine.crash_model --refresh $(if $(FORCE),--force)
+
+crash-forecast:
+	@echo "========================================================================"
+	@echo "🛡️  Crash Radar: recomputing coherent drawdown odds for the latest snapshot..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py crash-forecast
+
+crash-backfill:
+	@echo "========================================================================"
+	@echo "🛡️  Crash Radar: recomputing coherent point-in-time odds for ALL snapshots..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run.py crash-backfill
 
 # ----------------------------------------------------------------------------
 # Simulation

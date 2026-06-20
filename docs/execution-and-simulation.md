@@ -46,8 +46,43 @@ server into replay-as-of-a-date while a simulation runs (`/api/simulate`, `/api/
 replay path is look-ahead-free (orders fill at the next bar's open). `evaluate_virtual_broker_daily`
 marks positions to market, applies stop/take-profit, and logs equity vs SPY/QQQ/BRK-B.
 
+## Posture State Machine & Defensive Playbook
+
+When the Crash Radar tab's stance rebalancing is applied, or in automated mode, the portfolio exposure is governed by a **Posture State Machine** and a **Two-Signal Glide Path**:
+
+### 1. Posture States & Transitions
+- **Normal** ($I_t < 40$): Default state. Focus on maximum return/Sharpe (MPT allocation).
+- **Froth** ($I_t \ge 65$, SPY > 200 SMA): High valuation/risk, but trend remains positive. Hold existing equity holdings, raise cash to 10%, halt new swing entries.
+- **De-Risk** ($I_t \ge 65$, SPY < 200 SMA or credit spreads widening): Reduce equities, increase cash reserves to 30%, size portfolio hedges.
+- **Protect** ($I_t \ge 80$): Extreme systemic fragility. Shift to 50% Cash/Treasuries, 10% convex tail hedges, tilt remaining equity to defensive sectors (staples, utility).
+- **Deploy** (extreme equity drawdown reached, e.g., $-20\%$, $-35\%$): Re-deploy cash reserves in tranches.
+- **Recover** ($I_t < 65$, SPY crosses above 50 SMA): Scale back cash, remove tail hedges, transition back to Normal.
+
+### 2. Simplex Preservation Glide Path
+To prevent abrupt capital reallocation whipsaws, the target portfolio weight vector $\mathbf{w}(z)$ is blended dynamically:
+\[ \mathbf{w}(z) = (1 - d(z)) \mathbf{w}_{\text{agg}} + d(z) \mathbf{w}_{\text{def}} \]
+where $d(z) \in [0, 1]$ is the sigmoid blending coefficient based on the standardized risk score $z_t = (I_t - 50)/15$, adjusted by the trend gate strength $\theta_{\text{eff}} = \theta + \gamma \cdot T_t$.
+
+**Proof of Simplex Preservation**:
+Since both the aggressive portfolio $\mathbf{w}_{\text{agg}}$ and the defensive portfolio $\mathbf{w}_{\text{def}}$ lie on the simplex (all weights $\ge 0$ and sum to $1.0$):
+\[ \sum_{i} w_i(z) = (1 - d(z))\sum_{i} w_{\text{agg}, i} + d(z)\sum_{i} w_{\text{def}, i} = (1 - d(z))\cdot 1 + d(z)\cdot 1 = 1.0 \]
+Since $d(z) \in [0, 1]$, all blended weights are guaranteed to remain non-negative.
+
+### 3. Defensive Allocations
+- **Buffett Stance**: Target cash reserve = $\min(50\%, I_t \times 0.6)$. Re-deployed in tranches on SPY market dips (25% tranche at $-10\%$ drawdown, 35% tranche at $-20\%$ drawdown, 40% tranche at $-35\%$ drawdown).
+- **Dalio Stance (All-Weather Risk Parity)**: US Equities (30%), Long-Term Treasuries (40%), Intermediate Treasuries (15%), Gold (7.5%), Commodities (7.5%).
+- **Taleb Stance (Barbell)**: 90% Safe capital (T-Bills, BIL, FDIC cash) and 10% highly speculative convex assets (options, tail hedges).
+- **Regime-Aware Safe Asset Selection**:
+  - *Stagflation / Inflationary (Breakevens > 2.5% or rising Fed Funds)*: Allocates defensive capital to Gold (GLD), Commodities (GSG), and short-term T-Bills (BIL), excluding long-term bonds.
+  - *Deflationary Bust (Breakevens <= 2.5% and widening credit)*: Allocates to Long-Term Treasuries (TLT) and Cash (BIL).
+
+### 4. Severity Custodial Checklist
+Surfaced as guidelines based on market drawdown levels:
+- **Tier 1: Correction (-10% to -20%)**: Lock margin accounts (zero leverage), audit high-beta specs.
+- **Tier 2: Bear Market (-20% to -35%)**: Diversify cash holdings across multiple banking institutions (staying below FDIC $250k limits).
+- **Tier 3: Systemic Crisis (-35% to -55%)**: Verify SIPC broker coverage details ($500k limit). Hold cash reserves in direct short-term US Treasury Bills.
+- **Tier 4: Depression (> -55%)**: Maintain direct custodial access to vault safe-haven assets.
+
 ## Hedging (optional)
 
-`HEDGE_MODE` (`none`/`beta_neutral`/`pair_trade`) attaches an offsetting short plan to swing BUYs; the
-short leg is only placed on **real Alpaca** (the virtual broker can't short) — otherwise it's shown in
-the UI trade plan for manual execution.
+`HEDGE_MODE` (`none`/`beta_neutral`/`pair_trade`) attaches an offsetting short plan to swing BUYs; the short leg is only placed on **real Alpaca** (the virtual broker can't short) — otherwise it's shown in the UI trade plan for manual execution.

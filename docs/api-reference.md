@@ -52,6 +52,17 @@ registry and polled for progress.
 | `GET /api/jobs` | Active + recently-finished background jobs (for progress bars). |
 | `POST /api/train/start` → `GET /api/train/status` | Retrain XGBoost+HMM+swing in the background; status reports each served model's last-trained time + progress. |
 
+## Crash Radar (Tab 5)
+
+| Method · Path | Returns |
+| :-- | :-- |
+| `GET /api/crash/index` | `{as_of_date, composite_index, risk_band, current_posture, trigger_reasons[], buckets{}, debt_cycle_metrics{}}`. Returns the current Composite Risk Index, its components, posture stance, and structural debt-cycle metrics. |
+| `GET /api/crash/timeline` | `[{date, composite_index, risk_band, current_posture}]`. Returns 5-year weekly out-of-sample (OOS) risk snapshot timeline. |
+| `POST /api/crash/forecast` → `GET /api/crash/forecast/result?job_id` | Spawns a background job to run the experimental regularized drawdown-odds models (Ridge/Lasso with Lopez de Prado's purged/embargoed CV) and retrieves the forecast probabilities. |
+| `GET /api/crash/playbook?preset` | `{preset, de_risk_coefficient, stances: {buffett, safe_asset_selection, dalio, taleb, minsky}}`. Returns target asset weights and custodial guidelines for the selected preset (`conservative`\|`balanced`\|`aggressive`). |
+| `POST /api/crash/wargame` → `GET /api/crash/wargame/result?job_id` | Spawns a background job to sweep parameter ranges over a scenario ensemble (GFC, Dot-Com, 2022, and bootstrap paths) and retrieves minimax regret heatmaps and Pareto-optimal knobs. |
+| `POST /api/crash/apply` `{confirm_execution, target_posture, preset}` | Executes rebalancing transactions to align virtual/paper portfolio allocations with the active defensive stance. |
+
 ## Virtual broker (Alpaca-shaped, SQLite-backed)
 
 `GET /api/virtual_alpaca/v2/account`, `GET/POST /api/virtual_alpaca/v2/positions`,

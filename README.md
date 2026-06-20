@@ -205,6 +205,32 @@ If you subscribe to premium services like "The Information" or "Bloomberg" and w
 
 ---
 
+### Workflow 6: Monitoring Stress & Defensive Stances (Crash Radar)
+The **Crash Radar** (Tab 5) serves as a risk management console that quantifies systemic market stress look-ahead free and blends allocation postures to protect capital.
+
+#### 1. Out-of-Sample Risk Timeline
+- **Visual Heatmap**: The card at the top displays a 5-year weekly line/area chart of the out-of-sample Composite Crash-Risk Index.
+- **Severity Coloring**: The line and fill colors shift dynamically based on thresholds: **Calm** ($<40$, green), **Elevated** ($40-65$, blue), **High** ($65-80$, orange), and **Extreme** ($\ge 80$, red), letting you immediately identify historical crisis regimes (such as the 2022 bear market).
+
+#### 2. Risk Metrics & Sigmoid Knobs
+- **Composite Gauge**: Evaluates the real-time index score (from 0 to 100) alongside systemic trigger reasons (e.g., CAPE valuation percentile, inverted yields, or credit widening).
+- **Glide-Path Policy Curve**: Use the sliders to customize:
+  - **De-risking Threshold ($\theta$)**: Standardized score above which de-allocation of equities begins.
+  - **Steepness ($k$)**: Speed of transitioning equity capital into cash.
+  - **Trend Gate Strength ($\gamma$)**: Extent to which active uptrends (SPY above 200 SMA) offset de-risking actions.
+  - Select presets (**conservative**, **balanced**, **aggressive**) to quickly adjust policy sensitivities.
+
+#### 3. Strategic Playbook & Stance Rebalancing
+- **Stance Overview**: Displays target cash buffers and safe asset mixes (automatically routing between a *Stagflation* branch containing Gold/TIPS/Commodities and a *Deflationary Bust* branch containing TLT/Cash depending on breakeven inflation).
+- **Custodian Checklist**: Details real-world custody precautions (e.g. FDIC bank limits, short Treasury bill holdings, SIPC limits) matching the current drawdown severity.
+- **One-Click Rebalance**: Click **"Apply Stance Rebalancing (Paper)"** to trigger the order generator. The backend calculates the differences between your current paper holdings and target stance weights, placing rebalancing buy/sell orders automatically on Alpaca.
+
+#### 4. Forecasts & Wargame Parameter Sweeps
+- **Purged CV Forecast**: Trigger a background job to run the regularized logistic drawdown-odds model, using Marcos López de Prado's Purged and Embargoed CV to estimate risk probability over 30/90/180 days.
+- **Scenario Wargaming**: Click **"Run Scenario Wargame Sweep"** to execute parameter sweeps across historical crashes (2000, 2008, 2020, 2022) and 500 block-bootstrap paths. The results display a grid parameter sweep detailing the optimal parameters that minimize worst-case regret.
+
+---
+
 ## 🔒 Look-Ahead Bias Mitigation Rules
 
 To guarantee that your backtest matches real-world execution, the system implements two strict mathematical rules:
