@@ -572,7 +572,14 @@ def compute_regime_series(oos_start=None):
     The HMM is fit ONLY on data BEFORE `oos_start` (so the regime classifier's parameters never see the
     out-of-sample window), then labels every date by trailing-vol features. This lets the swing backtest
     apply the same crisis-shrink the live executor uses, instead of assuming swing is fully deployed
-    through every bear. Returns {} if SPY features are unavailable (caller then runs ungated)."""
+    through every bear. Returns {} if SPY features are unavailable (caller then runs ungated).
+
+    Features are STANDARDIZED (scaler fit on the train slice only, so no look-ahead) before the HMM fit:
+    without scaling, the larger-scale macro features (fed funds, yield spread) swamp the low-variance
+    volatility feature, so the states cluster on rate regimes instead of market stress (walk-forward
+    concurrent-stress AUC ~0.40, worse than random; 2008/2020 mislabeled "growth"). Scaling restores a
+    valid regime signal (AUC ~0.61). See eval_regime_smoothing.py."""
+    from sklearn.preprocessing import StandardScaler
     feats = load_daily_spy_features()
     if feats is None or feats.empty:
         return {}
@@ -586,14 +593,69 @@ def compute_regime_series(oos_start=None):
     if len(train) < 100:
         train = d
     try:
+        Xtr, Xall = train[cols].values, d[cols].values
+        sc = StandardScaler().fit(Xtr)
+        Xtr, Xall = sc.transform(Xtr), sc.transform(Xall)
         m = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
-        m.fit(train[cols].values)
+        m.fit(Xtr)
         order = np.argsort(m.means_[:, 0])   # index 0 = volatility; low→growth, high→crisis
         mapping = {int(order[0]): "growth", int(order[1]): "transition", int(order[2]): "crisis"}
-        states = m.predict(d[cols].values)
+        states = m.predict(Xall)
         return {str(dt): mapping[int(s)] for dt, s in zip(d["date"].values, states)}
     except Exception as e:
         print(f"Regime series computation failed: {e}")
+        return {}
+
+
+def compute_regime_score_series(oos_start=None, ema_span=21, standardize=True):
+    """Point-in-time {date: smoothed crisis score 0-100} for the crash-radar HMM bucket.
+
+    Differs from `compute_regime_series` (which returns hard {growth/transition/crisis}
+    labels used for swing capital-gating) in two evaluation-driven ways:
+
+      1. Features are STANDARDIZED before the HMM fit. Without scaling, the larger-scale
+         macro features (fed funds, yield spread) swamp the low-variance volatility
+         feature, so the states cluster on rate regimes instead of market stress
+         (walk-forward concurrent-stress AUC ~0.40, i.e. worse than random). Scaling
+         restores a valid regime signal (AUC ~0.61).
+      2. The hard state score {growth:20, transition:60, crisis:100} is smoothed with a
+         causal EMA. Walk-forward testing showed EMA(span~21) keeps essentially all of
+         the raw signal's validity (AUC 0.608 vs 0.609) while cutting the weekly sawtooth
+         ~6x (mean |Δ| 13.0 -> 2.1), beating soft-probability expectation on both axes.
+
+    Returns {} if SPY features are unavailable (caller falls back to a neutral score).
+    """
+    from sklearn.preprocessing import StandardScaler
+    feats = load_daily_spy_features()
+    if feats is None or feats.empty:
+        return {}
+    cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
+    if not all(c in feats.columns for c in cols):
+        return {}
+    d = feats.dropna(subset=cols).sort_values("date")
+    if len(d) < 100:
+        return {}
+    train = d[d["date"] < oos_start] if oos_start else d
+    if len(train) < 100:
+        train = d
+    try:
+        Xtr, Xall = train[cols].values, d[cols].values
+        if standardize:
+            sc = StandardScaler().fit(Xtr)
+            Xtr, Xall = sc.transform(Xtr), sc.transform(Xall)
+        m = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
+        m.fit(Xtr)
+        order = np.argsort(m.means_[:, 0])   # col 0 = volatility; low->growth, high->crisis
+        state_score = np.empty(3)
+        state_score[int(order[0])] = 20.0
+        state_score[int(order[1])] = 60.0
+        state_score[int(order[2])] = 100.0
+        raw = state_score[m.predict(Xall)]
+        smoothed = pd.Series(raw, index=pd.to_datetime(d["date"].values)).ewm(
+            span=ema_span, adjust=False).mean()
+        return {str(dt): float(v) for dt, v in zip(d["date"].values, smoothed.values)}
+    except Exception as e:
+        print(f"Regime score series computation failed: {e}")
         return {}
 
 

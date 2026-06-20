@@ -40,7 +40,8 @@ import {
   Tooltip,
   Area,
   CartesianGrid,
-  Legend
+  Legend,
+  ReferenceLine
 } from 'recharts';
 import GrantTimeline from './GrantTimeline';
 
@@ -3731,9 +3732,19 @@ export default function Home() {
                   <Activity size={20} color="var(--color-accent)" />
                   <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Composite Crash-Risk Timeline (Past 5 Years)</h3>
                 </div>
-                <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                  Weekly Out-of-Sample (OOS) Risk Estimate Index
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  {[
+                    { label: 'Calm', color: '#10B981', range: '0–40' },
+                    { label: 'Elevated', color: '#3B82F6', range: '40–65' },
+                    { label: 'High', color: '#F59E0B', range: '65–80' },
+                    { label: 'Extreme', color: '#EF4444', range: '80–100' },
+                  ].map((b) => (
+                    <span key={b.label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: b.color, display: 'inline-block' }} />
+                      {b.label} <span style={{ opacity: 0.6 }}>{b.range}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
               
               <div style={{ width: '100%', height: '300px' }}>
@@ -3741,9 +3752,22 @@ export default function Home() {
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <defs>
-                        <linearGradient id="colorIndex" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="var(--color-accent)" stopOpacity={0.4}/>
-                          <stop offset="95%" stopColor="var(--color-accent)" stopOpacity={0.0}/>
+                        {/* Risk heat map: color tracks the index value (green=low risk -> red=high risk).
+                            Gradient runs top(value=100)->bottom(value=0); offsets = (100 - value)/100,
+                            so band thresholds 80/65/40 sit at offsets 0.20/0.35/0.60. */}
+                        <linearGradient id="crashStroke" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0" stopColor="#EF4444" />
+                          <stop offset="0.20" stopColor="#EF4444" />
+                          <stop offset="0.35" stopColor="#F59E0B" />
+                          <stop offset="0.60" stopColor="#3B82F6" />
+                          <stop offset="1" stopColor="#10B981" />
+                        </linearGradient>
+                        <linearGradient id="crashFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0" stopColor="#EF4444" stopOpacity={0.55} />
+                          <stop offset="0.20" stopColor="#EF4444" stopOpacity={0.40} />
+                          <stop offset="0.35" stopColor="#F59E0B" stopOpacity={0.30} />
+                          <stop offset="0.60" stopColor="#3B82F6" stopOpacity={0.20} />
+                          <stop offset="1" stopColor="#10B981" stopOpacity={0.05} />
                         </linearGradient>
                       </defs>
                       <XAxis 
@@ -3758,26 +3782,31 @@ export default function Home() {
                       />
                       <YAxis 
                         domain={[0, 100]} 
+                        ticks={[0, 40, 65, 80, 100]}
                         stroke="var(--text-secondary)"
                         fontSize={10}
                         tickLine={false}
                       />
+                      {/* Band threshold guide lines */}
+                      <ReferenceLine y={40} stroke="#3B82F6" strokeDasharray="3 3" strokeOpacity={0.35} />
+                      <ReferenceLine y={65} stroke="#F59E0B" strokeDasharray="3 3" strokeOpacity={0.35} />
+                      <ReferenceLine y={80} stroke="#EF4444" strokeDasharray="3 3" strokeOpacity={0.45} />
                       <Tooltip 
                         content={({ active, payload }) => {
                           if (active && payload && payload.length) {
                             const data = payload[0].payload;
+                            const bandColor =
+                              data.risk_band === 'Calm' ? '#10B981' :
+                              data.risk_band === 'Elevated' ? '#3B82F6' :
+                              data.risk_band === 'High' ? '#F59E0B' : '#EF4444';
                             return (
-                              <div style={{ background: 'rgba(16, 20, 38, 0.95)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
+                              <div style={{ background: 'rgba(16, 20, 38, 0.95)', border: `1px solid ${bandColor}`, borderRadius: '8px', padding: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' }}>
                                 <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>{data.date}</div>
                                 <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '2px' }}>
-                                  Index: <span style={{ color: 'var(--color-accent)' }}>{data.composite_index.toFixed(1)}</span>
+                                  Index: <span style={{ color: bandColor }}>{data.composite_index.toFixed(1)}</span>
                                 </div>
                                 <div style={{ fontSize: '12px', fontWeight: 600, display: 'flex', gap: '6px' }}>
-                                  <span style={{ color: 
-                                    data.risk_band === 'Calm' ? '#10B981' :
-                                    data.risk_band === 'Elevated' ? '#3B82F6' :
-                                    data.risk_band === 'High' ? '#F59E0B' : '#EF4444'
-                                  }}>
+                                  <span style={{ color: bandColor }}>
                                     {data.risk_band.toUpperCase()}
                                   </span>
                                   <span style={{ color: 'var(--text-secondary)' }}>·</span>
@@ -3792,10 +3821,10 @@ export default function Home() {
                       <Area 
                         type="monotone" 
                         dataKey="composite_index" 
-                        stroke="var(--color-accent)" 
-                        strokeWidth={2}
+                        stroke="url(#crashStroke)" 
+                        strokeWidth={2.5}
                         fillOpacity={1} 
-                        fill="url(#colorIndex)" 
+                        fill="url(#crashFill)" 
                       />
                     </AreaChart>
                   </ResponsiveContainer>

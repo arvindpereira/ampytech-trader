@@ -21,13 +21,14 @@ FRED_SERIES_MAP = {
     "initial_claims_4w": "IC4WSA",
     "sahm_indicator": "SAHMREALTIME",
     "term_spread_10y3m": "T10Y3M",
+    "fed_funds": "DFF",
     "margin_debt_quarterly": "BOGZ1FL663067003Q"
 }
 
 def get_pub_date(ref_date_str, series_id):
     """Aligns a FRED reference date with its standard publication date to avoid look-ahead bias."""
     ref_date = pd.to_datetime(ref_date_str)
-    if series_id in ["VIXCLS", "BAMLH0A0HYM2", "BAMLC0A0CM", "T10Y3M"]:
+    if series_id in ["VIXCLS", "BAMLH0A0HYM2", "BAMLC0A0CM", "T10Y3M", "DFF"]:
         # Daily: published next calendar day (1-day lag)
         pub_date = ref_date + timedelta(days=1)
     elif series_id in ["NFCI", "NFCILEVERAGE"]:

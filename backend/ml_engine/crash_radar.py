@@ -9,7 +9,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import SessionLocal, MacroIndicator, CrashRiskSnapshot, DailyPrice
-from ml_engine.models import compute_regime_series
+from ml_engine.models import compute_regime_score_series
 
 _regime_series_cache = None
 _indicator_series_cache = {}
@@ -47,7 +47,9 @@ def load_historical_series(db, indicator_name):
         MacroIndicator.indicator_name == indicator_name
     ).order_by(MacroIndicator.date.asc()).all()
     if not records:
-        res = pd.Series(dtype=float)
+        # Empty series must still carry a DatetimeIndex, otherwise downstream
+        # date comparisons (hist.index <= timestamp) raise a TypeError.
+        res = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     else:
         dates = [r[0] for r in records]
         vals = [float(r[1]) for r in records]
@@ -198,26 +200,21 @@ def compute_composite_index(as_of_date=None):
     b_cycle = cycle_score
     
     # J. HMM Regime Overlay
-    # Run the HMM regime classification series
-    b_hmm = 50.0 # Default
+    # Smoothed, standardized HMM crisis score (0-100). Standardizing the features and
+    # applying a causal EMA removes the weekly 20<->60 sawtooth the hard Viterbi label
+    # produced, while keeping the regime's concurrent-stress validity (see
+    # compute_regime_score_series + eval_regime_smoothing.py).
+    b_hmm = 50.0 # Default if regime features unavailable
     try:
         global _regime_series_cache
         if _regime_series_cache is None:
-            _regime_series_cache = compute_regime_series()
+            _regime_series_cache = compute_regime_score_series()
         regime_dict = _regime_series_cache
         if regime_dict:
-            # find latest date in regime_dict <= as_of_date
+            # find latest date in regime_dict <= as_of_date (point-in-time lookup)
             valid_dates = [k for k in regime_dict.keys() if k <= as_of_date]
             if valid_dates:
-                latest_dt_str = max(valid_dates)
-                current_regime = regime_dict[latest_dt_str]
-                # "growth", "transition", "crisis"
-                if current_regime == "crisis":
-                    b_hmm = 100.0
-                elif current_regime == "transition":
-                    b_hmm = 60.0
-                else:
-                    b_hmm = 20.0
+                b_hmm = float(regime_dict[max(valid_dates)])
     except Exception as e:
         print(f"HMM regime lookup failed: {e}")
         
@@ -357,6 +354,22 @@ def compute_composite_index(as_of_date=None):
     db.close()
     return snapshot, bucket_scores
 
+def is_valid_snapshot(snap):
+    """A genuine snapshot has all bucket sub-scores and a created_at stamp populated.
+    Partial rows (e.g. seeded test fixtures) leave sub-scores/created_at as NULL and
+    must never be served or cached as if they were real computations.
+    """
+    if snap is None:
+        return False
+    required = [
+        snap.composite_index, snap.created_at,
+        snap.valuation_subscore, snap.monetary_subscore, snap.credit_subscore,
+        snap.financial_conditions_subscore, snap.lending_subscore, snap.labor_subscore,
+        snap.real_activity_subscore, snap.internals_subscore, snap.cycle_subscore,
+        snap.hmm_regime_subscore,
+    ]
+    return all(v is not None for v in required)
+
 def persist_crash_snapshot(snapshot):
     """Saves or updates a CrashRiskSnapshot in SQLite."""
     db = SessionLocal()
@@ -377,6 +390,7 @@ def persist_crash_snapshot(snapshot):
         existing.cycle_subscore = snapshot.cycle_subscore
         existing.hmm_regime_subscore = snapshot.hmm_regime_subscore
         existing.debt_cycle_read = snapshot.debt_cycle_read
+        existing.created_at = snapshot.created_at or datetime.now().isoformat()
         db.add(existing)
     else:
         db.add(snapshot)
@@ -427,12 +441,17 @@ def get_crash_index_timeline():
             if min_indicator_date and pd.to_datetime(date_str) < min_indicator_date:
                 continue
                 
-            if date_str in existing_map:
-                snap = existing_map[date_str]
+            cached = existing_map.get(date_str)
+            if is_valid_snapshot(cached):
+                snap = cached
             else:
                 try:
                     snap, _ = compute_composite_index(date_str)
-                    new_snaps.append(snap)
+                    if cached is not None:
+                        # Overwrite a corrupt/partial cached row in place.
+                        persist_crash_snapshot(snap)
+                    else:
+                        new_snaps.append(snap)
                 except Exception as e:
                     # Gracefully skip if calculation fails for some early date with insufficient history
                     print(f"Skipping timeline calculation for {date_str}: {e}")

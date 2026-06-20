@@ -8,14 +8,15 @@ from unittest.mock import MagicMock, patch
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import tempfile
-_temp_dir = tempfile.TemporaryDirectory()
-os.environ["DATA_STORAGE_DIR"] = _temp_dir.name
+os.environ.setdefault("DATA_STORAGE_DIR", tempfile.mkdtemp(prefix="ampy_test_db_"))
 
 from app.database import init_db, SessionLocal, VirtualPosition, VirtualOrder, VirtualAccount, RecentPrice, CrashRiskSnapshot
 from app.main import apply_crash_rebalancing, ApplyRebalancingRequest
+from test_db_guard import assert_isolated_db
 
 class TestOrderDiffing(unittest.TestCase):
     def setUp(self):
+        assert_isolated_db()
         init_db()
         self.db = SessionLocal()
         # Clean up database tables for testing
@@ -50,6 +51,7 @@ class TestOrderDiffing(unittest.TestCase):
         self.db.query(VirtualOrder).delete()
         self.db.query(VirtualAccount).delete()
         self.db.query(RecentPrice).delete()
+        self.db.query(CrashRiskSnapshot).delete()
         self.db.commit()
         self.db.close()
 

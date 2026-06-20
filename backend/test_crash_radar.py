@@ -8,14 +8,15 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import tempfile
-_temp_dir = tempfile.TemporaryDirectory()
-os.environ["DATA_STORAGE_DIR"] = _temp_dir.name
+os.environ.setdefault("DATA_STORAGE_DIR", tempfile.mkdtemp(prefix="ampy_test_db_"))
 
 from ml_engine.crash_radar import normalize_value, get_rolling_percentile, compute_composite_index
 from app.database import init_db, SessionLocal, MacroIndicator, CrashRiskSnapshot
+from test_db_guard import assert_isolated_db
 
 class TestCrashRadar(unittest.TestCase):
     def setUp(self):
+        assert_isolated_db()
         init_db()
         self.db = SessionLocal()
         # Clean up macro indicators before tests

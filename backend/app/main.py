@@ -3044,16 +3044,17 @@ def _run_wargame_job(jid, theta_range, k_range, gamma_range):
 def get_crash_index():
     """Returns the latest CrashRiskSnapshot, generating it on the fly if needed."""
     from app.database import SessionLocal, CrashRiskSnapshot
-    from ml_engine.crash_radar import compute_composite_index, get_latest_date, persist_crash_snapshot
+    from ml_engine.crash_radar import compute_composite_index, get_latest_date, persist_crash_snapshot, is_valid_snapshot
     db = SessionLocal()
     try:
         latest_dt = get_latest_date()
         snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest_dt).first()
-        if not snap:
-            # Generate and persist on the fly
-            snap, _ = compute_composite_index(latest_dt)
-            persist_crash_snapshot(snap)
+        if not is_valid_snapshot(snap):
+            # Generate/repair on the fly (handles missing OR corrupt/partial rows)
+            fresh, _ = compute_composite_index(latest_dt)
+            persist_crash_snapshot(fresh)
             # reload
+            db.expire_all()
             snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest_dt).first()
             
         if not snap:
