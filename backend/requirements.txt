@@ -16,6 +16,9 @@ pyyaml==6.0.1
 lib-pybroker
 torch>=2.0.0
 
+# PDF text extraction (equity lot import)
+pypdf>=4.0.0
+
 # Google Drive DB backup
 google-api-python-client
 google-auth-httplib2

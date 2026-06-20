@@ -34,6 +34,12 @@ from app.core.config import (
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]   # least privilege: only files the app creates
 TOKEN_PATH = os.path.join(DATA_STORAGE_DIR, "gdrive_token.json")
 PREFIX = "trading_system_"
+
+# Tables checked during --verify (core pipeline + Equity Advisor user data).
+_VERIFY_TABLES = [
+    "news_llm_scores", "daily_prices", "recent_prices", "universe_tickers", "virtual_orders",
+    "equity_lots", "equity_vest_schedules", "equity_auto_trade_blocks", "tax_profile", "trading_blocks",
+]
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -231,6 +237,9 @@ def backup(keep=None, files_mode=False):
     f = _exec(svc.files().create(body=meta, media_body=media, fields="id,name"))
     print(f"✓ Backed up: {f['name']} (id {f['id']})")
 
+    if not files_mode:
+        _print_equity_advisor_snapshot()
+
     if files_mode and os.path.exists(temp_zip):
         os.remove(temp_zip)
 
@@ -356,7 +365,7 @@ def verify(name=None, match_commit=False, files_mode=False):
             while not done:
                 _, done = dl.next_chunk()
 
-        tables = ["news_llm_scores", "daily_prices", "recent_prices", "universe_tickers", "virtual_orders"]
+        tables = _VERIFY_TABLES
         try:
             c = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
             integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
@@ -383,6 +392,36 @@ def _safe_count(conn, table):
         return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
     except Exception:
         return None
+
+
+def _print_equity_advisor_snapshot():
+    """Print Equity Advisor row counts so backups clearly include personal holdings data."""
+    try:
+        import sqlite3
+        if not os.path.exists(DB_PATH):
+            return
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+        ea_tables = [
+            "equity_lots", "equity_vest_schedules", "equity_auto_trade_blocks", "tax_profile",
+        ]
+        counts = {t: _safe_count(conn, t) for t in ea_tables}
+        blocked = None
+        try:
+            blocked = conn.execute(
+                "SELECT COUNT(*) FROM equity_auto_trade_blocks WHERE blocked = 1"
+            ).fetchone()[0]
+        except Exception:
+            pass
+        conn.close()
+        if any(v for v in counts.values() if v):
+            print("  Equity Advisor in this backup:")
+            for t in ea_tables:
+                if counts[t] is not None:
+                    print(f"    {t}: {counts[t]}")
+            if blocked is not None:
+                print(f"    auto-trade blocked tickers: {blocked}")
+    except Exception as e:
+        print(f"  (Equity Advisor snapshot skipped: {e})")
 
 
 if __name__ == "__main__":

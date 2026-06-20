@@ -28,7 +28,8 @@ import {
   ThumbsDown,
   AlertTriangle,
   CheckCircle2,
-  Newspaper
+  Newspaper,
+  Upload
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -591,7 +592,8 @@ export default function Home() {
   });
   const [premiumStatus, setPremiumStatus] = useState<string>('');
   const [equityLots, setEquityLots] = useState<EquityLot[]>([]);
-  const [grantTicker, setGrantTicker] = useState<string>('');
+  const [grantChartsVisible, setGrantChartsVisible] = useState<Record<string, boolean>>({});
+  const [vestSchedules, setVestSchedules] = useState<any[]>([]);
   const [equityForecasts, setEquityForecasts] = useState<Record<string, any>>({});
   const [taxProfile, setTaxProfile] = useState<any>({
     filing_status: 'single',
@@ -623,6 +625,9 @@ export default function Home() {
   const [equityAggregate, setEquityAggregate] = useState<any[]>([]);
   const [sellModal, setSellModal] = useState<any>(null);
   const [sellBusy, setSellBusy] = useState<boolean>(false);
+  const [equityImportStatus, setEquityImportStatus] = useState<string>('');
+  const [equityImportBusy, setEquityImportBusy] = useState<boolean>(false);
+  const [equityImportReplace, setEquityImportReplace] = useState<boolean>(false);
 
   const money = (v: any) => typeof v === 'number' && isFinite(v) ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
   const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
@@ -638,6 +643,15 @@ export default function Home() {
         setEquityLots(data.lots || []);
         setEquityForecasts(data.forecasts || {});
         setEquityAggregate(data.aggregate || []);
+        setVestSchedules(data.vest_schedules || []);
+        const tickers = Array.from(new Set((data.lots || []).map((l: EquityLot) => l.ticker))).sort() as string[];
+        setGrantChartsVisible((prev) => {
+          const next = { ...prev };
+          for (const t of tickers) {
+            if (next[t] === undefined) next[t] = true;
+          }
+          return next;
+        });
       }
       if (profileRes.ok) setTaxProfile(await profileRes.json());
     } catch (err) {
@@ -706,6 +720,53 @@ export default function Home() {
   const deleteEquityLot = async (id?: number) => {
     if (!id) return;
     await fetch(`http://localhost:8008/api/equity/lots/${id}`, { method: 'DELETE' });
+    fetchEquityAdvisor();
+  };
+
+  const importEquityPdf = async (file: File, replaceTickerAccount = false) => {
+    setEquityImportBusy(true);
+    setEquityImportStatus('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('force_llm', 'false');
+      form.append('replace_ticker_account', replaceTickerAccount ? 'true' : 'false');
+      const res = await fetch('http://localhost:8008/api/equity/lots/import', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = typeof data.detail === 'object' ? data.detail.message || JSON.stringify(data.detail) : (data.detail || res.statusText);
+        setEquityImportStatus(`Import failed: ${msg}`);
+        return;
+      }
+      const warn = (data.warnings || []).length ? ` Warnings: ${(data.warnings as string[]).join(' ')}` : '';
+      setEquityImportStatus(
+        `Imported ${data.inserted} lot(s) (${(data.tickers || []).join(', ') || '—'}); ` +
+        `${data.skipped_duplicates || 0} duplicate(s) skipped.${data.llm_used ? ' (LLM parser)' : ''}${warn}`
+      );
+      fetchEquityAdvisor();
+    } catch (err: any) {
+      setEquityImportStatus(`Import failed: ${err?.message || err}`);
+    } finally {
+      setEquityImportBusy(false);
+    }
+  };
+
+  const toggleEquityAutoTradeBlock = async (ticker: string, blocked: boolean) => {
+    await fetch('http://localhost:8008/api/equity/auto-trade-block', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker, blocked }),
+    });
+    fetchEquityAdvisor();
+    fetchTradingGuard();
+  };
+
+  const saveVestSchedule = async (schedule: any) => {
+    await fetch('http://localhost:8008/api/equity/vest-schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(schedule),
+    });
     fetchEquityAdvisor();
   };
 
@@ -942,6 +1003,23 @@ export default function Home() {
     { key: 'qqq', name: 'QQQ', color: '#A78BFA' },
     { key: 'brk', name: 'Berkshire (BRK-B)', color: '#FB923C' },
   ];
+
+  // Drop a series from the chart/table when another already plotted line is numerically identical
+  // (common when blended == swing at 100% swing allocation but backend hasn't deduped yet).
+  const evalVisibleSeries = (result: any) => {
+    const rows: any[] = result?.series || [];
+    const keys = EVAL_SERIES.map(s => s.key).filter(k => result?.metrics?.[k]);
+    const sameCurve = (a: string, b: string) => rows.length > 0 && rows.every(r => {
+      const va = r[a], vb = r[b];
+      if (va == null && vb == null) return true;
+      if (va == null || vb == null) return false;
+      return Math.abs(Number(va) - Number(vb)) < 0.05;
+    });
+    return keys.filter(k => !keys.some(other => other !== k && other !== 'blended' && k === 'blended' && sameCurve(k, other)));
+  };
+
+  // Draw benchmarks first, blended in the middle, component strategies last so they aren't buried.
+  const EVAL_CHART_ORDER: Record<string, number> = { spy: 0, qqq: 1, brk: 2, blended: 3, longterm: 4, high_risk: 5, swing: 6 };
 
   // Risk × fundamental-quality tiers, with at-a-glance names/icons/colors for the ticker badges.
   const TIER_META: Record<string, { label: string; icon: string; color: string; blurb: string }> = {
@@ -2662,11 +2740,13 @@ export default function Home() {
                         <Tooltip contentStyle={{ background: 'rgba(16,20,38,0.95)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)' }}
                           formatter={(v: any) => `$${parseFloat(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
                         <Legend />
-                        {EVAL_SERIES.filter(s => evalResult.metrics[s.key]).map(s => (
+                        {EVAL_SERIES.filter(s => evalVisibleSeries(evalResult).includes(s.key))
+                          .sort((a, b) => (EVAL_CHART_ORDER[a.key] ?? 9) - (EVAL_CHART_ORDER[b.key] ?? 9))
+                          .map(s => (
                           <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color}
                             strokeWidth={['spy', 'qqq', 'brk'].includes(s.key) ? 1.5 : 2.6}
                             strokeDasharray={['spy', 'qqq', 'brk'].includes(s.key) ? '4 3' : undefined}
-                            dot={false} connectNulls />
+                            dot={false} connectNulls isAnimationActive={false} />
                         ))}
                       </LineChart>
                     </ResponsiveContainer>
@@ -2691,7 +2771,7 @@ export default function Home() {
                         </tr>
                       </thead>
                       <tbody>
-                        {EVAL_SERIES.filter(s => evalResult.metrics[s.key]).map(s => {
+                        {EVAL_SERIES.filter(s => evalVisibleSeries(evalResult).includes(s.key)).map(s => {
                           const m = evalResult.metrics[s.key];
                           return (
                             <tr key={s.key}>
@@ -3740,25 +3820,79 @@ export default function Home() {
               <button onClick={saveTaxProfile} className="toggle-btn" style={{ marginTop: '14px' }}>Save Profile</button>
             </div>
 
-            <div className="glass-card" style={{ padding: '18px' }}>
-              <h3 style={{ marginTop: 0 }}>Step 2 — Your share lots</h3>
+            <div className="glass-card" style={{ padding: '18px' }} id="equity-lot-form-section">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                <h3 style={{ margin: 0 }}>Step 2 — Your share lots</h3>
+                <label
+                  htmlFor="equity-pdf-upload"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: equityImportBusy ? 'wait' : 'pointer',
+                    padding: '8px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 600,
+                    border: '1px solid rgba(34, 211, 238, 0.55)', background: 'rgba(34, 211, 238, 0.12)',
+                    color: '#22D3EE', opacity: equityImportBusy ? 0.6 : 1,
+                  }}
+                >
+                  <Upload size={15} /> {equityImportBusy ? 'Importing…' : 'Import PDF'}
+                  <input
+                    id="equity-pdf-upload"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    disabled={equityImportBusy}
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) importEquityPdf(f, equityImportReplace);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-                Add each batch of vested shares: ticker, how many, your <em>cost basis</em> (price per share when they vested/were bought), and the date. We pull the live price and work out gains, holding period, and long-term status. <strong>RSU</strong> = restricted stock units; <strong>ESPP</strong> = employee stock purchase plan.
+                Add each batch of vested shares manually below, or use <strong style={{ color: 'var(--text-primary)' }}>Import PDF</strong> for Schwab cost-basis exports and E*TRADE / Morgan Stanley stock-plan statements. Duplicates are skipped automatically.
               </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginBottom: '14px', padding: '10px 12px', borderRadius: '8px', border: '1px dashed rgba(34, 211, 238, 0.35)', background: 'rgba(34, 211, 238, 0.06)' }}>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    checked={equityImportReplace}
+                    onChange={(e) => setEquityImportReplace(e.target.checked)}
+                  />
+                  Replace existing lots for same ticker/account before import
+                </label>
+              </div>
+              {equityImportStatus && (
+                <div style={{ fontSize: '12.5px', marginBottom: '12px', color: equityImportStatus.startsWith('Import failed') ? 'var(--color-sell)' : 'var(--color-buy)' }}>
+                  {equityImportStatus}
+                </div>
+              )}
               {equityAggregate.length > 0 && (
                 <div style={{ marginBottom: '16px' }}>
                   <div style={{ fontSize: '12.5px', fontWeight: 600, marginBottom: '6px' }}>By holding</div>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 8px' }}>
+                    External holdings are added to the data universe (news, fundamentals, models) with strategy <em>hold</em>.
+                    Toggle <strong>Block bot</strong> to prevent auto-trading a name you are harvesting manually (RSU tickers like PINS default on).
+                  </p>
                   <table className="trade-table">
-                    <thead><tr><th>Ticker</th><th>Shares</th><th>Avg basis</th><th>Value</th><th>Unrealized</th><th>LT / ST</th><th>Recommendation</th></tr></thead>
+                    <thead><tr><th>Ticker</th><th>Shares</th><th>Avg basis</th><th>Value</th><th>Unrealized</th><th>LT / ST</th><th>Bot trading</th><th>Recommendation</th></tr></thead>
                     <tbody>
                       {equityAggregate.map((a: any) => (
                         <tr key={a.ticker}>
-                          <td><strong>{a.ticker}</strong>{a.tier_label && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{a.tier_label} · {pct(a.weight)}</div>}</td>
+                          <td><strong>{a.ticker}</strong>{a.tier_label && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{a.tier_label} · {pct(a.weight)} · {a.universe_strategy || 'hold'}</div>}</td>
                           <td>{Math.round(a.shares).toLocaleString()}</td>
                           <td>{money(a.avg_cost_basis)}</td>
                           <td>{money(a.market_value)}</td>
                           <td style={{ color: (a.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{money(a.unrealized_gain)} / {pct(a.unrealized_pct)}</td>
                           <td style={{ fontSize: '12px' }}>{Math.round(a.lt_shares).toLocaleString()} / {Math.round(a.st_shares).toLocaleString()}</td>
+                          <td>
+                            <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={!!a.auto_trade_blocked}
+                                onChange={(e) => toggleEquityAutoTradeBlock(a.ticker, e.target.checked)}
+                              />
+                              {a.auto_trade_blocked ? 'Blocked' : 'Allowed'}
+                            </label>
+                          </td>
                           <td title={a.recommendation?.detail || ''} style={{ fontSize: '12px', color: a.recommendation?.action === 'trim' ? '#F59E0B' : a.recommendation?.action === 'hold' ? 'var(--color-buy)' : 'var(--text-primary)' }}>{a.recommendation?.label || '—'}</td>
                         </tr>
                       ))}
@@ -3804,21 +3938,126 @@ export default function Home() {
 
             {equityLots.length > 0 && (() => {
               const grantTickers = Array.from(new Set(equityLots.map((l) => l.ticker))).sort();
-              const selected = grantTicker && grantTickers.includes(grantTicker) ? grantTicker : grantTickers[0];
+              const visibleTickers = grantTickers.filter((t) => grantChartsVisible[t] !== false);
               return (
                 <div className="glass-card" style={{ padding: '18px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
                     <Activity size={20} color="#22D3EE" />
                     <h3 style={{ margin: 0, fontSize: '18px' }}>Grant Timeline</h3>
                     <span style={{ color: 'var(--text-secondary)', fontSize: '12px', flex: 1 }}>
-                      Your grants over time vs. the market price, how far above/below your cost basis you are, and the share of granted shares in profit.
+                      Compare holdings side-by-side. Purple dashed lines mark upcoming vests from your schedule below.
                     </span>
-                    <select value={selected} onChange={(e) => setGrantTicker(e.target.value)}
-                      style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
-                      {grantTickers.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
                   </div>
-                  {selected && <GrantTimeline key={selected} ticker={selected} />}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '14px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Show charts:</span>
+                    {grantTickers.map((t) => (
+                      <label key={t} style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={grantChartsVisible[t] !== false}
+                          onChange={(e) => setGrantChartsVisible({ ...grantChartsVisible, [t]: e.target.checked })}
+                        />
+                        <strong>{t}</strong>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '12.5px', fontWeight: 600, marginBottom: '8px' }}>Vesting schedule</div>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+                      Set the next expected grant/vest date and cadence. Defaults are inferred from your imported lot history — edit if yours differs (e.g. June 23).
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px' }}>
+                      {vestSchedules.map((vs) => (
+                        <div key={`${vs.ticker}-${vs.lot_type}`} style={{
+                          border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px',
+                          background: vs.vesting_complete ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.15)',
+                          opacity: vs.vesting_complete ? 0.85 : 1,
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                            <div style={{ fontWeight: 700 }}>{vs.ticker} · {String(vs.lot_type).toUpperCase()}</div>
+                            <label style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                              <input
+                                type="checkbox"
+                                checked={!!vs.vesting_complete}
+                                onChange={(e) => saveVestSchedule({ ...vs, vesting_complete: e.target.checked })}
+                              />
+                              Grants done
+                            </label>
+                          </div>
+                          {vs.vesting_complete ? (
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              No upcoming vests — historical grants only. Uncheck to resume schedule tracking.
+                            </div>
+                          ) : (
+                            <>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                                <label>Next vest<input type="date" defaultValue={vs.next_vest_date}
+                                  onBlur={(e) => saveVestSchedule({ ...vs, next_vest_date: e.target.value })}
+                                  style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '6px' }} /></label>
+                                <label>Cadence<select defaultValue={vs.cadence}
+                                  onChange={(e) => saveVestSchedule({ ...vs, cadence: e.target.value })}
+                                  style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '6px' }}>
+                                  <option value="quarterly">Quarterly</option>
+                                  <option value="semi_annual">Semi-annual</option>
+                                  <option value="monthly">Monthly</option>
+                                  <option value="annual">Annual</option>
+                                </select></label>
+                                <label>Day of month<input type="number" min={1} max={28} defaultValue={vs.vest_day || 20}
+                                  onBlur={(e) => saveVestSchedule({ ...vs, vest_day: parseInt(e.target.value) || 20 })}
+                                  style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '6px' }} /></label>
+                                <label>Est. shares<input type="number" defaultValue={vs.est_shares ?? ''}
+                                  onBlur={(e) => saveVestSchedule({ ...vs, est_shares: parseFloat(e.target.value) || null })}
+                                  style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '6px' }} /></label>
+                              </div>
+                              {vs.days_until_next != null && (
+                                <div style={{ marginTop: '8px', fontSize: '12px', color: vs.days_until_next <= 14 ? '#F59E0B' : 'var(--text-secondary)' }}>
+                                  Next vest in {vs.days_until_next === 0 ? '0 days (today)' : `${vs.days_until_next} day${vs.days_until_next === 1 ? '' : 's'}`}
+                                  {(vs.upcoming || []).slice(1, 3).length > 0 && (
+                                    <span>{' '}· then {(vs.upcoming || []).slice(1, 3).map((u: any) => u.date).join(', ')}</span>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
+                      {grantTickers.flatMap((ticker) => {
+                        const types = new Set(vestSchedules.filter((v) => v.ticker === ticker).map((v) => v.lot_type));
+                        const missing: { lot_type: string; label: string; defaults: any }[] = [];
+                        if (!types.has('rsu')) missing.push({
+                          lot_type: 'rsu', label: 'RSU',
+                          defaults: { cadence: 'quarterly', vest_day: 23, next_vest_date: '2026-06-23', vest_months: [3, 6, 9, 12] },
+                        });
+                        if (!types.has('espp')) missing.push({
+                          lot_type: 'espp', label: 'ESPP',
+                          defaults: { cadence: 'semi_annual', vest_day: 30, next_vest_date: '2026-06-30', vest_months: [6, 12] },
+                        });
+                        return missing.map((m) => (
+                          <button key={`${ticker}-${m.lot_type}`} className="toggle-btn" style={{ fontSize: '12px' }}
+                            onClick={() => saveVestSchedule({ ticker, lot_type: m.lot_type, est_shares: null, notes: '', ...m.defaults })}>
+                            + {ticker} {m.label} schedule
+                          </button>
+                        ));
+                      })}
+                    </div>
+                  </div>
+
+                  {visibleTickers.length === 0 ? (
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Select at least one ticker above to show charts.</div>
+                  ) : (
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: visibleTickers.length === 1 ? '1fr' : 'repeat(auto-fit, minmax(420px, 1fr))',
+                      gap: '16px', alignItems: 'start',
+                    }}>
+                      {visibleTickers.map((t) => (
+                        <GrantTimeline key={t} ticker={t} compact={visibleTickers.length > 1} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })()}

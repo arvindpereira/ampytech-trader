@@ -138,6 +138,17 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for tier_override on ticker_classification: {em}")
 
+    # 8. Migrate equity_vest_schedules: vesting_complete flag
+    try:
+        cols_vs = [c["name"] for c in inspector.get_columns("equity_vest_schedules")]
+        if cols_vs and "vesting_complete" not in cols_vs:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE equity_vest_schedules ADD COLUMN vesting_complete BOOLEAN DEFAULT 0"))
+                conn.commit()
+            print("Successfully added vesting_complete column to equity_vest_schedules via auto-migration.")
+    except Exception as em:
+        print(f"Auto-migration check failed for vesting_complete on equity_vest_schedules: {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE

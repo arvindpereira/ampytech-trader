@@ -25,7 +25,7 @@ flowchart LR
         TAX["tax_advisor.py<br/>heuristic lot selection + est. tax"]
         LLM["LLM narrative<br/>(replicate _call pattern)"]
     end
-    DB[(SQLite:<br/>equity_lots<br/>tax_profile<br/>analyst_forecasts)]
+    DB[(SQLite:<br/>equity_lots · equity_vest_schedules<br/>equity_auto_trade_blocks · tax_profile<br/>analyst_forecasts · trading_blocks)]
     UI --> lots & prof & fc & an
     fc --> AF --> DB
     an --> TAX
@@ -60,6 +60,14 @@ migration shim (that shim is only for altering existing tables). Add to
   `target_mean/high/low/median`, `num_analysts`, `recommendation_mean`, `recommendation_key`,
   optional `strong_buy/buy/hold/sell/strong_sell`, `upside_pct`, `source`. All analyst fields are
   nullable — downstream must treat them as possibly absent.
+- `EquityVestSchedule` (`equity_vest_schedules`, PK `(ticker, lot_type)`): cadence, vest day/months,
+  `next_vest_date`, `est_shares`, `vesting_complete`, `notes`, `updated_at`.
+- `EquityAutoTradeBlock` (`equity_auto_trade_blocks`, PK `ticker`): `blocked`, `updated_at` — whether
+  the bot may auto-trade that externally held name (syncs to `trading_blocks`).
+
+**Persistence:** Equity Advisor data lives only in SQLite (`backend/data/trading_system.db`), not in git.
+Repo cleanup (`make clean-cache`, fresh clone) does not touch it. Run `make backup` (Google Drive) to
+protect against accidental DB deletion; restore with `make restore` or `make restore-commit`.
 
 ## 2. Analyst forecast fetcher (new `backend/data_ingestion/analyst_fetcher.py`)
 

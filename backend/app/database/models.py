@@ -158,6 +158,35 @@ class EquityLot(Base):
     created_at = Column(String, nullable=False)
 
 
+class EquityVestSchedule(Base):
+    """Expected future vest/purchase dates for external equity holdings (RSU/ESPP cadence)."""
+    __tablename__ = "equity_vest_schedules"
+
+    ticker = Column(String, nullable=False)
+    lot_type = Column(String, nullable=False, default="rsu")  # rsu | espp
+    cadence = Column(String, nullable=False, default="quarterly")  # quarterly | semi_annual | monthly | annual
+    vest_day = Column(Integer, nullable=True)  # day-of-month (e.g. 20 or 23)
+    vest_months = Column(String, nullable=True)  # JSON list of months 1-12 when cadence=quarterly/semi_annual
+    next_vest_date = Column(String, nullable=False)  # YYYY-MM-DD
+    est_shares = Column(Float, nullable=True)
+    vesting_complete = Column(Boolean, nullable=False, default=False)  # no future grants expected
+    notes = Column(String, nullable=True)
+    updated_at = Column(String, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "lot_type", name="pk_equity_vest_schedules"),
+    )
+
+
+class EquityAutoTradeBlock(Base):
+    """Per-ticker bot-trading block preference for externally held equity (survives in DB backups)."""
+    __tablename__ = "equity_auto_trade_blocks"
+
+    ticker = Column(String, primary_key=True)
+    blocked = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(String, nullable=False)
+
+
 class TaxProfile(Base):
     __tablename__ = "tax_profile"
 

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 import pandas as pd
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 import xgboost as xgb
 
@@ -22,7 +22,7 @@ from app.database import (
     get_db, init_db, RecentPrice, DailyPrice, TickerSentiment, MacroIndicator,
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
     SentimentSourceLog, InsiderDisclosure, NewsLLMScore, AppSetting,
-    EquityLot, TaxProfile, AnalystForecast, TradingBlock
+    EquityLot, TaxProfile, AnalystForecast, TradingBlock, EquityVestSchedule
 )
 
 import json as _json
@@ -1861,6 +1861,23 @@ class AutoTradingRequest(BaseModel):
     paused: bool
 
 
+class EquityAutoTradeBlockRequest(BaseModel):
+    ticker: str
+    blocked: bool
+
+
+class EquityVestScheduleRequest(BaseModel):
+    ticker: str
+    lot_type: str = "rsu"
+    cadence: str = "quarterly"
+    vest_day: int = 20
+    vest_months: Optional[List[int]] = None
+    next_vest_date: Optional[str] = None
+    est_shares: Optional[float] = None
+    vesting_complete: bool = False
+    notes: Optional[str] = None
+
+
 def _forecast_dict(row):
     if not row:
         return None
@@ -1920,6 +1937,11 @@ def _equity_narrative(result):
         msg += f"It also harvests about ${savings:,.0f} of tax savings (losses that offset other gains). "
     msg += "Estimates are approximate and run conservative — this is planning help, not tax advice."
     return msg
+
+
+def _equity_universe_strategy(db, ticker: str) -> str:
+    row = db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker.upper()).first()
+    return (row.strategy if row and row.strategy else "—")
 
 
 def _concentration_rollup(classified_lots, db):
@@ -2146,8 +2168,16 @@ def _run_equity_analyze_job(jid, req_data):
 def get_equity_lots(db=Depends(get_db)):
     lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
     from data_ingestion.analyst_fetcher import latest_or_refresh
+    from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+    from data_ingestion.equity_universe_sync import (
+        get_equity_auto_trade_blocks, sync_equity_advisor_universe,
+    )
     from ml_engine.tax_advisor import classify_lots
     tickers = sorted({l.ticker for l in lots})
+    if tickers:
+        sync_equity_advisor_universe(db)
+        fetch_equity_advisor_prices(db, tickers=tickers)
+    blocked = set(get_equity_auto_trade_blocks(db))
     prices = {}
     forecasts = {}
     for ticker in tickers:
@@ -2158,8 +2188,14 @@ def get_equity_lots(db=Depends(get_db)):
     classified = classify_lots(lots, prices=prices)
     for l in classified:
         l["recommendation"] = _lot_recommendation(l)
-    return {"lots": classified, "forecasts": forecasts,
-            "aggregate": _concentration_rollup(classified, db)}
+    aggregate = _concentration_rollup(classified, db)
+    for row in aggregate:
+        row["auto_trade_blocked"] = row["ticker"] in blocked
+        row["universe_strategy"] = _equity_universe_strategy(db, row["ticker"])
+    from ml_engine.vest_schedule import ensure_vest_schedules
+    vest_schedules = ensure_vest_schedules(db)
+    return {"lots": classified, "forecasts": forecasts, "aggregate": aggregate,
+            "auto_trade_blocked": sorted(blocked), "vest_schedules": vest_schedules}
 
 
 @app.post("/api/equity/lots")
@@ -2197,6 +2233,45 @@ def delete_equity_lot(lot_id: int, db=Depends(get_db)):
     db.delete(row)
     db.commit()
     return {"status": "success"}
+
+
+@app.post("/api/equity/lots/import")
+async def import_equity_lots_pdf(
+    file: UploadFile = File(...),
+    force_llm: bool = Form(False),
+    replace_ticker_account: bool = Form(False),
+    db=Depends(get_db),
+):
+    """Import tax lots from a brokerage/stock-plan PDF (Schwab, E*TRADE, or LLM fallback)."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Upload a .pdf export")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="PDF too large (max 15 MB)")
+    try:
+        from data_ingestion.equity_lot_importer import import_equity_lot_pdf
+        result = import_equity_lot_pdf(
+            db, data, filename=file.filename,
+            force_llm=force_llm, replace_ticker_account=replace_ticker_account,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {e}")
+    if result.get("inserted", 0) > 0 and result.get("tickers"):
+        try:
+            from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+            from data_ingestion.equity_universe_sync import sync_equity_advisor_universe
+            sync_equity_advisor_universe(db)
+            fetch_equity_advisor_prices(db, tickers=result["tickers"])
+        except Exception:
+            pass
+    if result.get("inserted", 0) == 0 and result.get("parsed_count", 0) == 0:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "No lots extracted from PDF", "warnings": result.get("warnings", [])},
+        )
+    return {"status": "success", **result}
 
 
 @app.post("/api/equity/lots/{lot_id}/sell")
@@ -2308,6 +2383,9 @@ def get_equity_grant_timeline(ticker: str, db=Depends(get_db)):
     if not lots:
         raise HTTPException(status_code=404, detail=f"No grants/lots recorded for {ticker}")
 
+    from data_ingestion.price_fetcher import ensure_equity_daily_prices
+    ensure_equity_daily_prices(db, ticker)
+
     start_date = min(l.acquisition_date[:10] for l in lots)
     rows = db.query(DailyPrice.date, DailyPrice.close).filter(
         DailyPrice.ticker == ticker, DailyPrice.date >= start_date
@@ -2383,7 +2461,18 @@ def get_equity_grant_timeline(ticker: str, db=Depends(get_db)):
         "first_grant": grant_dates_sorted[0],
         "as_of": rows[-1][0][:10],
     }
-    return {"summary": summary, "series": series, "grants": grant_markers}
+    from ml_engine.vest_schedule import ensure_vest_schedules, schedule_dict
+    ensure_vest_schedules(db)
+    vest_rows = db.query(EquityVestSchedule).filter(EquityVestSchedule.ticker == ticker).all()
+    vest_schedules = [schedule_dict(v) for v in vest_rows]
+    upcoming_vests = []
+    for vs in vest_schedules:
+        if vs.get("vesting_complete"):
+            continue
+        for u in vs.get("upcoming", [])[:2]:
+            upcoming_vests.append({**u, "lot_type": vs["lot_type"], "cadence": vs["cadence"]})
+    return {"summary": summary, "series": series, "grants": grant_markers,
+            "vest_schedules": vest_schedules, "upcoming_vests": upcoming_vests}
 
 
 @app.post("/api/equity/analyze")
@@ -2449,6 +2538,33 @@ def list_trading_blocks(db=Depends(get_db)):
         db.commit()
     fresh.sort(key=lambda b: (b.block_type != "wash_sale", b.ticker))
     return {"blocks": [_block_dict(b) for b in fresh], "auto_trading_paused": _auto_trading_paused(db)}
+
+
+@app.post("/api/equity/auto-trade-block")
+def set_equity_auto_trade_block(req: EquityAutoTradeBlockRequest, db=Depends(get_db)):
+    """Toggle whether the auto-trader may buy a ticker you hold externally (e.g. PINS for wash-sale harvest)."""
+    from data_ingestion.equity_universe_sync import set_equity_auto_trade_block as _set_block
+    ticker = req.ticker.upper().strip()
+    if not db.query(EquityLot).filter(EquityLot.ticker == ticker).first():
+        raise HTTPException(status_code=404, detail=f"No equity lots for {ticker}")
+    blocked = _set_block(db, ticker, req.blocked)
+    return {"status": "success", "ticker": ticker, "blocked": req.blocked, "auto_trade_blocked": blocked}
+
+
+@app.get("/api/equity/vest-schedules")
+def get_equity_vest_schedules(db=Depends(get_db)):
+    from ml_engine.vest_schedule import ensure_vest_schedules
+    return {"schedules": ensure_vest_schedules(db)}
+
+
+@app.post("/api/equity/vest-schedules")
+def upsert_equity_vest_schedule(req: EquityVestScheduleRequest, db=Depends(get_db)):
+    from ml_engine.vest_schedule import upsert_vest_schedule
+    try:
+        row = upsert_vest_schedule(db, req.dict())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "success", "schedule": row}
 
 
 @app.post("/api/equity/trading-blocks")
