@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -640,6 +640,14 @@ export default function Home() {
     return Number.isFinite(n) ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
   };
   const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
+
+  const equityPlanPickById = useMemo(() => {
+    const map = new Map<number, { sell_shares: number; ticker: string }>();
+    for (const p of equityPlan?.recommendation?.picks || []) {
+      if (p?.id != null) map.set(p.id, p);
+    }
+    return map;
+  }, [equityPlan]);
 
   const fetchEquityAdvisor = async () => {
     try {
@@ -3918,15 +3926,30 @@ export default function Home() {
                 <input type="number" placeholder="Shares" value={newEquityLot.shares || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, shares: parseFloat(e.target.value) || 0 })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <input type="number" placeholder="Basis/share" value={newEquityLot.cost_basis_per_share || ''} onChange={(e) => setNewEquityLot({ ...newEquityLot, cost_basis_per_share: parseFloat(e.target.value) || 0 })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
                 <input type="date" value={newEquityLot.acquisition_date} onChange={(e) => setNewEquityLot({ ...newEquityLot, acquisition_date: e.target.value })} style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
-                <button onClick={saveEquityLot} disabled={!newEquityLot.ticker || newEquityLot.shares <= 0} className="toggle-btn"><Plus size={14} /> {newEquityLot.id ? 'Update Lot' : 'Add Lot'}</button>
+                <button onClick={saveEquityLot} disabled={!newEquityLot.ticker || newEquityLot.shares <= 0} className="toggle-btn"><Plus size={14} /> {newEquityLot.id ? `Update Lot #${newEquityLot.id}` : 'Add Lot'}</button>
                 {newEquityLot.id && <button onClick={() => setNewEquityLot({ ...newEquityLot, id: undefined, shares: 0, cost_basis_per_share: 0, notes: '' })} style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', borderRadius: '6px', padding: '8px', cursor: 'pointer' }}>Cancel</button>}
               </div>
+              {equityPlanPickById.size > 0 && (
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+                  Lots highlighted in amber match the sell plan below (<strong>Lot #</strong> is the database id used in both tables).
+                </p>
+              )}
               <table className="trade-table">
-                <thead><tr><th>Ticker</th><th>Shares</th><th>Basis</th><th>Price</th><th>Value</th><th>P&L</th><th>Term</th><th>Recommendation</th><th></th></tr></thead>
+                <thead><tr><th>Lot</th><th>Ticker</th><th>Shares</th><th>Basis</th><th>Price</th><th>Value</th><th>P&L</th><th>Term</th><th>Recommendation</th><th></th></tr></thead>
                 <tbody>
-                  {equityLots.map((lot) => (
-                    <tr key={lot.id}>
-                      <td>{lot.ticker}<div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{lot.acquisition_date}</div></td>
+                  {equityLots.map((lot) => {
+                    const planPick = lot.id != null ? equityPlanPickById.get(lot.id) : undefined;
+                    return (
+                    <tr key={lot.id} style={planPick ? { background: 'rgba(245, 158, 11, 0.07)' } : undefined}>
+                      <td style={{ fontFamily: 'monospace', fontWeight: 600, whiteSpace: 'nowrap', color: planPick ? '#F59E0B' : 'var(--text-secondary)' }}>
+                        #{lot.id}
+                        {planPick && (
+                          <div style={{ fontSize: '10px', fontWeight: 500, color: '#F59E0B' }} title="Included in sell plan below">
+                            sell {planPick.sell_shares?.toFixed(2)} sh
+                          </div>
+                        )}
+                      </td>
+                      <td>{lot.ticker}<div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{lot.acquisition_date}{lot.account_label ? ` · ${lot.account_label}` : ''}{lot.lot_type ? ` · ${String(lot.lot_type).toUpperCase()}` : ''}</div></td>
                       <td>{lot.shares.toFixed(2)}</td>
                       <td>{sharePrice(lot.cost_basis_per_share)}</td>
                       <td>{sharePrice(lot.current_price)}</td>
@@ -3940,7 +3963,8 @@ export default function Home() {
                         <button onClick={() => deleteEquityLot(lot.id)} style={{ background: 'transparent', border: 0, color: 'var(--color-sell)', cursor: 'pointer' }} title="Delete"><Trash2 size={15} /></button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -4151,9 +4175,12 @@ export default function Home() {
                     Net cash = cash from sale − tax owed. Tax savings from losses offset <em>other</em> gains, so they’re shown separately (not added to cash). Estimates round tax up to stay conservative.
                   </div>
                   <table className="trade-table">
-                    <thead><tr><th>Lot</th><th>Sell</th><th>Proceeds</th><th>Gain</th><th>Tax</th><th>Note</th></tr></thead>
+                    <thead><tr><th>Lot</th><th>Ticker</th><th>Sell</th><th>Proceeds</th><th>Gain</th><th>Tax</th><th>Note</th></tr></thead>
                     <tbody>{(equityPlan.recommendation?.picks || []).map((p: any) => (
-                      <tr key={`${p.id}-${p.sell_shares}`}><td>{p.ticker} #{p.id}</td><td>{p.sell_shares.toFixed(2)}</td><td>{money(p.sale_proceeds)}</td><td>{money(p.gain)}</td><td>{money(p.estimated_tax)}</td><td>{p.wait_flag || ''}</td></tr>
+                      <tr key={`${p.id}-${p.sell_shares}`} style={{ background: 'rgba(245, 158, 11, 0.07)' }}>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 600, color: '#F59E0B' }}>#{p.id}</td>
+                        <td>{p.ticker}</td>
+                        <td>{p.sell_shares.toFixed(2)}</td><td>{money(p.sale_proceeds)}</td><td>{money(p.gain)}</td><td>{money(p.estimated_tax)}</td><td>{p.wait_flag || ''}</td></tr>
                     ))}</tbody>
                   </table>
                   {guard && guard.tickers && guard.tickers.length > 0 && (
