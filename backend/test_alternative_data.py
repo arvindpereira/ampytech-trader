@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from app.database import SessionLocal, CongressDisclosure, InsiderDisclosure
+from app.database import init_db, SessionLocal, CongressDisclosure, InsiderDisclosure
 from app.core.config import INSIDER_LOOKBACK_DAYS, CONGRESS_LOOKBACK_DAYS, HEDGE_MODE
 from ml_engine.features import build_features_for_df
 from backtesting.backtest import get_hedge_info
@@ -17,6 +17,7 @@ from backtesting.backtest import get_hedge_info
 class TestAlternativeData(unittest.TestCase):
 
     def setUp(self):
+        init_db()
         self.db = SessionLocal()
 
     def tearDown(self):

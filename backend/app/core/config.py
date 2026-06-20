@@ -255,5 +255,13 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets
 # news endpoint (/v1beta1/news), which is included with any Alpaca account at no extra cost.
 ALPACA_DATA_URL = os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets")
 # Merge Alpaca (Benzinga) headlines into the LLM news feed alongside Polygon/Massive. On by default
-# when Alpaca keys are present; deduped against Polygon by headline so a story isn't scored twice.
 NEWS_USE_ALPACA = os.getenv("NEWS_USE_ALPACA", "True").lower() in ("true", "1", "yes")
+
+# --- Short-Term Portfolio Simulation & Throttling/Kelly Config ---
+PORTFOLIO_MAX_SIGNALS_PER_BAR = int(os.getenv("PORTFOLIO_MAX_SIGNALS_PER_BAR", "0"))  # 0 = unlimited
+PORTFOLIO_MAX_OPEN_POSITIONS = int(os.getenv("PORTFOLIO_MAX_OPEN_POSITIONS", "10"))
+PORTFOLIO_USE_KELLY = os.getenv("PORTFOLIO_USE_KELLY", "False").lower() in ("true", "1", "yes")
+PORTFOLIO_KELLY_SCALE = float(os.getenv("PORTFOLIO_KELLY_SCALE", "0.25"))
+PORTFOLIO_KELLY_MIN = float(os.getenv("PORTFOLIO_KELLY_MIN", "0.01"))
+PORTFOLIO_KELLY_MAX = float(os.getenv("PORTFOLIO_KELLY_MAX", "0.10"))
+

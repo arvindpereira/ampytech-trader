@@ -2982,3 +2982,375 @@ def get_volatile_stocks(refresh: bool = False):
     _volatile_screener_cache["timestamp"] = now
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Component 4: Crash Radar (Tab 5) API Endpoints
+# ---------------------------------------------------------------------------
+from pydantic import BaseModel as _BaseModel
+
+_FORECAST_RESULTS = {}
+_WARGAME_RESULTS = {}
+
+class WargameSweepRequest(_BaseModel):
+    theta_range: Optional[dict] = None
+    k_range: Optional[dict] = None
+    gamma_range: Optional[dict] = None
+
+class ApplyRebalancingRequest(_BaseModel):
+    confirm_execution: bool
+    target_posture: str
+    preset: Optional[str] = "balanced"
+
+def _run_forecast_job(jid):
+    try:
+        _job_update(jid, progress=10, stage="Loading data")
+        from ml_engine.crash_model import train_and_evaluate_forecast
+        _job_update(jid, progress=30, stage="Training drawdown models")
+        results = train_and_evaluate_forecast()
+        
+        # Save to database
+        _job_update(jid, progress=85, stage="Saving to database")
+        from ml_engine.crash_radar import get_latest_date
+        from app.database import SessionLocal, CrashRiskSnapshot
+        db = SessionLocal()
+        latest_dt = get_latest_date()
+        snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest_dt).first()
+        if snap:
+            snap.experimental_forecast_odds = _json.dumps(results)
+            db.add(snap)
+            db.commit()
+        db.close()
+        
+        _FORECAST_RESULTS[jid] = results
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
+def _run_wargame_job(jid, theta_range, k_range, gamma_range):
+    try:
+        _job_update(jid, progress=15, stage="Constructing scenario ensemble")
+        from ml_engine.wargame import run_wargame_sweep
+        _job_update(jid, progress=40, stage="Running sweeps")
+        res = run_wargame_sweep(theta_range, k_range, gamma_range)
+        _WARGAME_RESULTS[jid] = res
+        _job_update(jid, progress=100, stage="Complete", status="done")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _job_update(jid, status="error", error=str(e)[:200])
+
+@app.get("/api/crash/index")
+def get_crash_index():
+    """Returns the latest CrashRiskSnapshot, generating it on the fly if needed."""
+    from app.database import SessionLocal, CrashRiskSnapshot
+    from ml_engine.crash_radar import compute_composite_index, get_latest_date, persist_crash_snapshot, is_valid_snapshot
+    db = SessionLocal()
+    try:
+        latest_dt = get_latest_date()
+        snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest_dt).first()
+        if not is_valid_snapshot(snap):
+            # Generate/repair on the fly (handles missing OR corrupt/partial rows)
+            fresh, _ = compute_composite_index(latest_dt)
+            persist_crash_snapshot(fresh)
+            # reload
+            db.expire_all()
+            snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest_dt).first()
+            
+        if not snap:
+            raise HTTPException(status_code=404, detail="No crash risk snapshot available.")
+            
+        # Parse fields
+        trigger_reasons = []
+        if snap.trigger_reasons:
+            try:
+                trigger_reasons = _json.loads(snap.trigger_reasons)
+            except Exception:
+                trigger_reasons = [snap.trigger_reasons]
+                
+        debt_cycle = {}
+        if snap.debt_cycle_read:
+            try:
+                debt_cycle = _json.loads(snap.debt_cycle_read)
+            except Exception:
+                pass
+                
+        forecast_odds = []
+        if snap.experimental_forecast_odds:
+            try:
+                forecast_odds = _json.loads(snap.experimental_forecast_odds)
+            except Exception:
+                pass
+                
+        return {
+            "as_of_date": snap.as_of_date,
+            "composite_index": snap.composite_index,
+            "risk_band": snap.risk_band,
+            "current_posture": snap.current_posture,
+            "trigger_reasons": trigger_reasons,
+            "buckets": {
+                "valuation": snap.valuation_subscore or 50.0,
+                "monetary": snap.monetary_subscore or 50.0,
+                "credit": snap.credit_subscore or 50.0,
+                "financial_conditions": snap.financial_conditions_subscore or 50.0,
+                "lending": snap.lending_subscore or 50.0,
+                "labor": snap.labor_subscore or 50.0,
+                "real_activity": snap.real_activity_subscore or 50.0,
+                "internals": snap.internals_subscore or 50.0,
+                "cycle": snap.cycle_subscore or 50.0,
+                "hmm_regime": snap.hmm_regime_subscore or 50.0
+            },
+            "debt_cycle_metrics": debt_cycle,
+            "experimental_forecast_odds": forecast_odds
+        }
+    finally:
+        db.close()
+
+@app.get("/api/crash/timeline")
+def get_crash_timeline():
+    """Returns the historical composite crash index timeline for the past 5 years."""
+    from ml_engine.crash_radar import get_crash_index_timeline
+    try:
+        return get_crash_index_timeline()
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to calculate timeline: {e}")
+
+@app.post("/api/crash/forecast")
+def trigger_crash_forecast():
+    """Spawns background job to calculate experimental drawdown odds."""
+    jid = _job_new("crash_forecast", "Calculating experimental crash forecast")
+    threading.Thread(target=_run_forecast_job, args=(jid,), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/crash/forecast/result")
+def get_crash_forecast_result(job_id: str):
+    """Polls experimental crash forecast status."""
+    if job_id in _FORECAST_RESULTS:
+        return {
+            "status": "completed",
+            "predictions": _FORECAST_RESULTS[job_id],
+            "caveat": "Illustrative only. Small-sample model trained on 3-4 historical bear episodes since 1998."
+        }
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.get("/api/crash/playbook")
+def get_crash_playbook(preset: str = "balanced"):
+    """Returns the defensive playbook configurations."""
+    from ml_engine.defensive_strategist import build_defensive_playbook
+    try:
+        pb = build_defensive_playbook(preset_name=preset)
+        return pb
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/crash/wargame")
+def trigger_wargame(req: WargameSweepRequest):
+    """Spawns background wargame parameter sweep job."""
+    jid = _job_new("crash_wargame", "Running knob sweeps over scenarios")
+    threading.Thread(
+        target=_run_wargame_job,
+        args=(jid, req.theta_range, req.k_range, req.gamma_range),
+        daemon=True
+    ).start()
+    return {"status": "started", "job_id": jid}
+
+@app.get("/api/crash/wargame/result")
+def get_crash_wargame_result(job_id: str):
+    """Polls wargame parameter sweep results."""
+    if job_id in _WARGAME_RESULTS:
+        return {
+            "status": "completed",
+            "result": _WARGAME_RESULTS[job_id]
+        }
+    j = [x for x in _jobs_snapshot() if x["id"] == job_id]
+    if j:
+        return {"status": j[0]["status"], "progress": j[0]["progress"], "stage": j[0]["stage"], "error": j[0].get("error")}
+    return {"status": "unknown"}
+
+@app.post("/api/crash/apply")
+def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
+    """
+    Diffs target defensive portfolio weights against current paper trading positions
+    and executes buy/sell rebalancing orders in the paper/virtual account.
+    """
+    if not req.confirm_execution:
+        raise HTTPException(status_code=400, detail="Execution must be explicitly confirmed.")
+        
+    from ml_engine.defensive_strategist import build_defensive_playbook
+    from app.database import VirtualAccount, VirtualPosition, VirtualOrder, RecentPrice
+    
+    # 1. Fetch virtual account (id=1)
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
+    if not account:
+        account = VirtualAccount(id=1, cash=100000.0, buying_power=100000.0, equity=100000.0)
+        db.add(account)
+        db.commit()
+        
+    # 2. Get current holdings & calculate total portfolio value
+    positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
+    
+    # Helper to get latest price for ticker
+    def get_latest_price(symbol):
+        p_rec = db.query(RecentPrice).filter(RecentPrice.ticker == symbol).order_by(RecentPrice.date.desc()).first()
+        if p_rec:
+            return float(p_rec.close)
+        return 100.0
+        
+    portfolio_value = float(account.cash)
+    current_shares = {}
+    current_values = {}
+    
+    for pos in positions:
+        price = get_latest_price(pos.ticker)
+        current_shares[pos.ticker] = float(pos.quantity)
+        current_values[pos.ticker] = float(pos.quantity) * price
+        portfolio_value += current_values[pos.ticker]
+        
+    # 3. Load target defensive weights
+    pb = build_defensive_playbook(preset_name=req.preset)
+    d = float(pb.get("de_risk_coefficient", 0.0))
+    
+    # Target allocations
+    # Aggressive side: represent using our current holdings scaled, or SPY/QQQ equal weights if empty
+    w_agg = {}
+    if current_shares:
+        total_pos_val = sum(current_values.values())
+        if total_pos_val > 0:
+            w_agg = {t: v / total_pos_val for t, v in current_values.items()}
+        else:
+            w_agg = {"SPY": 1.0}
+    else:
+        w_agg = {"SPY": 1.0}
+        
+    # Defensive side: load from safe asset branch selection mix
+    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
+    w_def = {k: float(v) / 100.0 for k, v in safe_mix.items()}
+    
+    # Blended target weights
+    all_tickers = set(w_agg.keys()).union(w_def.keys())
+    w_target = {}
+    for ticker in all_tickers:
+        agg_part = (1.0 - d) * w_agg.get(ticker, 0.0)
+        def_part = d * w_def.get(ticker, 0.0)
+        w_target[ticker] = agg_part + def_part
+        
+    # 4. Generate order diffs (target value - current value)
+    orders_to_submit = []
+    
+    for ticker in all_tickers:
+        target_val = portfolio_value * w_target[ticker]
+        curr_val = current_values.get(ticker, 0.0)
+        diff_val = target_val - curr_val
+        price = get_latest_price(ticker)
+        
+        if abs(diff_val) > 50.0:
+            qty = abs(diff_val) / price
+            side = "buy" if diff_val > 0 else "sell"
+            orders_to_submit.append({
+                "ticker": ticker,
+                "side": side,
+                "qty": qty,
+                "price": price,
+                "value": abs(diff_val)
+            })
+            
+    sell_orders = [o for o in orders_to_submit if o["side"] == "sell"]
+    buy_orders = [o for o in orders_to_submit if o["side"] == "buy"]
+    
+    executed = []
+    
+    # Execute Sells
+    for o in sell_orders:
+        ticker = o["ticker"]
+        qty = o["qty"]
+        price = o["price"]
+        
+        pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "virtual").first()
+        if pos:
+            qty_sold = min(pos.quantity, qty)
+            revenue = qty_sold * price
+            account.cash += revenue
+            account.buying_power = account.cash
+            
+            pos.quantity -= qty_sold
+            if pos.quantity <= 0.0001:
+                db.delete(pos)
+                
+            order_id = _uuid.uuid4().hex[:8]
+            v_order = VirtualOrder(
+                id=order_id,
+                mode="virtual",
+                ticker=ticker,
+                qty=qty_sold,
+                side="sell",
+                type="market",
+                status="filled",
+                filled_price=price,
+                created_at=datetime.now().isoformat()
+            )
+            db.add(v_order)
+            executed.append({"symbol": ticker, "side": "sell", "qty": qty_sold, "type": "market"})
+            
+    # Execute Buys
+    for o in buy_orders:
+        ticker = o["ticker"]
+        qty = o["qty"]
+        price = o["price"]
+        
+        cost = qty * price
+        if cost > account.cash:
+            cost = account.cash
+            qty = cost / price
+            
+        if qty > 0.0001:
+            account.cash -= cost
+            account.buying_power = account.cash
+            
+            pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "virtual").first()
+            if pos:
+                new_qty = pos.quantity + qty
+                pos.entry_price = ((pos.quantity * pos.entry_price) + cost) / new_qty
+                pos.quantity = new_qty
+            else:
+                pos = VirtualPosition(
+                    ticker=ticker,
+                    mode="virtual",
+                    quantity=qty,
+                    entry_price=price,
+                    policy="rebalance"
+                )
+                db.add(pos)
+                
+            order_id = _uuid.uuid4().hex[:8]
+            v_order = VirtualOrder(
+                id=order_id,
+                mode="virtual",
+                ticker=ticker,
+                qty=qty,
+                side="buy",
+                type="market",
+                status="filled",
+                filled_price=price,
+                created_at=datetime.now().isoformat()
+            )
+            db.add(v_order)
+            executed.append({"symbol": ticker, "side": "buy", "qty": qty, "type": "market"})
+            
+    final_positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
+    final_equity = float(account.cash)
+    for pos in final_positions:
+        final_equity += pos.quantity * get_latest_price(pos.ticker)
+    account.equity = final_equity
+    
+    db.commit()
+    
+    return {
+        "status": "executed",
+        "posture_applied": req.target_posture,
+        "orders_submitted": executed,
+        "cash_transferred_to_reserve": float(account.cash)
+    }

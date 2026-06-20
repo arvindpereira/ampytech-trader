@@ -1,8 +1,8 @@
-.PHONY: help default install fetch fetch-forecasts backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+.PHONY: help default install fetch fetch-valuation fetch-market-stress fetch-forecasts backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit backup restore restore-commit \
-        simulate backtest-virtual schedule serve serve-all serve-backend serve-frontend bootstrap lint popular-tickers add-ticker
+        simulate backtest-virtual schedule serve serve-all serve-backend serve-frontend bootstrap lint test popular-tickers add-ticker
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
 EPOCHS ?= 10
@@ -106,6 +106,12 @@ fetch:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py fetch
 	@echo "✅ Data fetch complete."
+
+fetch-valuation:
+	cd backend && $(VENV_PY) data_ingestion/valuation_fetcher.py
+
+fetch-market-stress:
+	cd backend && $(VENV_PY) data_ingestion/market_stress_fetcher.py
 
 fetch-forecasts:
 	@echo "========================================================================"
@@ -347,6 +353,12 @@ lint:
 	@echo "🧹 Cleaning up trailing whitespace errors and formatting line endings..."
 	@echo "========================================================================"
 	python3 backend/lint.py
+
+test:
+	@echo "========================================================================"
+	@echo "🧪 Running test suite against an isolated throwaway database..."
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) run_tests.py $(TESTS)
 	@echo "✅ Formatting complete. Ready to review and commit!"
 
 popular-tickers:

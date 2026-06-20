@@ -18,7 +18,8 @@ from app.core.config import (
 import json
 from datetime import datetime
 from app.database import (
-    SessionLocal, RecentPrice, DailyPrice, MacroIndicator, TickerSentiment, UniverseTicker
+    SessionLocal, RecentPrice, DailyPrice, MacroIndicator, TickerSentiment, UniverseTicker,
+    engine
 )
 from ml_engine.features import build_features_for_df
 from sklearn.metrics import roc_auc_score
@@ -118,38 +119,34 @@ class PortfolioOptimizer:
 def load_data_from_db():
     """Loads HOURLY prices + REAL sentiment + macro and builds the SHORT-TERM feature set
     (cross-ticker breakout features over an intraday/few-day horizon)."""
-    db = SessionLocal()
-
-    # 1. Hourly prices (recent_prices)
-    prices = db.query(RecentPrice).all()
-    if not prices:
-        db.close()
+    print("Loading hourly price data from database (SQL)...", flush=True)
+    prices_df = pd.read_sql_query(
+        "SELECT ticker, date, open, high, low, close, volume, sma_10, sma_50, rsi_14, macd, macd_signal FROM recent_prices",
+        con=engine
+    )
+    if prices_df.empty:
         raise ValueError("No hourly price records found. Run ingestion first!")
 
-    prices_df = pd.DataFrame([{
-        "ticker": p.ticker, "date": p.date, "open": p.open,
-        "high": p.high, "low": p.low, "close": p.close, "volume": p.volume,
-        "sma_10": p.sma_10, "sma_50": p.sma_50, "rsi_14": p.rsi_14,
-        "macd": p.macd, "macd_signal": p.macd_signal
-    } for p in prices])
+    print("Loading macro indicators from database...", flush=True)
+    macro_df = pd.read_sql_query(
+        "SELECT date, indicator_name, value FROM macro_indicators",
+        con=engine
+    )
 
-    # 2. Macro (daily; broadcast onto hourly bars by calendar date in features)
-    macro = db.query(MacroIndicator).all()
-    macro_df = pd.DataFrame([{
-        "date": m.date, "indicator_name": m.indicator_name, "value": m.value
-    } for m in macro]) if macro else pd.DataFrame()
+    print("Loading ticker sentiment data from database...", flush=True)
+    sent_df = pd.read_sql_query(
+        "SELECT ticker, date, source, sentiment_score, mention_count FROM ticker_sentiments WHERE is_mock != 1",
+        con=engine
+    )
 
-    # 3. Sentiment — REAL only (exclude mock/simulated so the model does not learn noise)
-    sent = db.query(TickerSentiment).filter(TickerSentiment.is_mock != True).all()
-    sent_df = pd.DataFrame([{
-        "ticker": s.ticker, "date": s.date, "source": s.source,
-        "sentiment_score": s.sentiment_score, "mention_count": s.mention_count
-    } for s in sent]) if sent else pd.DataFrame()
+    db = SessionLocal()
+    try:
+        db_tickers = db.query(UniverseTicker).all()
+        active_universe = [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
+    finally:
+        db.close()
 
-    db_tickers = db.query(UniverseTicker).all()
-    active_universe = [t.ticker for t in db_tickers] if db_tickers else TICKER_UNIVERSE
-    db.close()
-
+    print(f"Building features for {len(active_universe)} tickers...", flush=True)
     from ml_engine.features import build_all_features
     full_df = build_all_features(
         prices_df, sent_df, macro_df, active_universe,
@@ -468,6 +465,7 @@ def precalculate_exits(oos_df, prices_df, horizon=14, stop_max=None, stop_min=No
     atr_mult = SHORT_TERM_ATR_STOP_MULT if atr_mult is None else atr_mult
     tp_mult = SHORT_TERM_TP_MULT if tp_mult is None else tp_mult
 
+    print(f"  Grouping recent prices for exit precalculation...", flush=True)
     price_groups = {}
     date_to_idx_groups = {}
     for ticker, grp in prices_df.groupby("ticker"):
@@ -483,7 +481,14 @@ def precalculate_exits(oos_df, prices_df, horizon=14, stop_max=None, stop_min=No
     closes = oos_df["close"].values
     atrs = oos_df["atr_14"].values if "atr_14" in oos_df.columns else np.full(len(oos_df), np.nan)
 
+    print(f"  Calculating exits for {len(oos_df)} rows...", flush=True)
+    total_rows = len(oos_df)
+    progress_milestone = max(1, total_rows // 5)
+
     for i in range(len(oos_df)):
+        if i % progress_milestone == 0 or i == total_rows - 1:
+            percent = int((i + 1) / total_rows * 100)
+            print(f"    [Exit Calculation Progress: {percent}%] Processed {i+1}/{total_rows} rows...", flush=True)
         ticker = tickers[i]
         dt = dates[i]
 
@@ -567,7 +572,14 @@ def compute_regime_series(oos_start=None):
     The HMM is fit ONLY on data BEFORE `oos_start` (so the regime classifier's parameters never see the
     out-of-sample window), then labels every date by trailing-vol features. This lets the swing backtest
     apply the same crisis-shrink the live executor uses, instead of assuming swing is fully deployed
-    through every bear. Returns {} if SPY features are unavailable (caller then runs ungated)."""
+    through every bear. Returns {} if SPY features are unavailable (caller then runs ungated).
+
+    Features are STANDARDIZED (scaler fit on the train slice only, so no look-ahead) before the HMM fit:
+    without scaling, the larger-scale macro features (fed funds, yield spread) swamp the low-variance
+    volatility feature, so the states cluster on rate regimes instead of market stress (walk-forward
+    concurrent-stress AUC ~0.40, worse than random; 2008/2020 mislabeled "growth"). Scaling restores a
+    valid regime signal (AUC ~0.61). See eval_regime_smoothing.py."""
+    from sklearn.preprocessing import StandardScaler
     feats = load_daily_spy_features()
     if feats is None or feats.empty:
         return {}
@@ -581,20 +593,77 @@ def compute_regime_series(oos_start=None):
     if len(train) < 100:
         train = d
     try:
+        Xtr, Xall = train[cols].values, d[cols].values
+        sc = StandardScaler().fit(Xtr)
+        Xtr, Xall = sc.transform(Xtr), sc.transform(Xall)
         m = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
-        m.fit(train[cols].values)
+        m.fit(Xtr)
         order = np.argsort(m.means_[:, 0])   # index 0 = volatility; low→growth, high→crisis
         mapping = {int(order[0]): "growth", int(order[1]): "transition", int(order[2]): "crisis"}
-        states = m.predict(d[cols].values)
+        states = m.predict(Xall)
         return {str(dt): mapping[int(s)] for dt, s in zip(d["date"].values, states)}
     except Exception as e:
         print(f"Regime series computation failed: {e}")
         return {}
 
 
+def compute_regime_score_series(oos_start=None, ema_span=21, standardize=True):
+    """Point-in-time {date: smoothed crisis score 0-100} for the crash-radar HMM bucket.
+
+    Differs from `compute_regime_series` (which returns hard {growth/transition/crisis}
+    labels used for swing capital-gating) in two evaluation-driven ways:
+
+      1. Features are STANDARDIZED before the HMM fit. Without scaling, the larger-scale
+         macro features (fed funds, yield spread) swamp the low-variance volatility
+         feature, so the states cluster on rate regimes instead of market stress
+         (walk-forward concurrent-stress AUC ~0.40, i.e. worse than random). Scaling
+         restores a valid regime signal (AUC ~0.61).
+      2. The hard state score {growth:20, transition:60, crisis:100} is smoothed with a
+         causal EMA. Walk-forward testing showed EMA(span~21) keeps essentially all of
+         the raw signal's validity (AUC 0.608 vs 0.609) while cutting the weekly sawtooth
+         ~6x (mean |Δ| 13.0 -> 2.1), beating soft-probability expectation on both axes.
+
+    Returns {} if SPY features are unavailable (caller falls back to a neutral score).
+    """
+    from sklearn.preprocessing import StandardScaler
+    feats = load_daily_spy_features()
+    if feats is None or feats.empty:
+        return {}
+    cols = ["feat_volatility_10", "feat_fed_funds", "feat_yield_spread"]
+    if not all(c in feats.columns for c in cols):
+        return {}
+    d = feats.dropna(subset=cols).sort_values("date")
+    if len(d) < 100:
+        return {}
+    train = d[d["date"] < oos_start] if oos_start else d
+    if len(train) < 100:
+        train = d
+    try:
+        Xtr, Xall = train[cols].values, d[cols].values
+        if standardize:
+            sc = StandardScaler().fit(Xtr)
+            Xtr, Xall = sc.transform(Xtr), sc.transform(Xall)
+        m = GaussianHMM(n_components=3, covariance_type="diag", n_iter=100, random_state=42)
+        m.fit(Xtr)
+        order = np.argsort(m.means_[:, 0])   # col 0 = volatility; low->growth, high->crisis
+        state_score = np.empty(3)
+        state_score[int(order[0])] = 20.0
+        state_score[int(order[1])] = 60.0
+        state_score[int(order[2])] = 100.0
+        raw = state_score[m.predict(Xall)]
+        smoothed = pd.Series(raw, index=pd.to_datetime(d["date"].values)).ewm(
+            span=ema_span, adjust=False).mean()
+        return {str(dt): float(v) for dt, v in zip(d["date"].values, smoothed.values)}
+    except Exception as e:
+        print(f"Regime score series computation failed: {e}")
+        return {}
+
+
 def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0, max_allocation=0.10, fee_pct=0.0005, horizon=14,
                                      stop_max=None, stop_min=None, atr_mult=None, tp_mult=None,
-                                     regime_by_date=None):
+                                     regime_by_date=None,
+                                     max_signals_per_bar=None, max_open_positions=None,
+                                     use_kelly=None, kelly_scale=None, kelly_min_size=None, kelly_max_size=None):
     """
     Chronological portfolio simulator enforcing capital limits, max allocation,
     no overlaps, exits, and fees.
@@ -606,6 +675,18 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
     """
     if oos_df.empty:
         return [], {}
+
+    from app.core.config import (
+        PORTFOLIO_MAX_SIGNALS_PER_BAR, PORTFOLIO_MAX_OPEN_POSITIONS,
+        PORTFOLIO_USE_KELLY, PORTFOLIO_KELLY_SCALE, PORTFOLIO_KELLY_MIN, PORTFOLIO_KELLY_MAX
+    )
+    max_signals_per_bar = PORTFOLIO_MAX_SIGNALS_PER_BAR if max_signals_per_bar is None else max_signals_per_bar
+    max_open_positions = PORTFOLIO_MAX_OPEN_POSITIONS if max_open_positions is None else max_open_positions
+    use_kelly = PORTFOLIO_USE_KELLY if use_kelly is None else use_kelly
+    kelly_scale = PORTFOLIO_KELLY_SCALE if kelly_scale is None else kelly_scale
+    kelly_min_size = PORTFOLIO_KELLY_MIN if kelly_min_size is None else kelly_min_size
+    kelly_max_size = PORTFOLIO_KELLY_MAX if kelly_max_size is None else kelly_max_size
+
     if regime_by_date:
         from app.core.config import REGIME_SWING_FACTORS
 
@@ -613,8 +694,9 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
     unique_dates = sorted(oos_df["date"].unique())
 
     # 2. Pre-calculate exit dates and prices
-    oos_df = precalculate_exits(oos_df, prices_df, horizon=horizon,
-                                stop_max=stop_max, stop_min=stop_min, atr_mult=atr_mult, tp_mult=tp_mult)
+    if "exit_date" not in oos_df.columns or "exit_price" not in oos_df.columns:
+        oos_df = precalculate_exits(oos_df, prices_df, horizon=horizon,
+                                    stop_max=stop_max, stop_min=stop_min, atr_mult=atr_mult, tp_mult=tp_mult)
 
     # Group signals by date
     signals_by_date = {}
@@ -635,7 +717,8 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
                 "prob": prob,
                 "exit_date": exit_dt,
                 "exit_price": exit_p,
-                "entry_price": entry_c
+                "entry_price": entry_c,
+                "threshold": thr
             })
 
     # Simulation state
@@ -644,13 +727,17 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
     equity_curve = []
 
     # Group prices by date/ticker for marking positions to market
-    price_by_date_ticker = {}
-    for _, row in prices_df.iterrows():
-        dt = row["date"]
-        ticker = row["ticker"]
-        price_by_date_ticker[(dt, ticker)] = float(row["close"])
+    print("  Mapping prices by date and ticker...", flush=True)
+    price_by_date_ticker = dict(zip(zip(prices_df["date"].values, prices_df["ticker"].values), prices_df["close"].values))
 
-    for dt in unique_dates:
+    print(f"  Replaying {len(unique_dates)} dates chronologically...", flush=True)
+    total_dates = len(unique_dates)
+    progress_milestone = max(1, total_dates // 5)
+
+    for idx, dt in enumerate(unique_dates):
+        if idx % progress_milestone == 0 or idx == total_dates - 1:
+            percent = int((idx + 1) / total_dates * 100)
+            print(f"    [Portfolio Sim Progress: {percent}%] Replayed {idx+1}/{total_dates} dates (current date: {dt})...", flush=True)
         # A. Process exits on or before this bar
         trades_to_keep = []
         for trade in active_trades:
@@ -675,7 +762,9 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
         # Prioritize higher confidence signals
         signals = sorted(signals, key=lambda x: x["prob"], reverse=True)
 
-        position_size = max_allocation * current_equity
+        # Apply signal throttling per bar
+        if max_signals_per_bar is not None and max_signals_per_bar > 0 and len(signals) > max_signals_per_bar:
+            signals = signals[:max_signals_per_bar]
 
         # Regime overlay: cap total swing capital deployed this bar (crisis 0.25 / transition 0.6 / growth 1.0).
         swing_factor = 1.0
@@ -684,10 +773,34 @@ def simulate_portfolio_chronological(oos_df, prices_df, initial_capital=100000.0
         max_invested = swing_factor * current_equity
         invested = current_equity - cash   # market value of open positions
 
+        b = tp_mult if tp_mult is not None else 2.5
+
         for sig in signals:
             ticker = sig["ticker"]
             if any(t["ticker"] == ticker for t in active_trades):
                 continue
+            if max_open_positions is not None and max_open_positions > 0 and len(active_trades) >= max_open_positions:
+                break
+
+            # Calculate position size
+            if use_kelly:
+                prob = sig["prob"]
+                thr = sig["threshold"]
+                p_min = 1.0 / (b + 1.0)
+                if prob >= 1.0:
+                    p = 1.0
+                elif 1.0 - thr > 1e-9:
+                    p = p_min + (1.0 - p_min) * (prob - thr) / (1.0 - thr)
+                else:
+                    p = p_min
+
+                f_star = (p * (b + 1.0) - 1.0) / b
+                f_fractional = f_star * kelly_scale
+                size_pct = max(kelly_min_size, min(kelly_max_size, f_fractional))
+                position_size = size_pct * current_equity
+            else:
+                position_size = max_allocation * current_equity
+
             if cash < position_size:
                 continue
             if invested + position_size > max_invested + 1e-9:
@@ -769,7 +882,7 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
     edges = pd.date_range(warmup_end, tmax, periods=n_splits + 1)
 
     print(f"\n=== WALK-FORWARD ({n_splits} expanding folds; warmup until {warmup_end.date()}) ===")
-    print(f"{'fold':>4} {'train':>8} {'test':>7} {'period':>21} | {'ALL thr':>7} {'ALL AUC':>7} {'dyn win':>7} {'dyn net':>7} | {'NOALT thr':>9} {'NOALT AUC':>9} {'dyn win':>7} {'dyn net':>7}")
+    print(f"{'fold':>4} {'train':>8} {'test':>7} {'period':>21} | {'ALL thr':>7} {'ALL AUC':>7} {'dyn win':>7} {'dyn net':>7} | {'NOALT thr':>9} {'NOALT AUC':>9} {'dyn win':>7} {'dyn net':>7}", flush=True)
 
     frames_all = []
     frames_no_alt = []
@@ -780,15 +893,19 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
         te = df[(df["dt"] >= lo) & (df["dt"] < hi)]
         if len(tr) < 1000 or len(te) < 200:
             continue
+        print(f"\n[Walk-Forward Progress] Starting Fold {i+1}/{n_splits} ({lo.date()} to {hi.date()})...", flush=True)
+        print(f"  Training set size: {len(tr)} rows | Test set size: {len(te)} rows", flush=True)
         w = np.exp(-((tr["dt"].max() - tr["dt"]).dt.days) / (5.0 * 365.25))
 
         # Train with ALL features
+        print(f"  Training model WITH alternative features (all {len(feature_cols_all)} features)...", flush=True)
         m_all = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05,
                                   subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
         m_all.fit(tr[feature_cols_all], tr["target_win"], sample_weight=w)
         p_all = m_all.predict_proba(te[feature_cols_all])[:, 1]
 
         # Optimize threshold on training fold
+        print(f"  Optimizing threshold on training fold WITH alternative features...", flush=True)
         thr_opt_all = find_optimal_threshold(tr, feature_cols_all, target_col="target_win", fallback_default=SHORT_TERM_BUY_THRESHOLD)
 
         fold_all = te[["dt", "date", "ticker", "target_win", "trade_ret", "open", "high", "low", "close", "atr_14"]].copy()
@@ -797,12 +914,14 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
         frames_all.append(fold_all)
 
         # Train without alternative features
+        print(f"  Training model WITHOUT alternative features (all {len(feature_cols_no_alt)} features)...", flush=True)
         m_no_alt = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.05,
                                      subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42)
         m_no_alt.fit(tr[feature_cols_no_alt], tr["target_win"], sample_weight=w)
         p_no_alt = m_no_alt.predict_proba(te[feature_cols_no_alt])[:, 1]
 
         # Optimize threshold on training fold
+        print(f"  Optimizing threshold on training fold WITHOUT alternative features...", flush=True)
         thr_opt_no_alt = find_optimal_threshold(tr, feature_cols_no_alt, target_col="target_win", fallback_default=SHORT_TERM_BUY_THRESHOLD)
 
         fold_no_alt = te[["dt", "date", "ticker", "target_win", "trade_ret", "open", "high", "low", "close", "atr_14"]].copy()
@@ -891,23 +1010,21 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
         print(f"top {q*100:>5.1f}% | {n_all:>6} {wr_all:>8.3f} {net_all.mean():>8.4f} {net_all.sum():>8.2f} | {n_no_alt:>6} {wr_no_alt:>8.3f} {net_no_alt.mean():>8.4f} {net_no_alt.sum():>8.2f}")
 
     # 2. Run chronological portfolio-level simulations
-    print("\nRunning chronological portfolio-level simulations (max 10% per trade, max 10 open positions)...")
-    db = SessionLocal()
-    prices_db = db.query(RecentPrice).all()
-    prices_df = pd.DataFrame([{
-        "ticker": p.ticker, "date": p.date, "open": p.open, "high": p.high, "low": p.low, "close": p.close
-    } for p in prices_db])
-    db.close()
+    print("\nRunning chronological portfolio-level simulations (max 10% per trade, max 10 open positions)...", flush=True)
+    print("Loading recent prices from database (SQL)...", flush=True)
+    prices_df = pd.read_sql_query(
+        "SELECT ticker, date, open, high, low, close FROM recent_prices",
+        con=engine
+    )
 
-    # Compute atr_14 for each ticker
-    from ml_engine.features import compute_atr
     prices_df = prices_df.sort_values(["ticker", "date"]).reset_index(drop=True)
-    atr_series = []
-    for ticker, grp in prices_df.groupby("ticker"):
-        grp = grp.sort_values("date").copy()
-        grp["atr_14"] = compute_atr(grp, window=14)
-        atr_series.append(grp)
-    prices_df = pd.concat(atr_series, ignore_index=True)
+
+    print("Pre-calculating exits once for simulation...", flush=True)
+    oos_all = precalculate_exits(oos_all, prices_df, horizon=SHORT_TERM_HORIZON_BARS)
+
+    # Copy exits to oos_no_alt to avoid recalculating them
+    oos_no_alt["exit_date"] = oos_all["exit_date"]
+    oos_no_alt["exit_price"] = oos_all["exit_price"]
 
     # 0.05% order execution fee (fee_pct=0.0005)
     curve_all, metrics_all = simulate_portfolio_chronological(oos_all, prices_df, initial_capital=100000.0, max_allocation=0.10, fee_pct=0.0005, horizon=SHORT_TERM_HORIZON_BARS)
