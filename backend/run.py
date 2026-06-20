@@ -24,6 +24,8 @@ def fetch():
         [sys.executable, "data_ingestion/macro_fetcher.py"],
         [sys.executable, "data_ingestion/crisis_fetcher.py"],
         [sys.executable, "data_ingestion/sentiment_fetcher.py"],
+        [sys.executable, "data_ingestion/valuation_fetcher.py"],
+        [sys.executable, "data_ingestion/market_stress_fetcher.py"],
     ]
     # Insider disclosures (real SEC EDGAR Form 4) are OFF by default — fetched only when ALT_DATA_ENABLED,
     # since the signal still needs walk-forward validation before it should drive the model.

@@ -127,7 +127,134 @@ interface EquityLot {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor' | 'crash'>('dashboard');
+
+  // Crash Radar States
+  const [crashData, setCrashData] = useState<any>(null);
+  const [playbook, setPlaybook] = useState<any>(null);
+  const [wargameResults, setWargameResults] = useState<any>(null);
+  const [preset, setPreset] = useState<'balanced' | 'conservative' | 'aggressive'>('balanced');
+  const [theta, setTheta] = useState<number>(0.85);
+  const [k, setK] = useState<number>(2.0);
+  const [gamma, setGamma] = useState<number>(0.25);
+  const [forecastJobId, setForecastJobId] = useState<string | null>(null);
+  const [forecastStatus, setForecastStatus] = useState<string>('');
+  const [wargameJobId, setWargameJobId] = useState<string | null>(null);
+  const [wargameStatus, setWargameStatus] = useState<string>('');
+  const [applyConfirmOpen, setApplyConfirmOpen] = useState<boolean>(false);
+  const [applyResult, setApplyResult] = useState<any>(null);
+  const [applyingRebalance, setApplyingRebalance] = useState<boolean>(false);
+
+  const fetchCrashIndex = async () => {
+    try {
+      const res = await fetch('http://localhost:8008/api/crash/index');
+      if (res.ok) {
+        const data = await res.json();
+        setCrashData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching crash index:', err);
+    }
+  };
+
+  const fetchPlaybook = async (selectedPreset: string) => {
+    try {
+      const res = await fetch(`http://localhost:8008/api/crash/playbook?preset=${selectedPreset}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPlaybook(data);
+      }
+    } catch (err) {
+      console.error('Error fetching playbook:', err);
+    }
+  };
+
+  const handleApplyRebalance = async () => {
+    setApplyingRebalance(true);
+    setApplyConfirmOpen(false);
+    try {
+      const res = await fetch('http://localhost:8008/api/crash/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirm_execution: true,
+          target_posture: crashData?.current_posture || 'Normal',
+          preset: preset
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApplyResult(data);
+      } else {
+        const errData = await res.json();
+        alert(`Failed to apply rebalance: ${errData.detail || res.statusText}`);
+      }
+    } catch (err: any) {
+      console.error('Error applying stance rebalancing:', err);
+      alert(`Error: ${err.message || err}`);
+    } finally {
+      setApplyingRebalance(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'crash') {
+      fetchCrashIndex();
+      fetchPlaybook(preset);
+    }
+  }, [activeTab, preset]);
+
+  // Forecast Poller
+  useEffect(() => {
+    if (!forecastJobId) return;
+    let timer = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:8008/api/crash/forecast/result?job_id=${forecastJobId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'completed') {
+            setForecastStatus('complete');
+            setForecastJobId(null);
+            fetchCrashIndex(); // reload snapshot to get forecasts
+          } else if (data.status === 'error') {
+            setForecastStatus(`Error: ${data.error}`);
+            setForecastJobId(null);
+          } else {
+            setForecastStatus(`Running: ${data.progress}% (${data.stage})`);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [forecastJobId]);
+
+  // Wargame Poller
+  useEffect(() => {
+    if (!wargameJobId) return;
+    let timer = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:8008/api/crash/wargame/result?job_id=${wargameJobId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'completed') {
+            setWargameStatus('complete');
+            setWargameResults(data.result);
+            setWargameJobId(null);
+          } else if (data.status === 'error') {
+            setWargameStatus(`Error: ${data.error}`);
+            setWargameJobId(null);
+          } else {
+            setWargameStatus(`Running: ${data.progress}% (${data.stage})`);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [wargameJobId]);
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'swing' | 'long_term'>('short_term');
   const appMode = 'real';
   const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
@@ -1280,6 +1407,12 @@ export default function Home() {
             onClick={() => setActiveTab('advisor')}
           >
             Equity Advisor
+          </button>
+          <button
+            className={`toggle-btn ${activeTab === 'crash' ? 'active' : ''}`}
+            onClick={() => setActiveTab('crash')}
+          >
+            Crash Radar
           </button>
         </div>
       </div>
@@ -3572,6 +3705,462 @@ export default function Home() {
             </div>
           </section>
         )}
+
+        {activeTab === 'crash' && (
+          <section style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+            
+            {/* COLUMN 1: RISK ASSESSMENT & GLIDE PATH KNOBS */}
+            <div style={{ display: 'grid', gap: '20px', alignContent: 'start' }}>
+              
+              {/* Card 1: Composite Crash-Risk Index */}
+              <div className="glass-card" style={{ padding: '24px', position: 'relative', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ShieldAlert size={20} color="#F59E0B" />
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Composite Crash-Risk Index</h3>
+                  </div>
+                  <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.06)', padding: '4px 8px', borderRadius: '4px', color: 'var(--text-secondary)' }}>
+                    As of: {crashData?.as_of_date || 'Loading...'}
+                  </span>
+                </div>
+                
+                {crashData ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: '14px 0' }}>
+                    {/* Gauge Circle */}
+                    <div style={{ position: 'relative', width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="160" height="160" viewBox="0 0 160 160">
+                        <circle cx="80" cy="80" r="70" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="12" />
+                        <circle cx="80" cy="80" r="70" fill="none" 
+                          stroke={
+                            crashData.risk_band === 'Calm' ? '#10B981' :
+                            crashData.risk_band === 'Elevated' ? '#3B82F6' :
+                            crashData.risk_band === 'High' ? '#F59E0B' : '#EF4444'
+                          } 
+                          strokeWidth="12" 
+                          strokeDasharray={`${2 * Math.PI * 70}`}
+                          strokeDashoffset={`${2 * Math.PI * 70 * (1 - crashData.composite_index / 100)}`}
+                          strokeLinecap="round"
+                          transform="rotate(-90 80 80)"
+                        />
+                      </svg>
+                      <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <span style={{ fontSize: '32px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                          {crashData.composite_index.toFixed(1)}
+                        </span>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: 
+                          crashData.risk_band === 'Calm' ? '#10B981' :
+                          crashData.risk_band === 'Elevated' ? '#3B82F6' :
+                          crashData.risk_band === 'High' ? '#F59E0B' : '#EF4444'
+                        }}>
+                          {crashData.risk_band.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    <div style={{ display: 'flex', gap: '16px', marginTop: '18px', width: '100%', justifyContent: 'space-around' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>POSTURE</div>
+                        <div style={{ fontSize: '15px', fontWeight: 700, color: '#3B82F6', marginTop: '2px' }}>{crashData.current_posture}</div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>DE-RISK EXP</div>
+                        <div style={{ fontSize: '15px', fontWeight: 700, color: '#F59E0B', marginTop: '2px' }}>
+                          {playbook ? `${(playbook.de_risk_coefficient * 100).toFixed(0)}%` : 'Loading...'}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Trigger Reasons */}
+                    <div style={{ marginTop: '20px', width: '100%', borderTop: '1px solid var(--border-glass)', paddingTop: '16px' }}>
+                      <h4 style={{ margin: '0 0 10px', fontSize: '13px', color: 'var(--text-primary)' }}>System Triggers</h4>
+                      <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12.5px', color: 'var(--text-secondary)', display: 'grid', gap: '6px' }}>
+                        {crashData.trigger_reasons && crashData.trigger_reasons.length > 0 ? (
+                          crashData.trigger_reasons.map((reason: string, idx: number) => (
+                            <li key={idx} style={{ lineHeight: '1.4' }}>{reason}</li>
+                          ))
+                        ) : (
+                          <li>All macro, credit, and internals indicators reflect normal conditions.</li>
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading composite index...</div>
+                )}
+              </div>
+              
+              {/* Card 2: Glide Path Knobs */}
+              <div className="glass-card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                  <Sliders size={20} color="#10B981" />
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Glide-Path Policy Curve</h3>
+                </div>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 20px', lineHeight: '1.4' }}>
+                  Adjust de-risking sensitivity thresholds. Choose a preset or customize parameters dynamically.
+                </p>
+                
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '22px' }}>
+                  {(['conservative', 'balanced', 'aggressive'] as const).map(p => (
+                    <button key={p} 
+                      onClick={() => setPreset(p)}
+                      className={`toggle-btn ${preset === p ? 'active' : ''}`}
+                      style={{ flex: 1, textTransform: 'capitalize' }}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                
+                <div style={{ display: 'grid', gap: '18px' }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
+                      <span>De-risking Threshold (θ)</span>
+                      <strong style={{ color: 'var(--text-primary)' }}>{theta.toFixed(2)}</strong>
+                    </div>
+                    <input type="range" min="0.4" max="1.4" step="0.05" value={theta} onChange={(e) => setTheta(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Standardized score above which de-allocating equities begins.</span>
+                  </div>
+                  
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
+                      <span>Curve Steepness (k)</span>
+                      <strong style={{ color: 'var(--text-primary)' }}>{k.toFixed(1)}</strong>
+                    </div>
+                    <input type="range" min="1.0" max="5.0" step="0.1" value={k} onChange={(e) => setK(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Determines how rapidly the de-risking blends cash as risk increases.</span>
+                  </div>
+                  
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
+                      <span>Trend Gate Strength (γ)</span>
+                      <strong style={{ color: 'var(--text-primary)' }}>{gamma.toFixed(2)}</strong>
+                    </div>
+                    <input type="range" min="0.0" max="0.5" step="0.05" value={gamma} onChange={(e) => setGamma(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                    <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Raises de-risking threshold during active market uptrends.</span>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Card 3: Experimental Drawdown Odds */}
+              <div className="glass-card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Brain size={20} color="#3B82F6" />
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Experimental Drawdown Odds</h3>
+                  </div>
+                  {forecastStatus && (
+                    <span style={{ fontSize: '11px', color: '#F59E0B' }}>{forecastStatus}</span>
+                  )}
+                </div>
+                
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
+                  Estimates forward probability odds of a systematic market crash using penalized regularized logistic regressions.
+                </p>
+                
+                {crashData?.experimental_forecast_odds && crashData.experimental_forecast_odds.length > 0 ? (
+                  <table className="trade-table" style={{ marginBottom: '16px' }}>
+                    <thead>
+                      <tr>
+                        <th>Drawdown</th>
+                        <th>Horizon</th>
+                        <th>Probability</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {crashData.experimental_forecast_odds.map((item: any, idx: number) => (
+                        <tr key={idx}>
+                          <td><strong>{item.drawdown}</strong></td>
+                          <td>{item.horizon_days} Days</td>
+                          <td style={{ color: item.probability > 0.3 ? '#EF4444' : '#10B981', fontWeight: 700 }}>
+                            {(item.probability * 100).toFixed(0)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No odds forecast calculations cached in snapshot.
+                  </div>
+                )}
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button 
+                    disabled={!!forecastJobId}
+                    onClick={async () => {
+                      setForecastStatus('Queued...');
+                      try {
+                        const res = await fetch('http://localhost:8008/api/crash/forecast', { method: 'POST' });
+                        if (res.ok) {
+                          const data = await res.json();
+                          setForecastJobId(data.job_id);
+                        }
+                      } catch (err) {
+                        setForecastStatus('Trigger failed.');
+                      }
+                    }} 
+                    className="toggle-btn"
+                  >
+                    {forecastJobId ? 'Retraining models...' : 'Run Purged CV Forecast'}
+                  </button>
+                  <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)', fontStyle: 'italic', textAlign: 'center' }}>
+                    ⚠ Small sample warning: Model is trained on very few historical crash episodes since 1998.
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            {/* COLUMN 2: STRATEGIC PLAYBOOK & WARGAMING */}
+            <div style={{ display: 'grid', gap: '20px', alignContent: 'start' }}>
+              
+              {/* Card 4: Defensive Stance Playbook */}
+              <div className="glass-card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Compass size={20} color="#F59E0B" />
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Defensive Stance Playbook</h3>
+                  </div>
+                </div>
+                
+                {playbook ? (
+                  <div style={{ display: 'grid', gap: '16px' }}>
+                    
+                    {/* Stance Card: Buffett Cash Stance */}
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Buffett Cash Ladder Stance</span>
+                        <span style={{ color: '#F59E0B', fontWeight: 700 }}>
+                          Target Cash: {playbook.stances?.buffett?.target_cash_pct.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gap: '6px' }}>
+                        {playbook.stances?.buffett?.ladders.map((l: any, idx: number) => (
+                          <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                            <span>Deploy Tranche on {l.drawdown} dip:</span>
+                            <span>{l.pct_of_reserve_to_deploy}% reserve ({l.sizing_rule})</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {/* Stance Card: Safe Asset Branch */}
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                        Macro Season: <span style={{ color: '#10B981' }}>{playbook.stances?.safe_asset_selection?.active_branch}</span>
+                      </div>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.3' }}>
+                        {playbook.stances?.safe_asset_selection?.explanation}
+                      </p>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        {Object.entries(playbook.stances?.safe_asset_selection?.mix || {}).map(([k, v]: any) => (
+                          <span key={k} style={{ fontSize: '10.5px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10B981', padding: '2px 6px', borderRadius: '4px' }}>
+                            {k}: {v}%
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {/* Stance Card: Dalio All-Weather & Taleb Barbell */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>Dalio Risk-Parity</div>
+                        <ul style={{ margin: 0, paddingLeft: '12px', fontSize: '10.5px', color: 'var(--text-secondary)' }}>
+                          <li>Equities capped at {playbook.stances?.dalio?.hmm_gated ? '10%' : '30%'}</li>
+                          <li>Treasuries: 40-50%</li>
+                          <li>Gold/Commodities</li>
+                        </ul>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>Taleb Barbell Stance</div>
+                        <ul style={{ margin: 0, paddingLeft: '12px', fontSize: '10.5px', color: 'var(--text-secondary)' }}>
+                          <li>90% Safe FDIC/BIL</li>
+                          <li>10% Speculative End</li>
+                          <li>OTM SPY Put Hedging</li>
+                        </ul>
+                      </div>
+                    </div>
+                    
+                    {/* Stance Card: Minsky/Dalio Debt Cycle */}
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Debt-Cycle Fragility Profile</span>
+                        <span style={{ color: '#EF4444', fontWeight: 700 }}>
+                          {crashData?.debt_cycle_metrics?.qualitative_state}
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        <div>Debt/GDP: <strong>{crashData?.debt_cycle_metrics?.debt_to_gdp_pct.toFixed(1)}%</strong></div>
+                        <div>Debt Service Ratio: <strong>{crashData?.debt_cycle_metrics?.debt_service_ratio.toFixed(1)}%</strong></div>
+                        <div>Real rates: <strong>{crashData?.debt_cycle_metrics?.real_rates.toFixed(2)}%</strong></div>
+                        <div>Margin debt change: <strong style={{ color: (crashData?.debt_cycle_metrics?.margin_debt_yoy_pct || 0) > 15.0 ? '#EF4444' : 'inherit' }}>
+                          {(crashData?.debt_cycle_metrics?.margin_debt_yoy_pct || 0).toFixed(1)}% YoY
+                        </strong></div>
+                      </div>
+                    </div>
+                    
+                    {/* Execution Apply Section */}
+                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', alignItems: 'center' }}>
+                        <span>Target allocation Stance:</span>
+                        <strong style={{ color: 'var(--text-primary)' }}>{crashData?.current_posture}</strong>
+                      </div>
+                      
+                      <button 
+                        disabled={applyingRebalance}
+                        onClick={async () => {
+                          setApplyResult(null);
+                          setApplyConfirmOpen(true);
+                        }}
+                        className="toggle-btn" 
+                        style={{ background: 'var(--color-gold)', color: 'black', fontWeight: 700, border: 'none' }}
+                      >
+                        {applyingRebalance ? 'Applying rebalancing...' : 'Apply Stance Rebalancing (Paper)'}
+                      </button>
+                      
+                      {applyResult && (
+                        <div style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: '6px', padding: '10px', fontSize: '12px', color: 'var(--text-primary)' }}>
+                          <div style={{ fontWeight: 600, color: '#10B981', marginBottom: '4px' }}>✓ Stance Applied Successfully</div>
+                          <div>Submitted {applyResult.orders_submitted?.length || 0} orders: {
+                            applyResult.orders_submitted?.map((o: any) => `${o.symbol} (${o.side})`).join(', ')
+                          }</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            Broker cash reserve balance: {money(applyResult.cash_transferred_to_reserve)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading defensive playbook...</div>
+                )}
+              </div>
+              
+              {/* Card 5: Scenario Wargaming Knobs & Heatmap */}
+              <div className="glass-card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Activity size={20} color="#3B82F6" />
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Wargaming Simulation Sweeps</h3>
+                  </div>
+                  {wargameStatus && (
+                    <span style={{ fontSize: '11.5px', color: '#F59E0B' }}>{wargameStatus}</span>
+                  )}
+                </div>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
+                  Simulates performance of de-risking knobs over historical bear crashes (Dot-Com, GFC, 2022) and 50 synthetic bootstrap scenarios.
+                </p>
+                
+                {wargameResults ? (
+                  <div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>MINIMAX CHOICE</div>
+                        <strong style={{ fontSize: '13px', color: '#10B981' }}>{playbook?.minimax_choice || 'Partial De-Risk'}</strong>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>RECOMMENDED KNOBS</div>
+                        <strong style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
+                          θ={wargameResults.optimal_knobs?.theta.toFixed(2)}, k={wargameResults.optimal_knobs?.k.toFixed(1)}
+                        </strong>
+                      </div>
+                    </div>
+                    
+                    <h4 style={{ margin: '0 0 8px', fontSize: '12px', color: 'var(--text-primary)' }}>Grid Parameter Sweep (Heatmap Sample)</h4>
+                    <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid var(--border-glass)', borderRadius: '6px' }}>
+                      <table className="trade-table" style={{ margin: 0 }}>
+                        <thead>
+                          <tr>
+                            <th>θ</th>
+                            <th>k</th>
+                            <th>Max DD</th>
+                            <th>Return</th>
+                            <th>Regret</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {wargameResults.heatmap?.slice(0, 15).map((row: any, idx: number) => (
+                            <tr key={idx} style={{ background: row.theta === wargameResults.optimal_knobs?.theta && row.k === wargameResults.optimal_knobs?.k ? 'rgba(16,185,129,0.06)' : 'none' }}>
+                              <td>{row.theta.toFixed(2)}</td>
+                              <td>{row.k.toFixed(1)}</td>
+                              <td style={{ color: '#EF4444' }}>{row.max_drawdown.toFixed(1)}%</td>
+                              <td style={{ color: '#10B981' }}>{row.return.toFixed(1)}%</td>
+                              <td>{row.max_regret.toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No simulation sweep run cached. Run parameter sweep to generate optimal knobs.
+                  </div>
+                )}
+                
+                <button 
+                  disabled={!!wargameJobId}
+                  onClick={async () => {
+                    setWargameStatus('Queued...');
+                    try {
+                      const res = await fetch('http://localhost:8008/api/crash/wargame', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          theta_range: { min: 0.6, max: 1.2, steps: 4 },
+                          k_range: { min: 1.5, max: 3.5, steps: 4 },
+                          gamma_range: { min: 0.1, max: 0.3, steps: 2 }
+                        })
+                      });
+                      if (res.ok) {
+                        const data = await res.json();
+                        setWargameJobId(data.job_id);
+                      }
+                    } catch (err) {
+                      setWargameStatus('Trigger failed.');
+                    }
+                  }}
+                  className="toggle-btn" 
+                  style={{ width: '100%', marginTop: '14px' }}
+                >
+                  {wargameJobId ? 'Sweeping parameter matrices...' : 'Run Scenario Wargame Sweep'}
+                </button>
+              </div>
+              
+              {/* Card 6: Severity Contingency Checklist */}
+              <div className="glass-card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <Lock size={18} color="#EF4444" />
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Severity-Tier Contingency Checklist</h3>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
+                  Real-world custodial security actions outside the application based on systemic market stress tiers.
+                </p>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '6px', borderLeft: '4px solid #3B82F6' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Tier 1: Correction (-10% to -20%)</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Lock all margin accounts. Turn leverage to 0. Audit high beta speculative holdings.
+                    </div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '6px', borderLeft: '4px solid #F59E0B' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Tier 2: Bear Market (-20% to -35%)</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Diversify cash holdings across multiple banks. Ensure cash balances do not exceed FDIC limits ($250k).
+                    </div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '6px', borderLeft: '4px solid #EF4444' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Tier 3: Systemic Crisis (-35% to -55%)</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Verify SIPC broker coverage details ($500k limit). Hold cash reserves in direct short-term US Treasury Bills.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+          </section>
+        )}
       </main>
 
       {/* Sell-from-lot modal */}
@@ -3700,6 +4289,37 @@ export default function Home() {
             </button>
           </div>
         </>
+      )}
+
+      {/* Apply Stance Rebalancing Confirmation Modal */}
+      {applyConfirmOpen && (
+        <div
+          onClick={() => !applyingRebalance && setApplyConfirmOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '420px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <h2 style={{ marginTop: 0, marginBottom: '8px', color: 'var(--text-primary)' }}>Confirm Rebalancing</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
+              Are you sure you want to apply defensive stance rebalancing? This will:
+            </p>
+            <ul style={{ fontSize: '12.5px', color: 'var(--text-secondary)', paddingLeft: '20px', margin: '0 0 16px', display: 'grid', gap: '6px' }}>
+              <li>Calculate target weights based on the <strong>{preset}</strong> defensive playbook preset.</li>
+              <li>Read the current system posture (<strong>{crashData?.current_posture || 'Normal'}</strong>) and de-risk coefficient (<strong>{playbook ? `${(playbook.de_risk_coefficient * 100).toFixed(0)}%` : 'Loading...'}</strong>).</li>
+              <li>Submit virtual buy/sell orders in the <strong>paper-trading virtual account (ID=1)</strong> to match target weights.</li>
+            </ul>
+            <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#F59E0B', marginBottom: '20px', lineHeight: '1.4' }}>
+              <strong>Note:</strong> Under no circumstances will this place live transactions. This operates entirely on virtual cash and virtual positions.
+            </div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setApplyConfirmOpen(false)} disabled={applyingRebalance}
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleApplyRebalance} disabled={applyingRebalance}
+                style={{ background: 'var(--color-gold)', border: 'none', borderRadius: '8px', color: 'black', padding: '8px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: applyingRebalance ? 0.6 : 1 }}>
+                {applyingRebalance ? 'Executing...' : 'Confirm & Rebalance'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

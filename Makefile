@@ -1,4 +1,4 @@
-.PHONY: help default install fetch fetch-forecasts backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
+.PHONY: help default install fetch fetch-valuation fetch-market-stress fetch-forecasts backfill-news news-llm insider fundamentals classify train walkforward calibrate longterm-eval longterm-tilt swing-eval swing-train backtest \
         news-llm-batch news-llm-batch-collect llm-usage premium-ingest exec-timing stop-opt horizon-opt \
         db-backup db-backup-list db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit backup restore restore-commit \
@@ -106,6 +106,12 @@ fetch:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py fetch
 	@echo "✅ Data fetch complete."
+
+fetch-valuation:
+	cd backend && $(VENV_PY) data_ingestion/valuation_fetcher.py
+
+fetch-market-stress:
+	cd backend && $(VENV_PY) data_ingestion/market_stress_fetcher.py
 
 fetch-forecasts:
 	@echo "========================================================================"

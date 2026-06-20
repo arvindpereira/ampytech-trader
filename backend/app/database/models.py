@@ -395,3 +395,32 @@ class TickerClassification(Base):
     llm_verdict = Column(String, nullable=True)
     llm_model = Column(String, nullable=True)
     updated_at = Column(String, nullable=True)
+
+
+class CrashRiskSnapshot(Base):
+    """Stores historical and current Composite Crash-Risk Index outputs, subscores,
+    debt-cycle states, and experimental forecasting odds for Tab 5 (Crash Radar)."""
+    __tablename__ = "crash_risk_snapshots"
+
+    as_of_date = Column(String, primary_key=True)   # YYYY-MM-DD
+    composite_index = Column(Float, nullable=False) # 0 to 100
+    risk_band = Column(String, nullable=False)      # Calm / Elevated / High / Extreme
+    current_posture = Column(String, nullable=False)# Normal / Froth / De-risk / Protect / Deploy / Recover
+    trigger_reasons = Column(String, nullable=True) # JSON list of strings (trigger events/reasons)
+
+    # Subscores for the 10 buckets
+    valuation_subscore = Column(Float, nullable=True)
+    monetary_subscore = Column(Float, nullable=True)
+    credit_subscore = Column(Float, nullable=True)
+    financial_conditions_subscore = Column(Float, nullable=True)
+    lending_subscore = Column(Float, nullable=True)
+    labor_subscore = Column(Float, nullable=True)
+    real_activity_subscore = Column(Float, nullable=True)
+    internals_subscore = Column(Float, nullable=True)
+    cycle_subscore = Column(Float, nullable=True)
+    hmm_regime_subscore = Column(Float, nullable=True)
+
+    # Debt cycle qualitative and quantitative metrics
+    debt_cycle_read = Column(String, nullable=True)          # JSON string mapping cycle variables
+    experimental_forecast_odds = Column(String, nullable=True) # JSON string of P(DD >= X% in N days)
+    created_at = Column(String, nullable=True)

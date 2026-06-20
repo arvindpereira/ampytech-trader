@@ -4,5 +4,5 @@ from app.database.models import (
     UniverseTicker, VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
     SentimentSourceLog, CongressDisclosure, InsiderDisclosure, NewsLLMScore, AppSetting,
     LLMUsage, TickerFundamental, TickerClassification, EquityLot, TaxProfile, AnalystForecast,
-    TradingBlock
+    TradingBlock, CrashRiskSnapshot
 )
