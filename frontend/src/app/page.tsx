@@ -629,7 +629,10 @@ export default function Home() {
   const [equityImportBusy, setEquityImportBusy] = useState<boolean>(false);
   const [equityImportReplace, setEquityImportReplace] = useState<boolean>(false);
 
-  const money = (v: any) => typeof v === 'number' && isFinite(v) ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—';
+  const money = (v: any) => {
+    const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+    return Number.isFinite(n) ? `$${n.toLocaleString(undefined, { maximumFractionDigits: n < 1000 ? 2 : 0 })}` : '—';
+  };
   const pct = (v: any) => typeof v === 'number' && isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—';
 
   const fetchEquityAdvisor = async () => {

@@ -31,6 +31,32 @@ def _latest_local_price(db, ticker: str) -> Optional[float]:
     return None
 
 
+def ensure_equity_price(db, ticker: str, force: bool = False) -> Optional[float]:
+    """Ensure daily_prices exist for an advisor ticker and return the latest close."""
+    from data_ingestion.price_fetcher import ensure_equity_daily_prices
+    ensure_equity_daily_prices(db, ticker, force=force)
+    return _latest_local_price(db, ticker)
+
+
+def _patch_forecast_price(db, row: Optional[AnalystForecast]) -> Optional[AnalystForecast]:
+    """Backfill current_price on a cached forecast row when local prices arrive later."""
+    if not row or (row.current_price is not None and row.current_price > 0):
+        return row
+    price = ensure_equity_price(db, row.ticker)
+    if price is None:
+        return row
+    row.current_price = round(price, 2)
+    if row.target_mean is not None and price:
+        row.upside_pct = (row.target_mean - price) / price
+    if not row.source or row.source == "massive:benzinga":
+        row.source = "massive/local-price" if row.target_mean is not None else "local-price"
+    elif "local-price" not in row.source:
+        row.source = f"{row.source}+local-price"
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def _massive_get(path: str, params: Dict[str, str]):
     if not MASSIVE_API_KEY:
         return None
@@ -118,9 +144,9 @@ def snapshot_forecast(ticker: str, db=None, refresh: bool = True) -> Optional[An
         today = date.today().isoformat()
         existing = db.query(AnalystForecast).filter(AnalystForecast.ticker == ticker, AnalystForecast.as_of_date == today).first()
         if existing and not refresh:
-            return existing
+            return _patch_forecast_price(db, existing)
 
-        price = _latest_local_price(db, ticker)
+        price = ensure_equity_price(db, ticker)
         fields = _fetch_massive_analyst(ticker) if refresh else {}
         target_mean = fields.get("target_mean")
         upside = ((target_mean - price) / price) if (target_mean is not None and price) else None
@@ -150,7 +176,8 @@ def snapshot_forecast(ticker: str, db=None, refresh: bool = True) -> Optional[An
         )
         db.execute(stmt)
         db.commit()
-        return db.query(AnalystForecast).filter(AnalystForecast.ticker == ticker, AnalystForecast.as_of_date == today).first()
+        row = db.query(AnalystForecast).filter(AnalystForecast.ticker == ticker, AnalystForecast.as_of_date == today).first()
+        return _patch_forecast_price(db, row)
     finally:
         if close_db:
             db.close()
@@ -164,11 +191,14 @@ def latest_or_refresh(ticker: str, db, stale_days: int = 1) -> Optional[AnalystF
         try:
             as_of = datetime.strptime(latest.as_of_date, "%Y-%m-%d").date()
             if date.today() - as_of <= timedelta(days=stale_days):
-                return latest
+                patched = _patch_forecast_price(db, latest)
+                if patched and patched.current_price is not None:
+                    return patched
+                # Price still missing — fall through to refresh snapshot.
         except Exception:
             pass
     try:
-        return snapshot_forecast(ticker, db=db, refresh=True) or latest
+        return _patch_forecast_price(db, snapshot_forecast(ticker, db=db, refresh=True)) or latest
     except Exception:
         return latest
 

@@ -2180,11 +2180,18 @@ def get_equity_lots(db=Depends(get_db)):
     blocked = set(get_equity_auto_trade_blocks(db))
     prices = {}
     forecasts = {}
+    from data_ingestion.analyst_fetcher import ensure_equity_price
     for ticker in tickers:
         f = latest_or_refresh(ticker, db, stale_days=1)
-        forecasts[ticker] = _forecast_dict(f)
-        if f and f.current_price is not None:
-            prices[ticker] = f.current_price
+        price = (f.current_price if f and f.current_price is not None else None) or ensure_equity_price(db, ticker)
+        fd = _forecast_dict(f)
+        if fd and price is not None:
+            if fd.get("current_price") is None:
+                fd["current_price"] = price
+            if fd.get("upside_pct") is None and fd.get("target_mean") is not None and price:
+                fd["upside_pct"] = (fd["target_mean"] - price) / price
+            prices[ticker] = price
+        forecasts[ticker] = fd
     classified = classify_lots(lots, prices=prices)
     for l in classified:
         l["recommendation"] = _lot_recommendation(l)
@@ -2363,11 +2370,21 @@ def upsert_tax_profile(req: TaxProfileRequest, db=Depends(get_db)):
 
 @app.get("/api/equity/forecast/{ticker}")
 def get_equity_forecast(ticker: str, db=Depends(get_db)):
-    from data_ingestion.analyst_fetcher import latest_or_refresh
-    row = latest_or_refresh(ticker.upper().strip(), db, stale_days=1)
+    from data_ingestion.analyst_fetcher import latest_or_refresh, ensure_equity_price
+    ticker = ticker.upper().strip()
+    row = latest_or_refresh(ticker, db, stale_days=1)
     if not row:
         raise HTTPException(status_code=404, detail="No forecast or local price data available for ticker")
-    return _forecast_dict(row)
+    out = _forecast_dict(row)
+    if out and out.get("current_price") is None:
+        price = ensure_equity_price(db, ticker)
+        if price is not None:
+            out["current_price"] = price
+            if out.get("target_mean") is not None:
+                out["upside_pct"] = (out["target_mean"] - price) / price
+    if not out or out.get("current_price") is None:
+        raise HTTPException(status_code=404, detail="No forecast or local price data available for ticker")
+    return out
 
 
 @app.get("/api/equity/grant-timeline/{ticker}")
