@@ -221,13 +221,27 @@ The **Crash Radar** (Tab 5) serves as a risk management console that quantifies 
   - Select presets (**conservative**, **balanced**, **aggressive**) to quickly adjust policy sensitivities.
 
 #### 3. Strategic Playbook & Stance Rebalancing
-- **Stance Overview**: Displays target cash buffers and safe asset mixes (automatically routing between a *Stagflation* branch containing Gold/TIPS/Commodities and a *Deflationary Bust* branch containing TLT/Cash depending on breakeven inflation).
+- **Stance Overview**: Displays target cash buffers and safe asset mixes (automatically routing between a *Stagflation* branch containing Gold/TIPS/Commodities and a *Deflationary Bust* branch containing TLT/Cash depending on breakeven inflation). Safe-asset chips show **real tickers** (e.g. `GLD`, `TLT`, `BIL`, `TIP`) with their latest prices.
 - **Custodian Checklist**: Details real-world custody precautions (e.g. FDIC bank limits, short Treasury bill holdings, SIPC limits) matching the current drawdown severity.
-- **One-Click Rebalance**: Click **"Apply Stance Rebalancing (Paper)"** to trigger the order generator. The backend calculates the differences between your current paper holdings and target stance weights, placing rebalancing buy/sell orders automatically on Alpaca.
+- **Preview-Then-Apply Rebalance**: Clicking **"Preview Rebalancing"** runs a **read-only** plan (`GET /api/crash/apply/preview`) that diffs your current paper holdings against the target stance weights — using your active glide-path knobs — and shows a validation summary plus the exact buy/sell orders (symbol, side, shares, real price) **before** anything executes. Only after reviewing does the gated **"Confirm & Apply (Paper)"** button place those orders on the Alpaca paper account. Nothing touches your portfolio until you confirm.
 
-#### 4. Forecasts & Wargame Parameter Sweeps
-- **Purged CV Forecast**: Trigger a background job to run the regularized logistic drawdown-odds model, using Marcos López de Prado's Purged and Embargoed CV to estimate risk probability over 30/90/180 days.
-- **Scenario Wargaming**: Click **"Run Scenario Wargame Sweep"** to execute parameter sweeps across historical crashes (2000, 2008, 2020, 2022) and 500 block-bootstrap paths. The results display a grid parameter sweep detailing the optimal parameters that minimize worst-case regret.
+#### 4. Forecasts & Scenario Wargame
+- **Purged CV Forecast (Experimental Drawdown Odds)**: Trigger a background job to run the regularized logistic drawdown-odds model, using Marcos López de Prado's Purged and Embargoed CV to estimate risk probability over 30/90/180 days. Odds are projected onto a logically-coherent grid (deeper drawdowns never more likely than shallower ones) and labeled with cross-validated AUC so you can see when the model has little skill beyond the base rate.
+- **Scenario Wargame (policy comparison)**: Click **"Run Scenario Wargame"** to replay every defensive policy — from doing nothing (Buy & Hold) through static blends to fully glide-path-defensive, including your own custom knobs — across real bear markets (Dot-Com, GFC, COVID, 2022) and synthetic crashes. Instead of a raw grid, results render as **per-scenario equity-curve timelines** plus a ranked metrics table (return, max drawdown, Sharpe, turnover) versus a perfect-foresight ceiling. Read-only; never changes your portfolio.
+- **AI Wargame Analyst**: An OpenAI-backed analyst (mirroring the Tab-2 evaluation interpreter) summarizes the comparison in plain English — what the knobs mean, how each strategy behaved, regime insights, and a "best for you" verdict.
+- **Cached results & freshness indicators**: The last scenario comparison and analyst summary are **cached to disk** and shown by default on load (so the analyst isn't re-billed on every visit). Each card shows a **"Last updated / Next auto-update"** badge; the analyst is flagged **stale** when new input data has arrived since it was generated. The comparison auto-refreshes via the data-gated scheduler job; the analyst is regenerated on demand.
+
+---
+
+### Workflow 7: Data Safety & Commit-Stamped Backups
+The large SQLite database lives outside Git; instead it (and the non-DB artifacts) are backed up to a Google Drive folder as **commit-stamped** snapshots, so a restore can always be matched to the code version that produced it.
+
+- `make backup` — uploads two artifacts: the **database** (`trading_system_<ts>__<sha>.db`) and a **files zip** (`trading_files_<ts>__<sha>.zip`). The files zip contains trained models (`ml_engine/saved_models/`), archived premium news, and **all cached JSON in `backend/data/`** — including the Crash Radar forecast state (`crash_forecast_state.json`), the cached scenario wargame + AI analyst (`wargame_cache.json`), IPO markers, LLM pricing, and premium-ingest state. The secret OAuth token (`gdrive_token.json`) is explicitly excluded.
+- `make restore` / `make restore-commit` — restores the newest backup (or the newest one matching the current commit). Existing files are moved aside to `*.pre-restore` first.
+- `make db-backup-list` / `make files-backup-list` — list available snapshots with their commit and timestamp.
+- `make backup BACKUP_KEEP=10` — after uploading, prune all but the newest N snapshots.
+
+Auth uses an OAuth "Desktop app" client (`GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`); the token is cached locally and refreshed automatically.
 
 ---
 

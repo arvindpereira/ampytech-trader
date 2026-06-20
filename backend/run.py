@@ -107,7 +107,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ampytech Trader Backend Command-Line Tool")
     parser.add_argument(
         "action",
-        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker", "crash-forecast", "crash-backfill", "crash-refresh"],
+        choices=["fetch", "fetch-forecasts", "train", "backtest", "walkforward", "calibrate", "longterm-eval", "longterm-tilt", "news-llm", "swing-eval", "swing-train", "serve", "schedule", "simulate", "backtest-virtual", "popular-tickers", "add-ticker", "crash-forecast", "crash-backfill", "crash-refresh", "defensive-prices"],
         help="Pipeline stage to execute"
     )
     parser.add_argument(
@@ -214,6 +214,9 @@ def main():
     elif args.action == "crash-refresh":
         from ml_engine.crash_model import refresh_crash_forecast
         refresh_crash_forecast()
+    elif args.action == "defensive-prices":
+        from data_ingestion.price_fetcher import fetch_defensive_etf_prices
+        fetch_defensive_etf_prices(force=True)
 
 if __name__ == "__main__":
     main()

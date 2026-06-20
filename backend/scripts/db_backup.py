@@ -111,15 +111,36 @@ def _commit_of(f):
     return (f.get("appProperties") or {}).get("commit", "?")
 
 
+# Static files/dirs included in the "files" backup zip, relative to the backend directory:
+# trained models + non-DB metadata. Every cached *.json in data/ is added automatically on top of
+# these (see _files_backup_targets), so new caches like wargame_cache.json / crash_forecast_state.json
+# are captured without editing this list.
+_STATIC_FILES_TARGETS = [
+    "ml_engine/saved_models",
+    "data/premium_news/archive",
+]
+
+# data/*.json files that must NEVER leave the machine (secrets) or are pure runtime junk.
+_DATA_JSON_EXCLUDE = {"gdrive_token.json"}
+
+
+def _files_backup_targets(backend_dir):
+    """Resolve the concrete relative paths to back up/restore: the static targets plus every cached
+    JSON in data/ (e.g. wargame_cache.json, crash_forecast_state.json, ipo_markers.json,
+    premium_ingest_state.json, llm_pricing.json), excluding secrets like the OAuth token."""
+    targets = list(_STATIC_FILES_TARGETS)
+    data_dir = os.path.join(backend_dir, "data")
+    if os.path.isdir(data_dir):
+        for fn in sorted(os.listdir(data_dir)):
+            if fn.endswith(".json") and fn not in _DATA_JSON_EXCLUDE:
+                targets.append(os.path.join("data", fn))
+    return targets
+
+
 def _create_files_zip(zip_path):
     """Zip up the models and metadata paths relative to the backend directory."""
     backend_dir = os.path.dirname(DATA_STORAGE_DIR)
-    targets = [
-        "ml_engine/saved_models",
-        "data/llm_pricing.json",
-        "data/premium_ingest_state.json",
-        "data/premium_news/archive",
-    ]
+    targets = _files_backup_targets(backend_dir)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
         for t in targets:
             full = os.path.join(backend_dir, t)
@@ -141,12 +162,7 @@ def _create_files_zip(zip_path):
 def _extract_files_zip(zip_path):
     """Unzip the models and metadata paths, moving existing targets to .pre-restore."""
     backend_dir = os.path.dirname(DATA_STORAGE_DIR)
-    targets = [
-        "ml_engine/saved_models",
-        "data/llm_pricing.json",
-        "data/premium_ingest_state.json",
-        "data/premium_news/archive",
-    ]
+    targets = _files_backup_targets(backend_dir)
     for t in targets:
         full = os.path.join(backend_dir, t)
         if os.path.exists(full):

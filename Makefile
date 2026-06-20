@@ -54,7 +54,7 @@ help:
 	@echo "  make db-backup-list    - List DB backups in the Google Drive folder"
 	@echo "  make db-restore        - Restore a DB backup (newest, or RESTORE=<name>)"
 	@echo "  make db-restore-commit - Restore the newest DB backup matching the current git commit"
-	@echo "  make backup            - Back up both the database and files (models/configs) to Google Drive"
+	@echo "  make backup            - Back up the database + files (models, configs & cached JSON) to Google Drive"
 	@echo "  make restore           - Restore the newest database and files backup (or RESTORE=<name>)"
 	@echo "  make restore-commit    - Restore the newest database and files backup matching the current git commit"
 	@echo ""
@@ -252,7 +252,7 @@ db-restore-commit:
 
 files-backup:
 	@echo "========================================================================"
-	@echo "☁️  Backing up trading files (models/configs) to Google Drive (keeps newest $(BACKUP_KEEP))..."
+	@echo "☁️  Backing up trading files (models, configs & cached JSON) to Google Drive (keeps newest $(BACKUP_KEEP))..."
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) scripts/db_backup.py --files --keep $(BACKUP_KEEP)
 

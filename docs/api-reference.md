@@ -60,8 +60,14 @@ registry and polled for progress.
 | `GET /api/crash/timeline` | `[{date, composite_index, risk_band, current_posture}]`. Returns 5-year weekly out-of-sample (OOS) risk snapshot timeline. |
 | `POST /api/crash/forecast` → `GET /api/crash/forecast/result?job_id` | Spawns a background job to run the experimental regularized drawdown-odds models (Ridge/Lasso with Lopez de Prado's purged/embargoed CV) and retrieves the forecast probabilities. |
 | `GET /api/crash/playbook?preset` | `{preset, de_risk_coefficient, stances: {buffett, safe_asset_selection, dalio, taleb, minsky}}`. Returns target asset weights and custodial guidelines for the selected preset (`conservative`\|`balanced`\|`aggressive`). |
+| `GET /api/crash/compare?...` | Walk-forward backtest comparing the glide-path presets (and current custom knobs) vs Buy & Hold. Analysis only. |
 | `POST /api/crash/wargame` → `GET /api/crash/wargame/result?job_id` | Spawns a background job to sweep parameter ranges over a scenario ensemble (GFC, Dot-Com, 2022, and bootstrap paths) and retrieves minimax regret heatmaps and Pareto-optimal knobs. |
-| `POST /api/crash/apply` `{confirm_execution, target_posture, preset}` | Executes rebalancing transactions to align virtual/paper portfolio allocations with the active defensive stance. |
+| `POST /api/crash/wargame/scenarios` `{theta?,k?,gamma?}` → `GET /api/crash/wargame/scenarios/result?job_id` | Replays every defensive policy (Buy & Hold → static → glide-path/custom) across historical bears + synthetic crashes; returns per-scenario equity curves + ranked metrics. Read-only; result is cached to disk. |
+| `POST /api/crash/wargame/interpret` `{comparison}` | OpenAI wargame analyst: plain-English summary of a scenario comparison (TLDR, knobs, per-policy findings, regime insights, "best for you"). Cached to disk on success. |
+| `GET /api/crash/wargame/cache` | Last cached scenario comparison + analyst (so they render by default) with `*_generated_at` timestamps and `*_stale` flags (true when new data has arrived since). |
+| `GET /api/crash/status` | Timing metadata for the Crash Radar artifacts (index, forecast, wargame, analyst): `last_run/last_refresh`, `next_scheduled` (weekday 9:30 ET data-gated job), and `stale` flags. Drives the "Last updated / Next auto-update" badges. |
+| `GET /api/crash/apply/preview?target_posture&preset&theta&k&gamma` | **Read-only** rebalance plan: diffs current paper holdings vs target stance weights and returns the summary, validation, and exact orders (symbol, side, shares, real price) — without executing. |
+| `POST /api/crash/apply` `{confirm_execution, target_posture, preset, theta?, k?, gamma?}` | Executes the previewed rebalancing transactions to align the paper portfolio with the active defensive stance (gated on `confirm_execution`). |
 
 ## Virtual broker (Alpaca-shaped, SQLite-backed)
 

@@ -163,8 +163,21 @@ def crash_radar_refresh_job():
     data fingerprint, so running this daily is cheap and a no-op on days with no new data."""
     print(f"\n[{datetime.now()}] Triggering Crash Radar Refresh Job...")
     try:
-        from ml_engine.crash_model import refresh_crash_forecast
-        refresh_crash_forecast()
+        from ml_engine.crash_model import refresh_crash_forecast, crash_data_fingerprint
+        changed = refresh_crash_forecast()
+        # Refresh the cached scenario comparison so the Wargame card stays current with new data.
+        # The AI analyst is intentionally NOT auto-run (OpenAI cost); it stays cached and is flagged
+        # stale in the UI until the user regenerates it.
+        try:
+            from ml_engine.wargame import (
+                run_scenario_comparison, save_wargame_comparison, load_wargame_cache,
+            )
+            if changed or not load_wargame_cache().get("comparison"):
+                print("Refreshing cached wargame scenario comparison...")
+                res = run_scenario_comparison()
+                save_wargame_comparison(res, crash_data_fingerprint())
+        except Exception as we:
+            print(f"Wargame comparison refresh skipped: {we}")
         print("Crash Radar Refresh Job completed.")
     except Exception as e:
         print(f"Error during Crash Radar Refresh: {e}")

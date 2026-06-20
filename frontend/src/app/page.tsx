@@ -127,6 +127,49 @@ interface EquityLot {
   recommendation?: { action: string; label: string; detail: string };
 }
 
+// Compact relative-time formatter ("just now", "3h ago", "2d ago") with an absolute-time title.
+function fmtRelTime(iso?: string | null): { rel: string; abs: string } {
+  if (!iso) return { rel: '—', abs: '' };
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return { rel: '—', abs: '' };
+  const diffMs = Date.now() - d.getTime();
+  const abs = d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const past = diffMs >= 0;
+  const s = Math.abs(diffMs) / 1000;
+  let rel: string;
+  if (s < 60) rel = 'just now';
+  else if (s < 3600) rel = `${Math.round(s / 60)}m`;
+  else if (s < 86400) rel = `${Math.round(s / 3600)}h`;
+  else rel = `${Math.round(s / 86400)}d`;
+  if (rel !== 'just now') rel = past ? `${rel} ago` : `in ${rel}`;
+  return { rel, abs };
+}
+
+// Small "Last updated / Next auto-update" status line shown under a card title.
+function TimingBadge({ lastRun, lastLabel = 'Updated', nextScheduled, schedule, stale }: {
+  lastRun?: string | null; lastLabel?: string; nextScheduled?: string | null; schedule?: string; stale?: boolean;
+}) {
+  const last = fmtRelTime(lastRun);
+  const next = fmtRelTime(nextScheduled);
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 12px', fontSize: '10.5px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+      <span title={last.abs} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+        <Clock size={11} /> {lastLabel} {last.rel}
+      </span>
+      {nextScheduled && (
+        <span title={schedule} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <RefreshCw size={11} /> Next auto {next.rel}
+        </span>
+      )}
+      {stale && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--color-gold)' }}>
+          <AlertTriangle size={11} /> new data since
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor' | 'crash'>('dashboard');
 
@@ -159,9 +202,19 @@ export default function Home() {
   const [forecastStatus, setForecastStatus] = useState<string>('');
   const [wargameJobId, setWargameJobId] = useState<string | null>(null);
   const [wargameStatus, setWargameStatus] = useState<string>('');
+  const [scenarioJobId, setScenarioJobId] = useState<string | null>(null);
+  const [scenarioStatus, setScenarioStatus] = useState<string>('');
+  const [scenarioData, setScenarioData] = useState<any>(null);
+  const [selectedScenario, setSelectedScenario] = useState<string>('gfc');
+  const [wargameAnalyst, setWargameAnalyst] = useState<any>(null);
+  const [analystLoading, setAnalystLoading] = useState<boolean>(false);
+  const [crashStatus, setCrashStatus] = useState<any>(null);
+  const [analystMeta, setAnalystMeta] = useState<{ generated_at?: string; stale?: boolean }>({});
   const [applyConfirmOpen, setApplyConfirmOpen] = useState<boolean>(false);
   const [applyResult, setApplyResult] = useState<any>(null);
   const [applyingRebalance, setApplyingRebalance] = useState<boolean>(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
   const [timelineData, setTimelineData] = useState<any[]>([]);
 
   const fetchTimeline = async () => {
@@ -185,6 +238,35 @@ export default function Home() {
       }
     } catch (err) {
       console.error('Error fetching crash index:', err);
+    }
+  };
+
+  const fetchCrashStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:8008/api/crash/status');
+      if (res.ok) setCrashStatus(await res.json());
+    } catch (err) {
+      console.error('Error fetching crash status:', err);
+    }
+  };
+
+  // Load the last cached scenario comparison + AI analyst so the Wargame card renders by default.
+  const fetchWargameCache = async () => {
+    try {
+      const res = await fetch('http://localhost:8008/api/crash/wargame/cache');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.comparison) {
+        setScenarioData(data.comparison);
+        const ids = (data.comparison.scenarios || []).map((s: any) => s.id);
+        if (ids.length && !ids.includes(selectedScenario)) setSelectedScenario(ids[0]);
+      }
+      if (data.analyst) {
+        setWargameAnalyst(data.analyst);
+        setAnalystMeta({ generated_at: data.analyst_generated_at, stale: data.analyst_stale });
+      }
+    } catch (err) {
+      console.error('Error fetching wargame cache:', err);
     }
   };
 
@@ -218,6 +300,30 @@ export default function Home() {
     }
   };
 
+  // Read-only dry run: fetch the exact orders + validation that "apply" would execute.
+  const openPreview = async () => {
+    setApplyResult(null);
+    setPreviewData(null);
+    setApplyConfirmOpen(true);
+    setPreviewLoading(true);
+    try {
+      const params = preset === 'custom'
+        ? `preset=custom&theta=${theta}&k=${k}&gamma=${gamma}`
+        : `preset=${preset}`;
+      const res = await fetch(`http://localhost:8008/api/crash/apply/preview?${params}`);
+      if (res.ok) {
+        setPreviewData(await res.json());
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setPreviewData({ error: errData.detail || res.statusText });
+      }
+    } catch (err: any) {
+      setPreviewData({ error: err.message || String(err) });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const handleApplyRebalance = async () => {
     setApplyingRebalance(true);
     setApplyConfirmOpen(false);
@@ -228,7 +334,8 @@ export default function Home() {
         body: JSON.stringify({
           confirm_execution: true,
           target_posture: crashData?.current_posture || 'Normal',
-          preset: preset === 'custom' ? 'balanced' : preset
+          preset: preset === 'custom' ? 'custom' : preset,
+          ...(preset === 'custom' ? { theta, k, gamma } : {})
         })
       });
       if (res.ok) {
@@ -251,6 +358,8 @@ export default function Home() {
       fetchCrashIndex();
       fetchPlaybook(preset === 'custom' ? 'balanced' : preset);
       fetchTimeline();
+      fetchCrashStatus();
+      fetchWargameCache();
     }
   }, [activeTab, preset]);
 
@@ -306,6 +415,78 @@ export default function Home() {
     }, 1500);
     return () => clearInterval(timer);
   }, [wargameJobId]);
+
+  // Scenario comparison poller
+  useEffect(() => {
+    if (!scenarioJobId) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:8008/api/crash/wargame/scenarios/result?job_id=${scenarioJobId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'completed') {
+            setScenarioStatus('');
+            setScenarioData(data.result);
+            setWargameAnalyst(null);
+            setAnalystMeta({});
+            const ids = (data.result?.scenarios || []).map((s: any) => s.id);
+            if (ids.length && !ids.includes(selectedScenario)) setSelectedScenario(ids[0]);
+            setScenarioJobId(null);
+            fetchCrashStatus();
+          } else if (data.status === 'error') {
+            setScenarioStatus(`Error: ${data.error}`);
+            setScenarioJobId(null);
+          } else {
+            setScenarioStatus(`${data.progress || 0}% · ${data.stage || 'running'}`);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [scenarioJobId]);
+
+  const runScenarioComparison = async () => {
+    setScenarioStatus('Queued…');
+    setScenarioData(null);
+    setWargameAnalyst(null);
+    try {
+      const body = preset === 'custom' ? { theta, k, gamma } : {};
+      const res = await fetch('http://localhost:8008/api/crash/wargame/scenarios', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setScenarioJobId((await res.json()).job_id);
+      } else {
+        setScenarioStatus('Trigger failed.');
+      }
+    } catch (err) {
+      setScenarioStatus('Trigger failed.');
+    }
+  };
+
+  const runWargameAnalyst = async () => {
+    if (!scenarioData) return;
+    setAnalystLoading(true);
+    try {
+      const res = await fetch('http://localhost:8008/api/crash/wargame/interpret', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comparison: scenarioData }),
+      });
+      const data = await res.json();
+      setWargameAnalyst(res.ok ? data : { error: data.detail || res.statusText });
+      if (res.ok) {
+        setAnalystMeta({ generated_at: new Date().toISOString(), stale: false });
+        fetchCrashStatus();
+      }
+    } catch (err: any) {
+      setWargameAnalyst({ error: err.message || String(err) });
+    } finally {
+      setAnalystLoading(false);
+    }
+  };
+
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'swing' | 'long_term'>('short_term');
   const appMode = 'real';
   const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
@@ -3885,7 +4066,8 @@ export default function Home() {
                     As of: {crashData?.as_of_date || 'Loading...'}
                   </span>
                 </div>
-                
+                <TimingBadge lastRun={crashStatus?.index?.last_refresh} nextScheduled={crashStatus?.index?.next_scheduled} schedule={crashStatus?.index?.schedule} />
+
                 {crashData ? (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: '14px 0' }}>
                     {/* Gauge Circle */}
@@ -4102,7 +4284,8 @@ export default function Home() {
                     <span style={{ fontSize: '11px', color: '#F59E0B' }}>{forecastStatus}</span>
                   )}
                 </div>
-                
+                <TimingBadge lastRun={crashStatus?.forecast?.last_refresh} nextScheduled={crashStatus?.forecast?.next_scheduled} schedule={crashStatus?.forecast?.schedule} />
+
                 <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
                   Forward probability odds of an SPY drawdown, from penalized L2 logistic regressions. Odds are calibrated to historical base rates and projected onto a logically-coherent grid (deeper drawdowns are never more likely than shallower ones; longer horizons never less likely than shorter ones). <strong>Reliability</strong> reflects purged-embargo cross-validated AUC &mdash; values near 0.5 mean the model has little skill beyond the base rate.
                 </p>
@@ -4221,8 +4404,8 @@ export default function Home() {
                       </p>
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         {Object.entries(playbook.stances?.safe_asset_selection?.mix || {}).map(([k, v]: any) => (
-                          <span key={k} style={{ fontSize: '10.5px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10B981', padding: '2px 6px', borderRadius: '4px' }}>
-                            {k}: {v}%
+                          <span key={k} title={playbook.stances?.safe_asset_selection?.mix_labels?.[k] || k} style={{ fontSize: '10.5px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10B981', padding: '2px 6px', borderRadius: '4px' }}>
+                            {k} ({playbook.stances?.safe_asset_selection?.mix_labels?.[k] || k}): {v}%
                           </span>
                         ))}
                       </div>
@@ -4272,17 +4455,27 @@ export default function Home() {
                         <span>Target allocation Stance:</span>
                         <strong style={{ color: 'var(--text-primary)' }}>{crashData?.current_posture}</strong>
                       </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        <span>Glide-path curve in use:</span>
+                        <strong style={{ color: 'var(--text-primary)' }}>{preset === 'custom' ? 'Custom knobs' : `${preset.charAt(0).toUpperCase()}${preset.slice(1)} preset`}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        <span>De-risk coefficient (d):</span>
+                        <strong style={{ color: '#F59E0B' }}>{playbook ? `${(playbook.de_risk_coefficient * 100).toFixed(0)}% to safe assets` : '—'}</strong>
+                      </div>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', lineHeight: 1.4 }}>
+                        Blends your current holdings with the safe-asset mix at the de-risk coefficient set by the
+                        glide-path curve above, then rebalances the <strong>paper account only</strong>. Preview the
+                        exact orders before anything runs.
+                      </p>
                       
                       <button 
                         disabled={applyingRebalance}
-                        onClick={async () => {
-                          setApplyResult(null);
-                          setApplyConfirmOpen(true);
-                        }}
+                        onClick={openPreview}
                         className="toggle-btn" 
                         style={{ background: 'var(--color-gold)', color: 'black', fontWeight: 700, border: 'none' }}
                       >
-                        {applyingRebalance ? 'Applying rebalancing...' : 'Apply Stance Rebalancing (Paper)'}
+                        {applyingRebalance ? 'Applying rebalancing...' : 'Preview Rebalancing (Paper)'}
                       </button>
                       
                       {applyResult && (
@@ -4304,95 +4497,205 @@ export default function Home() {
                 )}
               </div>
               
-              {/* Card 5: Scenario Wargaming Knobs & Heatmap */}
+              {/* Card 5: Scenario Wargame — policy comparison across crashes */}
               <div className="glass-card" style={{ padding: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Activity size={20} color="#3B82F6" />
-                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Wargaming Simulation Sweeps</h3>
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Scenario Wargame</h3>
                   </div>
-                  {wargameStatus && (
-                    <span style={{ fontSize: '11.5px', color: '#F59E0B' }}>{wargameStatus}</span>
+                  {scenarioStatus && (
+                    <span style={{ fontSize: '11.5px', color: '#F59E0B' }}>{scenarioStatus}</span>
                   )}
                 </div>
-                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
-                  Simulates performance of de-risking knobs over historical bear crashes (Dot-Com, GFC, 2022) and 50 synthetic bootstrap scenarios.
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: '1.45' }}>
+                  Replays each strategy — from doing nothing (Buy &amp; Hold) to fully defensive — across real bear
+                  markets and synthetic crashes, so you can see how they would have steered an SPY/defense blend.
+                  Read-only; never changes your portfolio.
                 </p>
-                
-                {wargameResults ? (
-                  <div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px', background: 'rgba(255,255,255,0.02)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-glass)' }}>
-                      <div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>MINIMAX CHOICE</div>
-                        <strong style={{ fontSize: '13px', color: '#10B981' }}>{playbook?.minimax_choice || 'Partial De-Risk'}</strong>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>RECOMMENDED KNOBS</div>
-                        <strong style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
-                          θ={wargameResults.optimal_knobs?.theta.toFixed(2)}, k={wargameResults.optimal_knobs?.k.toFixed(1)}
-                        </strong>
-                      </div>
-                    </div>
-                    
-                    <h4 style={{ margin: '0 0 8px', fontSize: '12px', color: 'var(--text-primary)' }}>Grid Parameter Sweep (Heatmap Sample)</h4>
-                    <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid var(--border-glass)', borderRadius: '6px' }}>
-                      <table className="trade-table" style={{ margin: 0 }}>
-                        <thead>
-                          <tr>
-                            <th>θ</th>
-                            <th>k</th>
-                            <th>Max DD</th>
-                            <th>Return</th>
-                            <th>Regret</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {wargameResults.heatmap?.slice(0, 15).map((row: any, idx: number) => (
-                            <tr key={idx} style={{ background: row.theta === wargameResults.optimal_knobs?.theta && row.k === wargameResults.optimal_knobs?.k ? 'rgba(16,185,129,0.06)' : 'none' }}>
-                              <td>{row.theta.toFixed(2)}</td>
-                              <td>{row.k.toFixed(1)}</td>
-                              <td style={{ color: '#EF4444' }}>{row.max_drawdown.toFixed(1)}%</td>
-                              <td style={{ color: '#10B981' }}>{row.return.toFixed(1)}%</td>
-                              <td>{row.max_regret.toFixed(1)}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                    No simulation sweep run cached. Run parameter sweep to generate optimal knobs.
-                  </div>
+                {scenarioData && (
+                  <TimingBadge lastRun={crashStatus?.wargame?.last_run} nextScheduled={crashStatus?.wargame?.next_scheduled} schedule={crashStatus?.wargame?.schedule} stale={crashStatus?.wargame?.stale} />
                 )}
-                
-                <button 
-                  disabled={!!wargameJobId}
-                  onClick={async () => {
-                    setWargameStatus('Queued...');
-                    try {
-                      const res = await fetch('http://localhost:8008/api/crash/wargame', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          theta_range: { min: 0.6, max: 1.2, steps: 4 },
-                          k_range: { min: 1.5, max: 3.5, steps: 4 },
-                          gamma_range: { min: 0.1, max: 0.3, steps: 2 }
-                        })
-                      });
-                      if (res.ok) {
-                        const data = await res.json();
-                        setWargameJobId(data.job_id);
-                      }
-                    } catch (err) {
-                      setWargameStatus('Trigger failed.');
-                    }
-                  }}
-                  className="toggle-btn" 
-                  style={{ width: '100%', marginTop: '14px' }}
+
+                {/* Knob glossary */}
+                {(() => {
+                  const g = scenarioData?.knob_glossary || {
+                    theta: { symbol: 'θ', name: 'De-risking threshold', desc: 'How high crash-risk must climb before you start moving to defense. Higher = wait longer (aggressive).' },
+                    k: { symbol: 'k', name: 'Curve steepness', desc: 'How sharply you flip from stocks to defense around the threshold. Higher = faster, more all-or-nothing.' },
+                    gamma: { symbol: 'γ', name: 'Trend gate', desc: 'Keeps you invested longer during uptrends so you don\u2019t bail early in a melt-up.' },
+                  };
+                  return (
+                    <div style={{ display: 'grid', gap: '8px', marginBottom: '14px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)' }}>What the glide-path knobs mean</div>
+                      {['theta', 'k', 'gamma'].map((kk) => g[kk] && (
+                        <div key={kk} style={{ fontSize: '11.5px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                          <strong style={{ color: 'var(--text-primary)' }}>{g[kk].symbol} — {g[kk].name}:</strong> {g[kk].desc}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                <button
+                  disabled={!!scenarioJobId}
+                  onClick={runScenarioComparison}
+                  className="toggle-btn"
+                  style={{ width: '100%', marginBottom: scenarioData ? '16px' : '0' }}
                 >
-                  {wargameJobId ? 'Sweeping parameter matrices...' : 'Run Scenario Wargame Sweep'}
+                  {scenarioJobId ? `Running… ${scenarioStatus}` : (scenarioData ? 'Re-run Wargame' : 'Run Scenario Wargame')}
+                  {!scenarioJobId && preset === 'custom' ? ' (incl. your custom knobs)' : ''}
                 </button>
+
+                {scenarioData && (() => {
+                  const policies = scenarioData.policies || [];
+                  const polById: any = Object.fromEntries(policies.map((p: any) => [p.id, p]));
+                  const sc = (scenarioData.scenarios || []).find((s: any) => s.id === selectedScenario) || scenarioData.scenarios?.[0];
+                  if (!sc) return null;
+                  const chartData = (sc.dates || []).map((d: string, i: number) => {
+                    const row: any = { date: d };
+                    policies.forEach((p: any) => { row[p.id] = sc.series?.[p.id]?.equity_curve?.[i]; });
+                    return row;
+                  });
+                  const ranked = [...policies].sort((a: any, b: any) => (sc.series?.[b.id]?.total_return || 0) - (sc.series?.[a.id]?.total_return || 0));
+                  return (
+                    <div>
+                      {/* Scenario selector */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                        {(scenarioData.scenarios || []).map((s: any) => (
+                          <button key={s.id} onClick={() => setSelectedScenario(s.id)}
+                            style={{ fontSize: '11px', padding: '5px 9px', borderRadius: '6px', cursor: 'pointer',
+                              background: s.id === sc.id ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.03)',
+                              border: `1px solid ${s.id === sc.id ? 'rgba(59,130,246,0.5)' : 'var(--border-glass)'}`,
+                              color: s.id === sc.id ? '#93c5fd' : 'var(--text-secondary)', fontWeight: s.id === sc.id ? 700 : 500 }}>
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p style={{ fontSize: '11.5px', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: '1.4' }}>
+                        {sc.subtitle} <span style={{ color: 'var(--text-primary)' }}>Perfect-foresight ceiling: {sc.perfect_foresight_return >= 0 ? '+' : ''}{sc.perfect_foresight_return}%.</span>
+                      </p>
+
+                      {/* Equity-curve timelines */}
+                      <div style={{ width: '100%', height: 280 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={chartData} margin={{ top: 6, right: 8, left: 6, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                            <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={10} tickLine={false} minTickGap={48} tickFormatter={(d) => String(d).slice(0, 7)} />
+                            <YAxis stroke="var(--text-secondary)" fontSize={10} tickLine={false} width={42} domain={['dataMin - 3000', 'dataMax + 3000']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                            <Tooltip contentStyle={{ background: 'rgba(16,20,38,0.96)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '12px' }}
+                              formatter={(v: any, name: any) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, name]} />
+                            <Legend wrapperStyle={{ fontSize: '10.5px' }} iconType="plainline" />
+                            {policies.map((p: any) => (
+                              <Line key={p.id} type="monotone" dataKey={p.id} name={p.label} stroke={p.color}
+                                strokeWidth={p.id === 'buyhold' ? 1.5 : 2} dot={false} isAnimationActive={false}
+                                strokeDasharray={p.id === 'buyhold' ? '5 4' : undefined} />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      {/* Per-scenario metrics table */}
+                      <div style={{ overflowX: 'auto', border: '1px solid var(--border-glass)', borderRadius: '8px', marginTop: '12px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+                          <thead>
+                            <tr style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', textAlign: 'right' }}>
+                              <th style={{ padding: '7px 9px', textAlign: 'left' }}>Strategy</th>
+                              <th style={{ padding: '7px 9px' }}>Return</th>
+                              <th style={{ padding: '7px 9px' }}>Max DD</th>
+                              <th style={{ padding: '7px 9px' }}>Sharpe</th>
+                              <th style={{ padding: '7px 9px' }}>Turnover</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ranked.map((p: any) => {
+                              const m = sc.series?.[p.id] || {};
+                              return (
+                                <tr key={p.id} style={{ borderTop: '1px solid var(--border-glass)' }}>
+                                  <td style={{ padding: '7px 9px' }}>
+                                    <span style={{ display: 'inline-block', width: '9px', height: '9px', borderRadius: '2px', background: p.color, marginRight: '6px' }} />
+                                    <span title={p.desc} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{p.label}</span>
+                                  </td>
+                                  <td style={{ padding: '7px 9px', textAlign: 'right', color: (m.total_return || 0) >= 0 ? '#10B981' : '#EF4444', fontWeight: 700 }}>{(m.total_return || 0) >= 0 ? '+' : ''}{(m.total_return ?? 0).toFixed(1)}%</td>
+                                  <td style={{ padding: '7px 9px', textAlign: 'right', color: '#F59E0B' }}>{(m.max_drawdown ?? 0).toFixed(1)}%</td>
+                                  <td style={{ padding: '7px 9px', textAlign: 'right', color: 'var(--text-secondary)' }}>{(m.sharpe ?? 0).toFixed(2)}</td>
+                                  <td style={{ padding: '7px 9px', textAlign: 'right', color: 'var(--text-secondary)' }}>{(m.turnover ?? 0).toFixed(1)}x</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* AI analyst */}
+                      <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-glass)', paddingTop: '14px' }}>
+                        {!wargameAnalyst && (
+                          <button onClick={runWargameAnalyst} disabled={analystLoading}
+                            style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', justifyContent: 'center', fontSize: '13px', padding: '9px', borderRadius: '8px', cursor: analystLoading ? 'default' : 'pointer', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)', color: 'var(--text-primary)', fontWeight: 600 }}>
+                            <Brain size={16} className={analystLoading ? 'animate-spin' : ''} color="#a78bfa" /> {analystLoading ? 'Analyst is thinking…' : 'Summarize with AI Analyst'}
+                          </button>
+                        )}
+                        {wargameAnalyst && (() => {
+                          const it = wargameAnalyst;
+                          const s = it.sections;
+                          const label: React.CSSProperties = { fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', marginBottom: '5px' };
+                          const para: React.CSSProperties = { margin: 0, fontSize: '12.5px', lineHeight: '1.6', color: 'var(--text-secondary)' };
+                          const ul: React.CSSProperties = { margin: 0, paddingLeft: '18px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.55', display: 'flex', flexDirection: 'column', gap: '3px' };
+                          return (
+                            <div style={{ border: '1px solid rgba(139,92,246,0.35)', background: 'rgba(139,92,246,0.06)', borderRadius: '10px', padding: '14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>
+                                  <Brain size={18} color="#a78bfa" /> AI Wargame Analyst
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '10.5px', color: 'var(--text-secondary)' }}>
+                                  {analystMeta.generated_at && (
+                                    <span title={fmtRelTime(analystMeta.generated_at).abs} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                      <Clock size={11} /> {fmtRelTime(analystMeta.generated_at).rel}
+                                    </span>
+                                  )}
+                                  {analystMeta.stale && (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--color-gold)' }} title="The underlying data has changed since this summary was generated.">
+                                      <AlertTriangle size={11} /> stale
+                                    </span>
+                                  )}
+                                  {it.model && <span>{it.model}{it.tokens ? ` · ${(it.tokens).toLocaleString()} tok` : ''}{typeof it.cost === 'number' ? ` · ~$${it.cost.toFixed(4)}` : ''}</span>}
+                                  <button onClick={runWargameAnalyst} disabled={analystLoading}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10.5px', padding: '3px 8px', borderRadius: '6px', cursor: analystLoading ? 'default' : 'pointer', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.35)', color: 'var(--text-primary)' }}>
+                                    <RefreshCw size={11} className={analystLoading ? 'animate-spin' : ''} /> {analystLoading ? '…' : 'Regenerate'}
+                                  </button>
+                                </div>
+                              </div>
+                              {it.error ? (
+                                <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>{it.error}</div>
+                              ) : s ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                  {s.tldr && <div style={{ fontSize: '13px', lineHeight: '1.6', color: 'var(--text-primary)', padding: '10px 12px', borderRadius: '8px', background: 'rgba(139,92,246,0.10)', borderLeft: '3px solid #a78bfa' }}>{s.tldr}</div>}
+                                  {s.how_to_read && <div><div style={label}>How to read this</div><p style={para}>{s.how_to_read}</p></div>}
+                                  {s.knobs_explained && <div><div style={label}>Knobs explained</div><p style={para}>{s.knobs_explained}</p></div>}
+                                  {Array.isArray(s.policy_findings) && s.policy_findings.length > 0 && (
+                                    <div><div style={label}>How each strategy behaved</div>
+                                      <ul style={ul}>{s.policy_findings.map((x: any, i: number) => <li key={i}><strong style={{ color: 'var(--text-primary)' }}>{x.policy}:</strong> {x.finding}</li>)}</ul>
+                                    </div>
+                                  )}
+                                  {Array.isArray(s.regime_insights) && s.regime_insights.length > 0 && (
+                                    <div><div style={label}>Regime insights</div><ul style={ul}>{s.regime_insights.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                                  )}
+                                  {s.best_for_you && (
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12.5px', lineHeight: '1.6', color: 'var(--text-primary)', padding: '10px 12px', borderRadius: '8px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)' }}>
+                                      <CheckCircle2 size={16} color="var(--color-buy)" style={{ flexShrink: 0, marginTop: '1px' }} /> <span>{s.best_for_you}</span>
+                                    </div>
+                                  )}
+                                  {Array.isArray(s.caveats) && s.caveats.length > 0 && (
+                                    <div><div style={{ ...label, color: 'var(--color-gold)' }}><AlertTriangle size={12} style={{ display: 'inline', marginRight: '4px' }} />Caveats</div><ul style={ul}>{s.caveats.map((x: string, i: number) => <li key={i}>{x}</li>)}</ul></div>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               
               {/* Card 6: Severity Contingency Checklist */}
@@ -4565,25 +4868,88 @@ export default function Home() {
           onClick={() => !applyingRebalance && setApplyConfirmOpen(false)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '420px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <h2 style={{ marginTop: 0, marginBottom: '8px', color: 'var(--text-primary)' }}>Confirm Rebalancing</h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
-              Are you sure you want to apply defensive stance rebalancing? This will:
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '560px', maxWidth: '92vw', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <h2 style={{ marginTop: 0, marginBottom: '4px', color: 'var(--text-primary)' }}>Preview Rebalancing</h2>
+            <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
+              A read-only dry run of the orders that would execute against the <strong>paper account (ID=1)</strong>. Nothing
+              changes until you press Confirm — and even then it is virtual cash only.
             </p>
-            <ul style={{ fontSize: '12.5px', color: 'var(--text-secondary)', paddingLeft: '20px', margin: '0 0 16px', display: 'grid', gap: '6px' }}>
-              <li>Calculate target weights based on the <strong>{preset === 'custom' ? 'balanced' : preset}</strong> defensive playbook preset.</li>
-              <li>Read the current system posture (<strong>{crashData?.current_posture || 'Normal'}</strong>) and de-risk coefficient (<strong>{playbook ? `${(playbook.de_risk_coefficient * 100).toFixed(0)}%` : 'Loading...'}</strong>).</li>
-              <li>Submit virtual buy/sell orders in the <strong>paper-trading virtual account (ID=1)</strong> to match target weights.</li>
-            </ul>
-            <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', color: '#F59E0B', marginBottom: '20px', lineHeight: '1.4' }}>
-              <strong>Note:</strong> Under no circumstances will this place live transactions. This operates entirely on virtual cash and virtual positions.
-            </div>
+
+            {previewLoading && (
+              <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>Computing preview…</div>
+            )}
+
+            {!previewLoading && previewData?.error && (
+              <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: '8px', padding: '12px', fontSize: '13px', color: '#EF4444', marginBottom: '16px' }}>
+                Could not compute preview: {previewData.error}
+              </div>
+            )}
+
+            {!previewLoading && previewData && !previewData.error && (
+              <>
+                {/* Plan summary */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '14px' }}>
+                  <div>Preset/curve: <strong style={{ color: 'var(--text-primary)' }}>{previewData.preset_applied}</strong></div>
+                  <div>De-risk coefficient: <strong style={{ color: '#F59E0B' }}>{(previewData.de_risk_coefficient * 100).toFixed(0)}%</strong></div>
+                  <div>Portfolio value: <strong style={{ color: 'var(--text-primary)' }}>{money(previewData.portfolio_value)}</strong></div>
+                  <div>Turnover: <strong style={{ color: 'var(--text-primary)' }}>{previewData.turnover_pct}%</strong></div>
+                  <div>Cash before: <strong style={{ color: 'var(--text-primary)' }}>{money(previewData.cash_before)}</strong></div>
+                  <div>Cash after (est): <strong style={{ color: 'var(--text-primary)' }}>{money(previewData.est_cash_after)}</strong></div>
+                </div>
+
+                {/* Validation messages */}
+                {(previewData.validation?.errors?.length > 0 || previewData.validation?.warnings?.length > 0) && (
+                  <div style={{ display: 'grid', gap: '6px', marginBottom: '14px' }}>
+                    {previewData.validation.errors.map((e: string, i: number) => (
+                      <div key={`e${i}`} style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: '6px', padding: '8px 10px', fontSize: '11.5px', color: '#EF4444' }}>⛔ {e}</div>
+                    ))}
+                    {previewData.validation.warnings.map((w: string, i: number) => (
+                      <div key={`w${i}`} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '6px', padding: '8px 10px', fontSize: '11.5px', color: '#F59E0B' }}>⚠ {w}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Order table */}
+                {previewData.orders?.length > 0 ? (
+                  <div style={{ border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden', marginBottom: '18px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(255,255,255,0.04)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                          <th style={{ padding: '8px 10px' }}>Ticker</th>
+                          <th style={{ padding: '8px 10px' }}>Side</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'right' }}>Now → Target</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'right' }}>Qty</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'right' }}>Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewData.orders.map((o: any, i: number) => (
+                          <tr key={i} style={{ borderTop: '1px solid var(--border-glass)' }}>
+                            <td style={{ padding: '8px 10px', fontWeight: 600, color: 'var(--text-primary)' }}>{o.ticker}</td>
+                            <td style={{ padding: '8px 10px', fontWeight: 700, color: o.side === 'buy' ? '#10B981' : '#EF4444' }}>{o.side.toUpperCase()}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', color: 'var(--text-secondary)' }}>{o.current_weight}% → {o.target_weight}%</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right' }}>{o.qty}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right' }}>{money(o.value)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '14px', fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '18px', textAlign: 'center' }}>
+                    No orders needed — the paper portfolio already matches the target allocation.
+                  </div>
+                )}
+              </>
+            )}
+
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button onClick={() => setApplyConfirmOpen(false)} disabled={applyingRebalance}
                 style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={handleApplyRebalance} disabled={applyingRebalance}
-                style={{ background: 'var(--color-gold)', border: 'none', borderRadius: '8px', color: 'black', padding: '8px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: applyingRebalance ? 0.6 : 1 }}>
-                {applyingRebalance ? 'Executing...' : 'Confirm & Rebalance'}
+              <button onClick={handleApplyRebalance}
+                disabled={applyingRebalance || previewLoading || !previewData || previewData.error || !previewData.validation?.ok || (previewData.orders?.length || 0) === 0}
+                style={{ background: 'var(--color-gold)', border: 'none', borderRadius: '8px', color: 'black', padding: '8px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: (applyingRebalance || previewLoading || !previewData || previewData.error || !previewData.validation?.ok || (previewData.orders?.length || 0) === 0) ? 0.5 : 1 }}>
+                {applyingRebalance ? 'Executing...' : 'Confirm & Execute (Paper)'}
               </button>
             </div>
           </div>
