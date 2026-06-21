@@ -2327,6 +2327,7 @@ class ExternalStrategyRequest(BaseModel):
     strategy_mode: str
     aggression: StrictInt
     buckets: Optional[ExternalBucketsRequest] = None
+    de_risk_policy: Optional[str] = None   # 'rotate' | 'shed_beta' | None (=follow recommendation)
 
 class ConfirmOrderRequest(BaseModel):
     ticker: str
@@ -2394,6 +2395,7 @@ def get_external_accounts(db=Depends(get_db)):
             "risk_profile": acct.risk_profile,
             "strategy_mode": acct.strategy_mode,
             "aggression": acct.aggression,
+            "de_risk_policy": acct.de_risk_policy,
             "buckets": effective_buckets(acct, get_strategy_buckets(db)),
             "inherits_global_buckets": acct.buckets_json is None,
             "created_at": acct.created_at,
@@ -2421,13 +2423,18 @@ def update_external_account_strategy(account_label: str, req: ExternalStrategyRe
         validated = validate_buckets(raw_buckets)
     except StrategyValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from app.services.account_strategy import DE_RISK_POLICIES
+    if req.de_risk_policy is not None and req.de_risk_policy not in DE_RISK_POLICIES:
+        raise HTTPException(status_code=400, detail=f"de_risk_policy must be one of {', '.join(DE_RISK_POLICIES)} or null")
     acct.strategy_mode = req.strategy_mode
     acct.aggression = req.aggression
     acct.buckets_json = _json.dumps(validated, sort_keys=True) if validated is not None else None
+    acct.de_risk_policy = req.de_risk_policy
     acct.updated_at = datetime.now().isoformat(timespec="seconds")
     db.commit()
     return {"status": "success", "account_label": account_label,
             "strategy_mode": acct.strategy_mode, "aggression": acct.aggression,
+            "de_risk_policy": acct.de_risk_policy,
             "buckets": effective_buckets(acct, get_strategy_buckets(db)),
             "inherits_global_buckets": acct.buckets_json is None}
 
@@ -2614,7 +2621,8 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
     base = {"account_label": account_label, "portfolio_value": round(portfolio_value, 2),
             "strategy_mode": acct.strategy_mode, "aggression": acct.aggression,
             "effective_buckets": buckets, "target_weights": {}, "cash_target_weight": 1.0,
-            "current_weights": {}, "tiers": {},
+            "current_weights": {}, "tiers": {}, "de_risk_policy": acct.de_risk_policy,
+            "recommended_policy": None, "recommendation_reason": None, "book_beta": None,
             "target_reason_codes": {}, "crash_risk_coefficient": None,
             "suggestions": [], "turnover_pct": 0.0, "warnings": []}
     if portfolio_value <= 0:
@@ -2627,12 +2635,17 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
     if snapshot is None:
         warnings.append("No cached model signals are available; unsignalled holdings are preserved")
 
-    # Risk/quality tiers for held names so holdings-aware modes can keep quality and shed speculation.
+    # Risk/quality tiers + market beta for held names so holdings-aware modes can keep quality and
+    # (at low aggression) shed high-beta market exposure.
     from app.database import TickerClassification
+    from app.services.account_wargame import _estimate_betas
     classifications = {}
     for c in db.query(TickerClassification).filter(
             TickerClassification.ticker.in_(list(current_weights.keys()) or [""])).all():
         classifications[c.ticker] = {"tier": c.tier_override or c.tier, "volatility": c.volatility}
+    if current_weights:
+        for t, b in _estimate_betas(db, list(current_weights.keys())).items():
+            classifications.setdefault(t, {})["beta"] = b
 
     glide_coefficient = None
     if acct.strategy_mode in ("glide_path", "de_risk"):
@@ -2644,10 +2657,16 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
             base["cash_target_weight"] = cash / portfolio_value
             base["warnings"] = warnings + [playbook.get("error", "No crash-risk snapshot is available")]
             return base
+    # Resolve the de-risk policy (explicit account setting, else the model recommendation).
+    from app.services.account_strategy import portfolio_beta, recommend_de_risk_policy
+    book_beta = portfolio_beta(current_weights, classifications)
+    rec_policy, rec_reason = recommend_de_risk_policy(glide_coefficient, book_beta)
+    effective_policy = acct.de_risk_policy or rec_policy
+    beta_weight = 1.0 if effective_policy == "shed_beta" else 0.0
     try:
         target = build_account_target(current_weights, acct.strategy_mode, acct.aggression,
                                       buckets, snapshot=snapshot, classifications=classifications,
-                                      de_risk_coefficient=glide_coefficient)
+                                      de_risk_coefficient=glide_coefficient, beta_weight=beta_weight)
     except StrategyValidationError as exc:
         base["target_weights"] = current_weights
         base["cash_target_weight"] = cash / portfolio_value
@@ -2673,6 +2692,8 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
                 current_weights={k: round(v, 8) for k, v in current_weights.items()},
                 target_reason_codes=target["target_reason_codes"], tiers=tiers,
                 crash_risk_coefficient=glide_coefficient,
+                de_risk_policy=effective_policy, recommended_policy=rec_policy,
+                recommendation_reason=rec_reason, book_beta=round(book_beta, 3),
                 suggestions=suggestions, turnover_pct=round(turnover, 6),
                 warnings=warnings + order_warnings)
     return base
@@ -2693,18 +2714,28 @@ def _external_account_context(db, acct):
     current_weights = {t: v / pv for t, v in current_values.items()} if pv > 0 else {}
     classifications = {}
     if current_weights:
+        from app.services.account_wargame import _estimate_betas
         for c in db.query(TickerClassification).filter(
                 TickerClassification.ticker.in_(list(current_weights.keys()))).all():
             classifications[c.ticker] = {"tier": c.tier_override or c.tier, "volatility": c.volatility}
+        for t, b in _estimate_betas(db, list(current_weights.keys())).items():
+            classifications.setdefault(t, {})["beta"] = b
     coef = None
     try:
         from ml_engine.defensive_strategist import build_defensive_playbook
         coef = build_defensive_playbook(preset_name="balanced").get("de_risk_coefficient")
     except Exception:
         coef = None
+    from app.services.account_strategy import portfolio_beta, recommend_de_risk_policy
+    book_beta = portfolio_beta(current_weights, classifications) if current_weights else 0.0
+    rec_policy, rec_reason = recommend_de_risk_policy(coef, book_beta)
+    effective_policy = acct.de_risk_policy or rec_policy
     return {"portfolio_value": pv, "current_weights": current_weights,
             "classifications": classifications, "snapshot": _latest_cached_model_signals(),
-            "buckets": effective_buckets(acct, get_strategy_buckets(db)), "de_risk_coefficient": coef}
+            "buckets": effective_buckets(acct, get_strategy_buckets(db)), "de_risk_coefficient": coef,
+            "book_beta": round(book_beta, 3), "de_risk_policy": effective_policy,
+            "recommended_policy": rec_policy, "recommendation_reason": rec_reason,
+            "beta_weight": 1.0 if effective_policy == "shed_beta" else 0.0}
 
 
 @app.post("/api/external/accounts/{account_label}/wargame")
@@ -2722,9 +2753,35 @@ def external_account_wargame(account_label: str, lookback_years: int = 3, db=Dep
     from app.services.account_wargame import run_account_wargame
     result = run_account_wargame(db, account_label, ctx["current_weights"], ctx["classifications"],
                                  ctx["snapshot"], ctx["buckets"], ctx["de_risk_coefficient"],
-                                 acct.aggression, lookback_years=int(lookback_years))
+                                 acct.aggression, lookback_years=int(lookback_years),
+                                 beta_weight=ctx["beta_weight"])
     result["account_mode"] = acct.strategy_mode
     result["aggression"] = acct.aggression
+    result["de_risk_policy"] = ctx["de_risk_policy"]
+    return result
+
+
+@app.post("/api/external/accounts/{account_label}/policy-compare")
+def external_account_policy_compare(account_label: str, lookback_years: int = 3, era: str = "gfc",
+                                    db=Depends(get_db)):
+    """Compare the two de-risk policies (rotate vs shed-to-cash) for this account on a recent
+    walk-forward and a synthetic crash, so the upside-vs-protection tradeoff is visible."""
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not 1 <= int(lookback_years) <= 10:
+        raise HTTPException(status_code=400, detail="lookback_years must be between 1 and 10")
+    ctx = _external_account_context(db, acct)
+    if ctx["portfolio_value"] <= 0 or not ctx["current_weights"]:
+        return {"error": "Account has no priced holdings to compare."}
+    from app.services.account_wargame import run_policy_comparison
+    result = run_policy_comparison(db, account_label, ctx["current_weights"], ctx["classifications"],
+                                   ctx["snapshot"], ctx["buckets"], ctx["de_risk_coefficient"],
+                                   acct.aggression, lookback_years=int(lookback_years), crash_era=era)
+    result["recommended_policy"] = ctx["recommended_policy"]
+    result["recommendation_reason"] = ctx["recommendation_reason"]
+    result["current_policy"] = ctx["de_risk_policy"]
+    result["book_beta"] = ctx["book_beta"]
     return result
 
 
@@ -2741,8 +2798,10 @@ def external_account_crash_stress(account_label: str, era: str = "gfc", db=Depen
     from app.services.account_wargame import run_account_crash_stress
     result = run_account_crash_stress(db, account_label, era, ctx["current_weights"],
                                       ctx["classifications"], ctx["snapshot"], ctx["buckets"],
-                                      ctx["de_risk_coefficient"], acct.aggression)
+                                      ctx["de_risk_coefficient"], acct.aggression,
+                                      beta_weight=ctx["beta_weight"])
     result["account_mode"] = acct.strategy_mode
+    result["de_risk_policy"] = ctx["de_risk_policy"]
     return result
 
 @app.post("/api/external/orders/confirm")

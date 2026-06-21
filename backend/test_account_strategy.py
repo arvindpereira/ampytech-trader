@@ -84,6 +84,27 @@ class TestAccountStrategyService(unittest.TestCase):
                                    snapshot=snapshot, classifications={}, de_risk_coefficient=0.0)
         self.assertLess(res["target_weights"].get("BYND", 0.0), 0.01)
 
+    def test_shed_beta_policy_raises_cash_and_lowers_beta(self):
+        """shed_beta (beta_weight=1) moves a high-beta holding to cash; rotate (0) keeps it."""
+        cls = {"NVDA": {"tier": "core", "volatility": 0.4, "beta": 2.0},
+               "BRK.B": {"tier": "core", "volatility": 0.15, "beta": 0.4}}
+        cw = {"NVDA": 0.5, "BRK.B": 0.5}
+        rotate = build_account_target(cw, "de_risk", 0, {"swing": 1.0, "longterm": 0, "high_risk": 0},
+                                      classifications=cls, de_risk_coefficient=0.0, beta_weight=0.0)
+        shed = build_account_target(cw, "de_risk", 0, {"swing": 1.0, "longterm": 0, "high_risk": 0},
+                                    classifications=cls, de_risk_coefficient=0.0, beta_weight=1.0)
+        self.assertGreater(shed["cash_target_weight"], rotate["cash_target_weight"])      # sheds to cash
+        self.assertLess(shed["target_weights"].get("NVDA", 0), rotate["target_weights"].get("NVDA", 0))
+        self.assertGreater(shed["target_weights"].get("BRK.B", 0), 0.4)                   # low-beta name kept
+
+    def test_recommend_de_risk_policy(self):
+        from app.services.account_strategy import recommend_de_risk_policy, portfolio_beta
+        self.assertEqual(recommend_de_risk_policy(0.30, 0.8)[0], "shed_beta")   # high crash risk
+        self.assertEqual(recommend_de_risk_policy(0.05, 1.4)[0], "shed_beta")   # high book beta
+        self.assertEqual(recommend_de_risk_policy(0.05, 0.7)[0], "rotate")      # calm + moderate beta
+        self.assertAlmostEqual(portfolio_beta({"A": 0.5, "B": 0.5},
+                                              {"A": {"beta": 2.0}, "B": {"beta": 0.0}}), 1.0)
+
     def test_glide_endpoint_requires_crash_coefficient(self):
         buckets = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
         with self.assertRaises(StrategyValidationError):

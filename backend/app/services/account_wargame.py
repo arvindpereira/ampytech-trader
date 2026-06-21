@@ -83,7 +83,7 @@ def _simulate(weights, cash_weight, piv, rebalance_days=REBALANCE_DAYS):
 
 
 def run_account_wargame(db, account_label, current_weights, classifications, snapshot, buckets,
-                        de_risk_coefficient, aggression, lookback_years=3):
+                        de_risk_coefficient, aggression, lookback_years=3, beta_weight=0.0):
     end = datetime.now().date()
     start = end - timedelta(days=int(lookback_years * 365))
 
@@ -95,7 +95,7 @@ def run_account_wargame(db, account_label, current_weights, classifications, sna
         try:
             t = build_account_target(current_weights, mode, aggression, buckets,
                                      snapshot=snapshot, classifications=classifications,
-                                     de_risk_coefficient=coef)
+                                     de_risk_coefficient=coef, beta_weight=beta_weight)
             targets[mode] = (t["target_weights"], t["cash_target_weight"])
         except StrategyValidationError:
             continue
@@ -136,6 +136,75 @@ def run_account_wargame(db, account_label, current_weights, classifications, sna
                                    "that became investable in the window."}
 
 
+def _era_synthetic_piv(db, era, tickers, betas):
+    """Synthetic price frame for an era: each ticker = its SPY-beta × the era's actual SPY path."""
+    from app.database import DailyPrice
+    start_d, end_d = get_historical_era_dates(era)
+    rows = db.query(DailyPrice.date, DailyPrice.close).filter(
+        DailyPrice.ticker == "SPY", DailyPrice.date >= start_d, DailyPrice.date <= end_d
+    ).order_by(DailyPrice.date.asc()).all()
+    if len(rows) < 20:
+        return None, None
+    dates = [pd.to_datetime(d) for d, _ in rows]
+    spy = np.array([float(c) for _, c in rows])
+    ret = np.concatenate([[0.0], np.diff(spy) / spy[:-1]])
+    synth = {t: spy if t == "SPY" else 100.0 * np.cumprod(1.0 + betas.get(t, 1.0) * ret) for t in tickers}
+    return pd.DataFrame(synth, index=pd.Index(dates, name="date")), spy
+
+
+def run_policy_comparison(db, account_label, current_weights, classifications, snapshot, buckets,
+                          de_risk_coefficient, aggression, lookback_years=3, crash_era="gfc"):
+    """Show what the de-risk policy choice means: run the de_risk mode under BOTH policies
+    (rotate = keep market exposure; shed_beta = move high-beta to cash) over a recent walk-forward
+    and a synthetic crash, so the tradeoff (upside vs crash protection) is visible side by side."""
+    if de_risk_coefficient is None:
+        return {"error": "No crash-risk snapshot is available for the de-risk comparison."}
+    end = datetime.now().date()
+    start = end - timedelta(days=int(lookback_years * 365))
+    policies = {"rotate": 0.0, "shed_beta": 1.0}
+    targets = {}
+    for name, bw in policies.items():
+        try:
+            t = build_account_target(current_weights, "de_risk", aggression, buckets, snapshot=snapshot,
+                                     classifications=classifications, de_risk_coefficient=de_risk_coefficient,
+                                     beta_weight=bw)
+            targets[name] = (t["target_weights"], t["cash_target_weight"])
+        except StrategyValidationError:
+            continue
+    if not targets:
+        return {"error": "Could not build de-risk targets."}
+    all_tickers = set().union(*[set(w) for w, _ in targets.values()])
+    betas = _estimate_betas(db, all_tickers)
+    piv = _price_frame(db, all_tickers, start.isoformat(), end.isoformat())
+    full = list(piv.index)
+    keep = list(range(0, len(full), max(1, len(full) // 250))) if full else []
+    if keep and keep[-1] != len(full) - 1:
+        keep.append(len(full) - 1)
+    dates = [full[i].strftime("%Y-%m-%d") for i in keep]
+    crash_piv, crash_spy = _era_synthetic_piv(db, crash_era, all_tickers, betas)
+
+    results = []
+    for name, (w, cash) in targets.items():
+        curve, _c = _simulate(w, cash, piv)
+        crash_dd = None
+        if crash_piv is not None:
+            ccurve, _cc = _simulate(w, cash, crash_piv)
+            crash_dd = round(_metrics_from_curve(ccurve)["max_drawdown"], 1)
+        results.append({
+            "policy": name,
+            "label": "Rotate into quality" if name == "rotate" else "Shed high-beta to cash",
+            "metrics": _metrics_from_curve(curve),
+            "curve": [round(curve[i], 5) for i in keep] if curve and keep else curve,
+            "portfolio_beta": round(sum(betas.get(t, 1.0) * v for t, v in w.items()), 3),
+            "cash_target": round(cash, 4),
+            "crash_drawdown": crash_dd,
+        })
+    return {"account_label": account_label, "as_of": end.isoformat(), "lookback_years": lookback_years,
+            "dates": dates, "results": results, "crash_era": crash_era,
+            "crash_label": CRASH_ERAS.get(crash_era, crash_era),
+            "crash_spy_drawdown": round(_metrics_from_curve(crash_spy)["max_drawdown"], 1) if crash_spy is not None else None}
+
+
 def _estimate_betas(db, tickers, lookback_days=504):
     """Market beta vs SPY for each ticker from recent daily returns. Names with too little history
     default to 1.0. Defensive assets come out low/negative (TLT, GLD, BIL ≈ 0), which is what makes
@@ -167,7 +236,7 @@ def _estimate_betas(db, tickers, lookback_days=504):
 
 
 def run_account_crash_stress(db, account_label, era, current_weights, classifications, snapshot,
-                             buckets, de_risk_coefficient, aggression):
+                             buckets, de_risk_coefficient, aggression, beta_weight=0.0):
     """Stress each strategy mode through a historical crash by mapping every holding to a synthetic
     SPY-beta proxy over the era's actual SPY path (single market factor; no idiosyncratic/alpha). A
     transparent 'what would each posture have done in 2008/2020' — defensive/low-beta names hold,
@@ -193,7 +262,7 @@ def run_account_crash_stress(db, account_label, era, current_weights, classifica
         try:
             t = build_account_target(current_weights, mode, aggression, buckets,
                                      snapshot=snapshot, classifications=classifications,
-                                     de_risk_coefficient=coef)
+                                     de_risk_coefficient=coef, beta_weight=beta_weight)
             targets[mode] = (t["target_weights"], t["cash_target_weight"])
         except StrategyValidationError:
             continue
