@@ -6,5 +6,5 @@ from app.database.models import (
     LLMUsage, TickerFundamental, TickerClassification, EquityLot, EquityVestSchedule, EquityAutoTradeBlock,
     TaxProfile, AnalystForecast,
     TradingBlock, CrashRiskSnapshot,
-    ExternalAccount, ExternalOrder, ExternalTransaction
+    ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding
 )

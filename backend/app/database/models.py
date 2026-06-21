@@ -465,6 +465,23 @@ class ExternalAccount(Base):
     updated_at = Column(String, nullable=False)
 
 
+class ExternalStatementHolding(Base):
+    """The latest month-end statement snapshot per external account — the cost-basis + share-count
+    'anchor' used to reconstruct holdings from a transaction CSV. Populated automatically from an
+    imported monthly statement PDF, or seeded from a data CSV (for accounts whose positions
+    transferred in with no basis, e.g. the Robinhood Joint account). Replaces the formerly
+    hardcoded *_PDF_HOLDINGS dicts."""
+    __tablename__ = "external_statement_holdings"
+
+    account_label = Column(String, primary_key=True)
+    ticker = Column(String, primary_key=True)
+    shares = Column(Float, nullable=False)
+    avg_cost = Column(Float, nullable=True)            # null = basis unknown (enter manually)
+    statement_date = Column(String, nullable=False)    # YYYY-MM-DD
+    source = Column(String, nullable=False, default="pdf")  # 'pdf' | 'csv-seed' | 'manual'
+    created_at = Column(String, nullable=False)
+
+
 class ExternalOrder(Base):
     __tablename__ = "external_orders"
 
