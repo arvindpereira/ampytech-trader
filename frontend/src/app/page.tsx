@@ -5420,7 +5420,7 @@ export default function Home() {
                       </tbody>
                     </table>
                     <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                      {externalWargame.lookback_years}-yr buy-and-hold of each mode&rsquo;s target on your current holdings (as of {externalWargame.as_of}). {externalWargame.price_coverage_note} Low coverage ⇒ much of the target had no price history and is treated as cash.
+                      {externalWargame.lookback_years}-yr, monthly-rebalanced to each mode&rsquo;s target (as of {externalWargame.as_of}). Names enter when they begin trading; weight waits in cash until then. Coverage = share of the target that was investable — the rest is the strategy&rsquo;s own cash.
                     </div>
                   </>
                 );
