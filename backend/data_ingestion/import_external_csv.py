@@ -275,10 +275,12 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
 
     lots_written = 0
     zero_basis = 0
+    held_tickers = set()
     for ticker, lots in positions.items():
         for lot in lots:
             if lot["qty"] > 1e-9:
                 note = lot.get("notes") or "Parsed from Robinhood CSV transaction history"
+                held_tickers.add(ticker)
                 if lot["price"] <= 0:
                     zero_basis += 1
                 cursor.execute(
@@ -318,6 +320,7 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
         "orders_inserted": orders_inserted,
         "cash": conn_cash,
         "zero_basis_lots": zero_basis,
+        "tickers": sorted(held_tickers),
         "reconciliation": notes,
     }
     print(f"[import_robinhood_csv] {account_label}: {lots_written} lots, {orders_inserted} orders, "

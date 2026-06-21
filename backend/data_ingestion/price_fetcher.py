@@ -39,6 +39,9 @@ def map_ticker_to_yahoo(ticker):
         return ticker[2:].replace("USD", "-USD")
     elif ticker.startswith("C:"):
         return ticker[2:] + "=X"
+    # Class shares use a dash on Yahoo (BRK.B -> BRK-B), but a dot in most broker exports.
+    if "." in ticker:
+        return ticker.replace(".", "-")
     return ticker
 
 

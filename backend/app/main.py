@@ -2441,6 +2441,14 @@ async def import_external_portfolio_pdf(
             result = import_robinhood_csv(data, override_account=override_account)
             if result.get("status") != "success":
                 raise HTTPException(status_code=422, detail=result.get("detail", "Could not parse CSV"))
+            # Held names are often outside the trade universe (no prices), so they'd otherwise be
+            # valued at cost basis. Pull current daily prices so holdings value is accurate.
+            if result.get("tickers"):
+                try:
+                    from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+                    fetch_equity_advisor_prices(db, tickers=result["tickers"])
+                except Exception as e:
+                    print(f"External price fetch after CSV import failed (non-fatal): {e}")
             return result
         except HTTPException:
             raise
