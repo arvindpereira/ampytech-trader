@@ -25,5 +25,7 @@ google-auth-httplib2
 google-auth-oauthlib
 
 # Robinhood API Sync Integration
-robin-stocks==3.2.0
+# Local vetted version (uncomment and install via pip when ready)
+# -e /Users/arvind/code/robin_stocks
 pyotp==2.9.0
+

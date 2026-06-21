@@ -5,6 +5,17 @@ import os
 import tempfile
 from datetime import datetime
 
+# Safe dynamic fallback for robin_stocks if not installed
+try:
+    import robin_stocks
+except ImportError:
+    from unittest.mock import MagicMock
+    mock_rs = MagicMock()
+    sys.modules['robin_stocks'] = mock_rs
+    sys.modules['robin_stocks.robinhood'] = mock_rs.robinhood
+    sys.modules['robin_stocks.robinhood.account'] = mock_rs.robinhood.account
+    sys.modules['robin_stocks.robinhood.orders'] = mock_rs.robinhood.orders
+
 # Adjust path to import app modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("DATA_STORAGE_DIR", tempfile.mkdtemp(prefix="ampy_test_db_"))

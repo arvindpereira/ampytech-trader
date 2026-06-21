@@ -187,11 +187,12 @@ def run_valuation_fetcher():
         db.commit()
     print("Fetching FRED series for Buffett Indicator...")
     gdp_df = fetch_fred_series("GDP")
-    wilshire_df = fetch_fred_series("WILL5000PR")
-
-    # Fallback if Wilshire 5000 is not available on FRED (removed in June 2024)
-    if wilshire_df.empty:
-        print("  ⚠ Wilshire 5000 is unavailable from FRED. Falling back to SPY close * 100 proxy from database...")
+    wilshire_df = fetch_fred_series("SP500")
+    if not wilshire_df.empty:
+        # Scale S&P 500 index by 10x to approximate Wilshire 5000 index level
+        wilshire_df["value"] = wilshire_df["value"] * 10.0
+    else:
+        print("  ⚠ SP500 is unavailable from FRED. Falling back to SPY close * 100 proxy from database...")
         spy_prices = db.query(DailyPrice.date, DailyPrice.close).filter(
             DailyPrice.ticker == "SPY"
         ).order_by(DailyPrice.date.asc()).all()

@@ -3060,7 +3060,13 @@ class RobinhoodSyncRequest(BaseModel):
 def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
     import builtins
     import pyotp
-    import robin_stocks.robinhood as r
+    try:
+        import robin_stocks.robinhood as r
+    except ImportError:
+        raise HTTPException(
+            status_code=400,
+            detail="Robinhood API sync is temporarily disabled because the local 'robin_stocks' package is not installed."
+        )
     from datetime import datetime
 
     # Create account if it doesn't exist
