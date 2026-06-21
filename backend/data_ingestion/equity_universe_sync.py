@@ -1,8 +1,8 @@
-"""Keep Equity Advisor holdings in the data pipeline without letting the bot trade them.
+"""Keep all external EquityLot holdings in the data pipeline without auto-trading them.
 
-External RSU/ESPP names (e.g. PINS, ADBE) are synced into `universe_tickers` with strategy='hold'
-so prices, news, fundamentals, and models all see them. Tickers flagged for auto-trade blocking
-(default: any name with RSU lots — harvest/wash-sale protection) get a permanent `TradingBlock`.
+Imported brokerage holdings and RSU/ESPP names are synced into `universe_tickers` with
+strategy='hold' so prices, news, fundamentals, and models all see them. Tickers flagged for
+auto-trade blocking (default: names with RSU lots) get a permanent `TradingBlock`.
 
 All preferences below live in SQLite (backed up by `make backup` / `make db-backup`):
   - equity_lots, equity_vest_schedules, equity_auto_trade_blocks, tax_profile, trading_blocks
@@ -142,8 +142,13 @@ def sync_equity_trading_blocks(db, blocked_tickers: list[str] | None = None):
     db.commit()
 
 
-def sync_equity_advisor_universe(db) -> dict:
-    """Add equity holdings to universe_tickers (strategy=hold) and sync trade blocks."""
+def sync_equity_lot_universe(db) -> dict:
+    """Union every externally held EquityLot ticker into the shared model/data universe.
+
+    Existing rows keep their explicit strategy assignment. Newly discovered external holdings
+    default to ``hold`` so data collection and model training include them without authorizing
+    automated trading.
+    """
     tickers = equity_lot_tickers(db)
     added = []
     for ticker in tickers:
@@ -153,12 +158,20 @@ def sync_equity_advisor_universe(db) -> dict:
             added.append(ticker)
     db.commit()
 
+    if added:
+        print(f"External holdings universe sync: added {added} as strategy=hold")
+    return {"added": added, "held": tickers}
+
+
+def sync_equity_advisor_universe(db) -> dict:
+    """Sync all external holdings into the universe, then maintain Equity Advisor trade blocks."""
+    universe = sync_equity_lot_universe(db)
+    tickers = universe["held"]
+
     blocked = get_equity_auto_trade_blocks(db)
     sync_equity_trading_blocks(db, blocked)
 
-    if added:
-        print(f"Equity Advisor universe sync: added {added} as strategy=hold (data pipeline only)")
-    return {"added": added, "held": tickers, "auto_trade_blocked": blocked}
+    return {**universe, "auto_trade_blocked": blocked}
 
 
 def equity_advisor_table_counts(db) -> dict:

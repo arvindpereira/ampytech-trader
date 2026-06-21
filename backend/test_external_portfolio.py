@@ -10,7 +10,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("DATA_STORAGE_DIR", tempfile.mkdtemp(prefix="ampy_test_db_"))
 
 from app.database import (
-    init_db, SessionLocal, EquityLot, ExternalAccount, ExternalOrder, ExternalTransaction, RecentPrice
+    init_db, SessionLocal, EquityLot, ExternalAccount, ExternalOrder, ExternalTransaction,
+    RecentPrice, UniverseTicker,
 )
 from test_db_guard import assert_isolated_db
 from data_ingestion.external_importer import (
@@ -19,8 +20,11 @@ from data_ingestion.external_importer import (
     detect_broker_and_type, import_external_pdf
 )
 from app.main import (
-    confirm_external_order, get_external_positions, get_external_suggestions, reconcile_external_portfolio
+    UniverseRequest, TickerRequest, confirm_external_order, get_external_positions,
+    get_external_suggestions, reconcile_external_portfolio, remove_universe_ticker,
+    update_universe,
 )
+from data_ingestion.equity_universe_sync import sync_equity_lot_universe
 
 
 class TestExternalPortfolio(unittest.TestCase):
@@ -28,6 +32,7 @@ class TestExternalPortfolio(unittest.TestCase):
         assert_isolated_db()
         init_db()
         self.db = SessionLocal()
+        self._universe_rows = [(row.ticker, row.strategy) for row in self.db.query(UniverseTicker).all()]
 
         # Clean up database tables
         self.db.query(EquityLot).delete()
@@ -35,6 +40,7 @@ class TestExternalPortfolio(unittest.TestCase):
         self.db.query(ExternalOrder).delete()
         self.db.query(ExternalTransaction).delete()
         self.db.query(RecentPrice).delete()
+        self.db.query(UniverseTicker).filter(UniverseTicker.ticker == "ZZZZ").delete()
         self.db.commit()
 
     def tearDown(self):
@@ -43,6 +49,9 @@ class TestExternalPortfolio(unittest.TestCase):
         self.db.query(ExternalOrder).delete()
         self.db.query(ExternalTransaction).delete()
         self.db.query(RecentPrice).delete()
+        self.db.query(UniverseTicker).delete()
+        for ticker, strategy in self._universe_rows:
+            self.db.add(UniverseTicker(ticker=ticker, strategy=strategy))
         self.db.commit()
         self.db.close()
 
@@ -145,6 +154,52 @@ class TestExternalPortfolio(unittest.TestCase):
         self.assertEqual(txs[0]["side"], "BUY")
         self.assertEqual(txs[0]["qty"], 10.0)
         self.assertEqual(txs[0]["price"], 180.0)
+
+    def test_external_holding_is_added_to_universe_as_hold(self):
+        self.db.add(EquityLot(
+            ticker="ZZZZ", account_label="External", lot_type="other", shares=3.0,
+            cost_basis_per_share=10.0, acquisition_date="2026-06-01",
+            notes="test", created_at="2026-06-21",
+        ))
+        self.db.commit()
+
+        first = sync_equity_lot_universe(self.db)
+        second = sync_equity_lot_universe(self.db)
+        row = self.db.query(UniverseTicker).filter(UniverseTicker.ticker == "ZZZZ").first()
+        self.assertEqual(first["added"], ["ZZZZ"])
+        self.assertEqual(second["added"], [])
+        self.assertEqual(row.strategy, "hold")
+
+        result = update_universe(UniverseRequest(tickers=["AAPL", "ZZZZ"]), db=self.db)
+        self.assertIn("AAPL", result["tickers"])
+        self.assertIn("ZZZZ", result["tickers"])
+        self.assertEqual(
+            self.db.query(UniverseTicker).filter(UniverseTicker.ticker == "ZZZZ").first().strategy,
+            "hold",
+        )
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as raised:
+            remove_universe_ticker(TickerRequest(ticker="ZZZZ"), db=self.db)
+        self.assertEqual(raised.exception.status_code, 409)
+
+    @unittest.mock.patch("data_ingestion.external_importer.parse_robinhood_transactions", return_value=[])
+    @unittest.mock.patch("data_ingestion.external_importer.parse_robinhood_cash", return_value=100.0)
+    @unittest.mock.patch("data_ingestion.external_importer.parse_robinhood_positions")
+    @unittest.mock.patch("data_ingestion.external_importer.detect_broker_and_type",
+                         return_value=("Robinhood", "positions"))
+    @unittest.mock.patch("data_ingestion.external_importer.extract_pdf_text",
+                         return_value="Robinhood statement")
+    def test_pdf_import_immediately_updates_universe(self, _extract, _detect, positions,
+                                                     _cash, _transactions):
+        positions.return_value = [{
+            "ticker": "ZZZZ", "account_label": "Robinhood", "lot_type": "other",
+            "shares": 2.0, "cost_basis_per_share": 25.0,
+            "acquisition_date": "2026-06-01", "notes": "imported",
+        }]
+        result = import_external_pdf(self.db, b"pdf", filename="statement.pdf")
+        row = self.db.query(UniverseTicker).filter(UniverseTicker.ticker == "ZZZZ").first()
+        self.assertEqual(row.strategy, "hold")
+        self.assertIn("ZZZZ", result["universe_tickers_added"])
 
     def test_confirm_external_order(self):
         # 1. Setup account and prices

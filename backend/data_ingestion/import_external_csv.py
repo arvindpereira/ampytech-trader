@@ -363,6 +363,14 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
                 )
                 lots_written += 1
 
+    # Keep imported holdings in the shared price/model universe even when this importer is run
+    # directly from the CLI. Preserve any explicit strategy assignment already on the row.
+    for ticker in held_tickers:
+        cursor.execute(
+            "INSERT OR IGNORE INTO universe_tickers (ticker, strategy) VALUES (?, ?)",
+            (ticker, "hold"),
+        )
+
     # Reconciled order history (filled Buy/Sell only).
     orders_inserted = 0
     for row in rows:

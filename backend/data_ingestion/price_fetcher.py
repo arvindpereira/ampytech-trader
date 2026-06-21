@@ -613,7 +613,7 @@ def fetch_defensive_etf_prices(force=False):
 
 
 def equity_lot_tickers(db):
-    """Distinct tickers held in the Equity Advisor lot table (may be outside the trade universe)."""
+    """Distinct tickers across all external-account and Equity Advisor lots."""
     from app.database.models import EquityLot
     rows = db.query(EquityLot.ticker).distinct().all()
     return sorted({r[0].upper().strip() for r in rows if r[0]})
@@ -669,7 +669,7 @@ def ensure_equity_daily_prices(db, ticker, force=False):
 
 
 def fetch_equity_advisor_prices(db=None, tickers=None, force=False):
-    """Fetch/update daily_prices for all Equity Advisor holdings (external RSU/ESPP tickers)."""
+    """Fetch/update daily_prices for all external EquityLot holdings."""
     close_db = False
     if db is None:
         init_db()

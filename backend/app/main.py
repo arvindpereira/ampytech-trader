@@ -136,6 +136,14 @@ def _start_backfill(ticker):
 @app.on_event("startup")
 def startup_event():
     init_db()
+    # Heal the shared universe for holdings imported before this release or via offline scripts.
+    from app.database import SessionLocal
+    from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+    db = SessionLocal()
+    try:
+        sync_equity_lot_universe(db)
+    finally:
+        db.close()
 
 @app.get("/api/jobs")
 def get_jobs():
@@ -1326,12 +1334,19 @@ def get_supported_universe():
 
 @app.post("/api/universe")
 def update_universe(req: UniverseRequest, db=Depends(get_db)):
+    """Replace explicit tickers while retaining the union of all externally held names."""
+    prior_strategies = {row.ticker: (row.strategy or "swing")
+                        for row in db.query(UniverseTicker).all()}
     db.query(UniverseTicker).delete()
-    for t in req.tickers:
-        db.add(UniverseTicker(ticker=t.upper().strip()))
+    explicit = sorted({t.upper().strip() for t in req.tickers if t and t.strip()})
+    for ticker in explicit:
+        db.add(UniverseTicker(ticker=ticker, strategy=prior_strategies.get(ticker, "swing")))
     db.commit()
+    from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+    sync_equity_lot_universe(db)
     clear_suggestions_cache()
-    return {"status": "success", "tickers": req.tickers}
+    union = sorted(row.ticker for row in db.query(UniverseTicker).all())
+    return {"status": "success", "tickers": union, "explicit_tickers": explicit}
 
 def _retrain_status(db):
     """Whether tier overrides postdate the trained models (so a retrain would bake them in)."""
@@ -1633,6 +1648,14 @@ def backfill_universe_ticker(req: TickerRequest, db=Depends(get_db)):
 def remove_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     """Stop monitoring a ticker (remove from the universe). Intended for tickers with no open position."""
     ticker = req.ticker.upper().strip()
+    held_externally = db.query(EquityLot).filter(
+        EquityLot.ticker == ticker, EquityLot.shares > 0
+    ).first()
+    if held_externally:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{ticker} is held in an external account and must remain in the data universe",
+        )
     row = db.query(UniverseTicker).filter(UniverseTicker.ticker == ticker).first()
     if row:
         db.delete(row)
@@ -2528,7 +2551,11 @@ async def import_external_portfolio_pdf(
 def _refresh_external_prices(db, account_label, tickers=None):
     """Fetch current daily prices for an external account's holdings (or an explicit ticker list)."""
     try:
+        from data_ingestion.equity_universe_sync import sync_equity_lot_universe
         from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+        universe_sync = sync_equity_lot_universe(db)
+        if universe_sync["added"]:
+            clear_suggestions_cache()
         if not tickers and account_label:
             tickers = [t[0] for t in db.query(EquityLot.ticker)
                        .filter(EquityLot.account_label == account_label).distinct().all() if t[0]]
@@ -2862,10 +2889,15 @@ def reconcile_external_portfolio(account_label: str, db=Depends(get_db)):
         new_trades_imported += 1
 
     db.commit()
+    from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+    universe_sync = sync_equity_lot_universe(db)
+    if universe_sync["added"]:
+        clear_suggestions_cache()
     return {
         "status": "success",
         "reconciled_orders": reconciled_orders_count,
-        "new_trades_imported": new_trades_imported
+        "new_trades_imported": new_trades_imported,
+        "universe_tickers_added": universe_sync["added"],
     }
 
 
@@ -3053,6 +3085,10 @@ def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
             txs_inserted += 1
 
         db.commit()
+        from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+        universe_sync = sync_equity_lot_universe(db)
+        if universe_sync["added"]:
+            clear_suggestions_cache()
         r.logout()
 
         return {
@@ -3060,7 +3096,8 @@ def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
             "account_label": req.account_label,
             "cash": acct.cash,
             "positions_synced": inserted_lots,
-            "transactions_synced": txs_inserted
+            "transactions_synced": txs_inserted,
+            "universe_tickers_added": universe_sync["added"],
         }
     except Exception as e:
         db.rollback()

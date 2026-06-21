@@ -569,6 +569,8 @@ def import_external_pdf(
                 txs_inserted += 1
 
         db.commit()
+        from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+        universe_sync = sync_equity_lot_universe(db)
 
         # Update the statement anchor (cost basis + share-count snapshot) for this account so future
         # CSV transaction imports reconstruct holdings against the latest real statement instead of a
@@ -596,7 +598,8 @@ def import_external_pdf(
             "transactions_imported": txs_inserted,
             "anchor_holdings": anchor_written,
             "format": parsed_data["format"],
-            "warnings": parsed_data["warnings"]
+            "warnings": parsed_data["warnings"],
+            "universe_tickers_added": universe_sync["added"],
         }
     else:
         # Ingest transactions, deduplicating against existing logs
