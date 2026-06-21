@@ -2428,11 +2428,24 @@ async def import_external_portfolio_pdf(
     override_account: Optional[str] = Form(None),
     db=Depends(get_db)
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Upload a .pdf export")
+    name = (file.filename or "").lower()
+    if not (name.endswith(".pdf") or name.endswith(".csv")):
+        raise HTTPException(status_code=400, detail="Upload a .pdf statement or a .csv transaction export")
     data = await file.read()
     if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="PDF too large (max 15 MB)")
+        raise HTTPException(status_code=400, detail="File too large (max 15 MB)")
+    # Robinhood transaction CSV → reconstruct holdings (with the 2026-05-31 statement as basis/snapshot anchor).
+    if name.endswith(".csv"):
+        try:
+            from data_ingestion.import_external_csv import import_robinhood_csv
+            result = import_robinhood_csv(data, override_account=override_account)
+            if result.get("status") != "success":
+                raise HTTPException(status_code=422, detail=result.get("detail", "Could not parse CSV"))
+            return result
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Could not parse CSV: {e}")
     try:
         from data_ingestion.external_importer import import_external_pdf
         result = import_external_pdf(
@@ -2898,22 +2911,22 @@ def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
         for order in recent_orders:
             if order.get("state") != "filled":
                 continue
-            
+
             qty = float(order.get("cumulative_quantity") or 0.0)
             if qty <= 0:
                 continue
-            
+
             price = float(order.get("average_price") or 0.0)
             side = order.get("side", "").upper()
             created_at_str = order.get("last_transaction_at") or order.get("created_at") or ""
             if not created_at_str:
                 continue
-                
+
             date_str = created_at_str[:10]
             instrument = order.get("instrument")
             if not instrument:
                 continue
-                
+
             if instrument not in instrument_cache:
                 try:
                     symbol = r.get_symbol_by_url(instrument)
@@ -2921,7 +2934,7 @@ def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
                         instrument_cache[instrument] = symbol.upper()
                 except Exception:
                     continue
-            
+
             ticker = instrument_cache.get(instrument)
             if not ticker:
                 continue
