@@ -5214,14 +5214,15 @@ export default function Home() {
                   <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Account Position Holdings</h3>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <label className="toggle-btn" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
-                      <Upload size={14} /> Import Statement PDF
+                      <Upload size={14} /> Import statement / RH CSV
                       <input
                         type="file"
-                        accept=".pdf"
+                        accept=".pdf,.csv"
                         onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
-                          setReconcileStatus('Uploading and parsing statement...');
+                          const isCsv = file.name.toLowerCase().endsWith('.csv');
+                          setReconcileStatus(isCsv ? 'Uploading and reconstructing holdings from CSV…' : 'Uploading and parsing statement…');
                           const formData = new FormData();
                           formData.append('file', file);
                           formData.append('override_account', selectedAccount);
@@ -5232,7 +5233,11 @@ export default function Home() {
                             });
                             if (res.ok) {
                               const r = await res.json();
-                              setReconcileStatus(`Success: Ingested ${r.parsed_count} positions. Cash updated to ${money(r.cash_updated || 0)}.`);
+                              if (r.lots_written != null) {
+                                setReconcileStatus(`Imported ${r.account_label}: ${r.lots_written} lots, cash ${money(r.cash || 0)}.${r.zero_basis_lots ? ` ⚠ ${r.zero_basis_lots} lots have no cost basis.` : ''}`);
+                              } else {
+                                setReconcileStatus(`Success: Ingested ${r.parsed_count} positions. Cash updated to ${money(r.cash_updated || 0)}.`);
+                              }
                               fetchExternalAccounts();
                               if (r.account_label) {
                                 setSelectedAccount(r.account_label);
@@ -5242,11 +5247,12 @@ export default function Home() {
                               }
                             } else {
                               const err = await res.json();
-                              setReconcileStatus(`Import error: ${err.detail || 'Failed to parse Statement PDF.'}`);
+                              setReconcileStatus(`Import error: ${err.detail || 'Failed to parse upload.'}`);
                             }
                           } catch (err: any) {
                             setReconcileStatus(`Import failed: ${err.message}`);
                           }
+                          e.target.value = '';
                         }}
                         style={{ display: 'none' }}
                       />
