@@ -2677,6 +2677,56 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
                 warnings=warnings + order_warnings)
     return base
 
+
+def _external_account_context(db, acct):
+    """Gather the inputs the per-account strategy / war-game need (holdings weights, tiers, cached
+    model signals, buckets, live crash coefficient)."""
+    from app.database import TickerClassification
+    from app.services.account_strategy import effective_buckets
+    cash = float(acct.cash)
+    lots = db.query(EquityLot).filter(EquityLot.account_label == acct.account_label).all()
+    current_values, pv = {}, cash
+    for lot in lots:
+        price, _ = _external_price_with_source(db, lot.ticker, lot.cost_basis_per_share)
+        current_values[lot.ticker] = current_values.get(lot.ticker, 0.0) + lot.shares * price
+        pv += lot.shares * price
+    current_weights = {t: v / pv for t, v in current_values.items()} if pv > 0 else {}
+    classifications = {}
+    if current_weights:
+        for c in db.query(TickerClassification).filter(
+                TickerClassification.ticker.in_(list(current_weights.keys()))).all():
+            classifications[c.ticker] = {"tier": c.tier_override or c.tier, "volatility": c.volatility}
+    coef = None
+    try:
+        from ml_engine.defensive_strategist import build_defensive_playbook
+        coef = build_defensive_playbook(preset_name="balanced").get("de_risk_coefficient")
+    except Exception:
+        coef = None
+    return {"portfolio_value": pv, "current_weights": current_weights,
+            "classifications": classifications, "snapshot": _latest_cached_model_signals(),
+            "buckets": effective_buckets(acct, get_strategy_buckets(db)), "de_risk_coefficient": coef}
+
+
+@app.post("/api/external/accounts/{account_label}/wargame")
+def external_account_wargame(account_label: str, lookback_years: int = 3, db=Depends(get_db)):
+    """Forward-walk the account's strategy modes (growth / de-risk / all-weather / barbell) over a
+    recent window of real prices and compare risk/return."""
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not 1 <= int(lookback_years) <= 10:
+        raise HTTPException(status_code=400, detail="lookback_years must be between 1 and 10")
+    ctx = _external_account_context(db, acct)
+    if ctx["portfolio_value"] <= 0 or not ctx["current_weights"]:
+        return {"error": "Account has no priced holdings to simulate.", "account_mode": acct.strategy_mode}
+    from app.services.account_wargame import run_account_wargame
+    result = run_account_wargame(db, account_label, ctx["current_weights"], ctx["classifications"],
+                                 ctx["snapshot"], ctx["buckets"], ctx["de_risk_coefficient"],
+                                 acct.aggression, lookback_years=int(lookback_years))
+    result["account_mode"] = acct.strategy_mode
+    result["aggression"] = acct.aggression
+    return result
+
 @app.post("/api/external/orders/confirm")
 def confirm_external_order(req: ConfirmOrderRequest, account_label: str, db=Depends(get_db)):
     acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()

@@ -217,8 +217,9 @@ def build_account_target(current_weights, mode, aggression, buckets, snapshot=No
     total = sum(target.values()) + cash
     if not math.isfinite(total) or total <= 0:
         raise StrategyValidationError("Target allocation is empty or invalid")
-    target = {ticker: weight / total for ticker, weight in target.items()}
-    cash /= total
+    if abs(total - 1.0) > 1e-9:   # only renormalize when meaningfully off (avoids float drift)
+        target = {ticker: weight / total for ticker, weight in target.items()}
+        cash /= total
     reasons = {}
     for ticker in target:
         in_growth, in_defensive = ticker in growth, ticker in defensive

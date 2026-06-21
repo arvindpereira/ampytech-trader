@@ -628,6 +628,9 @@ export default function Home() {
   const [externalSuggestions, setExternalSuggestions] = useState<any[]>([]);
   const [externalStrategyResult, setExternalStrategyResult] = useState<any>(null);
   const [externalStrategySaving, setExternalStrategySaving] = useState<boolean>(false);
+  const [externalWargame, setExternalWargame] = useState<any>(null);
+  const [externalWargameLoading, setExternalWargameLoading] = useState<boolean>(false);
+  const [wargameYears, setWargameYears] = useState<number>(3);
   const [externalStrategyError, setExternalStrategyError] = useState<string>('');
   const [externalStrategyEdit, setExternalStrategyEdit] = useState({
     strategy_mode: 'growth', aggression: 60, swing: '100', longterm: '0', high_risk: '0'
@@ -663,12 +666,27 @@ export default function Home() {
     }
   };
 
+  const runExternalWargame = async (acctLabel: string, years: number) => {
+    if (!acctLabel) return;
+    setExternalWargameLoading(true);
+    setExternalWargame(null);
+    try {
+      const res = await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(acctLabel)}/wargame?lookback_years=${years}`), { method: 'POST' });
+      if (res.ok) setExternalWargame(await res.json());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setExternalWargameLoading(false);
+    }
+  };
+
   const fetchExternalPositionsAndSuggestions = async (acctLabel: string) => {
     if (!acctLabel) return;
     try {
       setExternalSuggestionsLoading(true);
       setExternalSuggestions([]);
       setExternalStrategyResult(null);
+      setExternalWargame(null);
       const [posRes, suggRes] = await Promise.all([
         fetch(apiUrl(`/api/external/positions?account_label=${encodeURIComponent(acctLabel)}`)),
         fetch(apiUrl(`/api/external/suggestions?account_label=${encodeURIComponent(acctLabel)}`))
@@ -5339,6 +5357,72 @@ export default function Home() {
                       <div key={index} style={{ fontSize: '11px', color: 'var(--color-gold)' }}>⚠ {warning}</div>
                     ))}
                   </div>
+                );
+              })()}
+            </div>
+
+            {/* Per-account war-game: forward-walk each strategy mode over recent prices */}
+            <div className="glass-card" style={{ padding: '18px', display: 'grid', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <h3 style={{ margin: 0, fontSize: '15px' }}>Strategy war-game</h3>
+                <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>How each mode (at this account&rsquo;s aggression) would have performed on your holdings.</span>
+                <select value={wargameYears} onChange={(e) => setWargameYears(Number(e.target.value))}
+                  style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '6px' }}>
+                  {[1, 2, 3, 5].map((y) => <option key={y} value={y}>{y}-year lookback</option>)}
+                </select>
+                <button className="toggle-btn" disabled={externalWargameLoading || !selectedAccount}
+                  onClick={() => runExternalWargame(selectedAccount, wargameYears)}>
+                  {externalWargameLoading ? 'Simulating…' : 'Run war-game'}
+                </button>
+              </div>
+              {externalWargame && externalWargame.error && (
+                <div style={{ fontSize: '12px', color: 'var(--color-gold)' }}>⚠ {externalWargame.error}</div>
+              )}
+              {externalWargame && externalWargame.results && (() => {
+                const COLORS: any = { de_risk: '#38BDF8', growth: '#10B981', all_weather: '#F59E0B', barbell: '#A78BFA' };
+                const dates = externalWargame.dates || [];
+                const chart = dates.map((d: string, i: number) => {
+                  const row: any = { date: d };
+                  externalWargame.results.forEach((r: any) => { row[r.mode] = +(((r.curve[i] ?? 1) - 1) * 100).toFixed(2); });
+                  return row;
+                });
+                const sorted = [...externalWargame.results].sort((a: any, b: any) => b.metrics.total_return - a.metrics.total_return);
+                return (
+                  <>
+                    <div style={{ height: 240 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chart} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                          <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} minTickGap={48} />
+                          <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={(v) => `${v}%`} />
+                          <Tooltip contentStyle={{ background: 'rgba(16,20,38,0.97)', border: '1px solid var(--border-glass)', fontSize: 12 }}
+                            formatter={(v: any, name: any) => [`${v}%`, externalWargame.results.find((r: any) => r.mode === name)?.label || name]} />
+                          <Legend formatter={(v: any) => externalWargame.results.find((r: any) => r.mode === v)?.label || v} wrapperStyle={{ fontSize: 11 }} />
+                          {externalWargame.results.map((r: any) => (
+                            <Line key={r.mode} type="monotone" dataKey={r.mode} stroke={COLORS[r.mode] || '#888'}
+                              strokeWidth={r.mode === externalWargame.account_mode ? 3 : 1.5} dot={false} />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <table className="trade-table">
+                      <thead><tr><th>Strategy</th><th>Return</th><th>Max DD</th><th>Sharpe</th><th>Coverage</th></tr></thead>
+                      <tbody>
+                        {sorted.map((r: any) => (
+                          <tr key={r.mode} style={r.mode === externalWargame.account_mode ? { background: 'rgba(56,189,248,0.08)' } : {}}>
+                            <td><span style={{ color: COLORS[r.mode] }}>●</span> {r.label}{r.mode === externalWargame.account_mode ? ' (current)' : ''}</td>
+                            <td style={{ color: r.metrics.total_return >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{r.metrics.total_return >= 0 ? '+' : ''}{r.metrics.total_return.toFixed(1)}%</td>
+                            <td style={{ color: 'var(--color-sell)' }}>−{r.metrics.max_drawdown.toFixed(1)}%</td>
+                            <td>{r.metrics.sharpe.toFixed(2)}</td>
+                            <td style={{ color: r.coverage < 0.6 ? 'var(--color-gold)' : 'var(--text-secondary)' }}>{(r.coverage * 100).toFixed(0)}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {externalWargame.lookback_years}-yr buy-and-hold of each mode&rsquo;s target on your current holdings (as of {externalWargame.as_of}). {externalWargame.price_coverage_note} Low coverage ⇒ much of the target had no price history and is treated as cash.
+                    </div>
+                  </>
                 );
               })()}
             </div>
