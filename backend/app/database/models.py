@@ -461,6 +461,9 @@ class ExternalAccount(Base):
     account_label = Column(String, primary_key=True)
     cash = Column(Float, nullable=False, default=0.0)
     risk_profile = Column(String, nullable=False, default="balanced")  # 'conservative', 'balanced', 'aggressive'
+    strategy_mode = Column(String, nullable=False, default="growth")
+    aggression = Column(Integer, nullable=False, default=60)
+    buckets_json = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
     updated_at = Column(String, nullable=False)
 

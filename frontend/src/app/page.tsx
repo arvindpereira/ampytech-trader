@@ -626,6 +626,12 @@ export default function Home() {
   const [externalPositions, setExternalPositions] = useState<any[]>([]);
   const [expandedPositions, setExpandedPositions] = useState<Record<string, boolean>>({});
   const [externalSuggestions, setExternalSuggestions] = useState<any[]>([]);
+  const [externalStrategyResult, setExternalStrategyResult] = useState<any>(null);
+  const [externalStrategySaving, setExternalStrategySaving] = useState<boolean>(false);
+  const [externalStrategyError, setExternalStrategyError] = useState<string>('');
+  const [externalStrategyEdit, setExternalStrategyEdit] = useState({
+    strategy_mode: 'growth', aggression: 60, swing: '100', longterm: '0', high_risk: '0'
+  });
   const [externalSuggestionsLoading, setExternalSuggestionsLoading] = useState<boolean>(false);
   const [reconcileStatus, setReconcileStatus] = useState<string>('');
   const [externalConfirmOrder, setExternalConfirmOrder] = useState<any>(null);
@@ -661,6 +667,8 @@ export default function Home() {
     if (!acctLabel) return;
     try {
       setExternalSuggestionsLoading(true);
+      setExternalSuggestions([]);
+      setExternalStrategyResult(null);
       const [posRes, suggRes] = await Promise.all([
         fetch(apiUrl(`/api/external/positions?account_label=${encodeURIComponent(acctLabel)}`)),
         fetch(apiUrl(`/api/external/suggestions?account_label=${encodeURIComponent(acctLabel)}`))
@@ -671,6 +679,7 @@ export default function Home() {
       if (suggRes.ok) {
         const data = await suggRes.json();
         setExternalSuggestions(data.suggestions || []);
+        setExternalStrategyResult(data);
       }
     } catch (err) {
       console.error(err);
@@ -690,6 +699,44 @@ export default function Home() {
       fetchExternalPositionsAndSuggestions(selectedAccount);
     }
   }, [selectedAccount, activeTab]);
+
+  useEffect(() => {
+    const acct = externalAccounts.find((a: any) => a.account_label === selectedAccount);
+    if (!acct) return;
+    const buckets = acct.buckets || { swing: 1, longterm: 0, high_risk: 0 };
+    setExternalStrategyEdit({
+      strategy_mode: acct.strategy_mode || 'growth',
+      aggression: acct.aggression ?? 60,
+      swing: String(Math.round((buckets.swing || 0) * 100)),
+      longterm: String(Math.round((buckets.longterm || 0) * 100)),
+      high_risk: String(Math.round((buckets.high_risk || 0) * 100)),
+    });
+  }, [selectedAccount, externalAccounts]);
+
+  const saveExternalStrategy = async (resetBuckets = false) => {
+    setExternalStrategySaving(true);
+    setExternalStrategyError('');
+    const buckets = resetBuckets ? null : {
+      swing: (parseFloat(externalStrategyEdit.swing) || 0) / 100,
+      longterm: (parseFloat(externalStrategyEdit.longterm) || 0) / 100,
+      high_risk: (parseFloat(externalStrategyEdit.high_risk) || 0) / 100,
+    };
+    try {
+      const res = await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(selectedAccount)}/strategy`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy_mode: externalStrategyEdit.strategy_mode,
+          aggression: externalStrategyEdit.aggression, buckets }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Could not save strategy');
+      await fetchExternalAccounts();
+      await fetchExternalPositionsAndSuggestions(selectedAccount);
+    } catch (err: any) {
+      setExternalStrategyError(err.message || 'Could not save strategy');
+    } finally {
+      setExternalStrategySaving(false);
+    }
+  };
 
   const [equityRunning, setEquityRunning] = useState<boolean>(false);
   const [equityProgress, setEquityProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
@@ -5138,7 +5185,7 @@ export default function Home() {
                           onChange={async (e) => {
                             const newCash = parseFloat(e.target.value.replace(/[$,\s]/g, '')) || 0.0;
                             setExternalAccounts(prev => prev.map(a => a.account_label === selectedAccount ? { ...a, cash: newCash } : a));
-                            await fetch(apiUrl(`/api/external/accounts/${selectedAccount}/cash`), {
+                            await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(selectedAccount)}/cash`), {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ cash: newCash })
@@ -5169,44 +5216,97 @@ export default function Home() {
                       </div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Risk Profile</div>
-                      <select
-                        value={currentAcct.risk_profile}
-                        onChange={async (e) => {
-                          const newProfile = e.target.value;
-                          setExternalAccounts(prev => prev.map(a => a.account_label === selectedAccount ? { ...a, risk_profile: newProfile } : a));
-                          await fetch(apiUrl('/api/external/accounts'), {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              account_label: selectedAccount,
-                              cash: currentAcct.cash,
-                              risk_profile: newProfile
-                            })
-                          });
-                          fetchExternalPositionsAndSuggestions(selectedAccount);
-                        }}
-                        style={{
-                          background: 'rgba(0,0,0,0.3)',
-                          color: 'var(--text-primary)',
-                          border: '1px solid var(--border-glass)',
-                          borderRadius: '6px',
-                          padding: '6px',
-                          fontSize: '13px',
-                          fontWeight: 600,
-                          marginTop: '6px',
-                          width: '100%',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <option value="conservative">Conservative</option>
-                        <option value="balanced">Balanced</option>
-                        <option value="aggressive">Aggressive</option>
-                      </select>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Active Strategy</div>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '7px' }}>
+                        {(currentAcct.strategy_mode || 'growth').replace('_', ' ')} · {currentAcct.aggression ?? 60}/100
+                      </div>
                     </div>
                   </div>
                 );
               })()}
+            </div>
+
+            {/* Per-account model allocation policy */}
+            <div className="glass-card" style={{ padding: '20px', display: 'grid', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Account Strategy</h3>
+                  <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Builds proposals only. Saving this policy never executes a trade.
+                  </p>
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  {externalAccounts.find((a: any) => a.account_label === selectedAccount)?.inherits_global_buckets
+                    ? 'Using global buckets' : 'Custom account buckets'}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(260px, 2fr)', gap: '18px' }}>
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  <label style={{ display: 'grid', gap: '5px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Allocation mode
+                    <select value={externalStrategyEdit.strategy_mode}
+                      onChange={(e) => setExternalStrategyEdit(prev => ({ ...prev, strategy_mode: e.target.value }))}
+                      style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
+                      <option value="growth">Model growth</option>
+                      <option value="glide_path">Crash-risk glide path</option>
+                      <option value="all_weather">Diversified defensive template</option>
+                      <option value="barbell">T-bill-heavy barbell template</option>
+                    </select>
+                  </label>
+                  <div style={{ fontSize: '11px', lineHeight: 1.45, color: 'var(--text-secondary)' }}>
+                    {externalStrategyEdit.strategy_mode === 'growth' && 'Uses shared model candidates; the defensive endpoint is cash.'}
+                    {externalStrategyEdit.strategy_mode === 'glide_path' && 'Tilts toward the current tradeable safe-asset template.'}
+                    {externalStrategyEdit.strategy_mode === 'all_weather' && 'Fixed SPY, Treasury, gold, and commodity template.'}
+                    {externalStrategyEdit.strategy_mode === 'barbell' && '90% BIL and 10% QQQ endpoint; no options or tail hedge.'}
+                  </div>
+                  <label style={{ display: 'grid', gap: '5px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Aggression: <strong style={{ color: 'var(--text-primary)' }}>{externalStrategyEdit.aggression}</strong>
+                    <input type="range" min={0} max={100} value={externalStrategyEdit.aggression}
+                      onChange={(e) => setExternalStrategyEdit(prev => ({ ...prev, aggression: Number(e.target.value) }))} />
+                    <span style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}><span>Defensive endpoint</span><span>Growth endpoint</span></span>
+                  </label>
+                </div>
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                    {(['swing', 'longterm', 'high_risk'] as const).map((key) => (
+                      <label key={key} style={{ display: 'grid', gap: '5px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        {key === 'swing' ? 'Swing %' : key === 'longterm' ? 'Long-term %' : 'High-risk % (≤5)'}
+                        <input type="number" min={0} max={key === 'high_risk' ? 5 : 100} step="1"
+                          value={externalStrategyEdit[key]}
+                          onChange={(e) => setExternalStrategyEdit(prev => ({ ...prev, [key]: e.target.value }))}
+                          style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }} />
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <button className="toggle-btn" disabled={externalStrategySaving} onClick={() => saveExternalStrategy(false)}
+                      style={{ background: 'rgba(0,242,254,0.08)', borderColor: 'var(--color-buy)' }}>
+                      {externalStrategySaving ? 'Saving…' : 'Save & regenerate'}
+                    </button>
+                    <button className="toggle-btn" disabled={externalStrategySaving} onClick={() => saveExternalStrategy(true)}>
+                      Reset buckets to global
+                    </button>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      Unallocated bucket capacity remains cash.
+                    </span>
+                  </div>
+                  {externalStrategyError && <div style={{ fontSize: '12px', color: 'var(--color-sell)' }}>{externalStrategyError}</div>}
+                </div>
+              </div>
+              {externalStrategyResult && (
+                <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px', display: 'grid', gap: '8px' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', fontSize: '11px' }}>
+                    {Object.entries(externalStrategyResult.target_weights || {}).sort((a: any, b: any) => b[1] - a[1]).slice(0, 8).map(([ticker, weight]: any) => (
+                      <span key={ticker} style={{ padding: '4px 7px', borderRadius: '5px', background: 'rgba(255,255,255,0.04)' }}>{ticker} {(weight * 100).toFixed(1)}%</span>
+                    ))}
+                    <span style={{ padding: '4px 7px', borderRadius: '5px', background: 'rgba(16,185,129,0.08)' }}>Cash {((externalStrategyResult.cash_target_weight || 0) * 100).toFixed(1)}%</span>
+                    <span style={{ padding: '4px 7px', color: 'var(--text-secondary)' }}>Turnover {((externalStrategyResult.turnover_pct || 0) * 100).toFixed(1)}%</span>
+                  </div>
+                  {(externalStrategyResult.warnings || []).map((warning: string, index: number) => (
+                    <div key={index} style={{ fontSize: '11px', color: 'var(--color-gold)' }}>⚠ {warning}</div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Split layout: Holdings/Lots vs suggestions */}

@@ -1,4 +1,5 @@
 import unittest
+import unittest.mock
 import sys
 import os
 import tempfile
@@ -232,19 +233,19 @@ class TestExternalPortfolio(unittest.TestCase):
     @unittest.mock.patch('robin_stocks.robinhood.logout')
     def test_sync_robinhood_api(self, mock_logout, mock_get_symbol, mock_get_orders, mock_build_holdings, mock_load_phoenix, mock_login):
         from app.main import sync_robinhood_api, RobinhoodSyncRequest
-        
+
         # 1. Mock cash sweep return
         mock_load_phoenix.return_value = {
             "cash_available_from_sweep": {"amount": "10028.02"},
             "cash": {"amount": "257932.92"}
         }
-        
+
         # 2. Mock build holdings return
         mock_build_holdings.return_value = {
             "AAPL": {"quantity": "36.0", "average_buy_price": "150.0"},
             "MSFT": {"quantity": "24.0", "average_buy_price": "400.0"}
         }
-        
+
         # 3. Mock get orders return
         mock_get_orders.return_value = [
             {
@@ -259,7 +260,7 @@ class TestExternalPortfolio(unittest.TestCase):
             }
         ]
         mock_get_symbol.return_value = "AAPL"
-        
+
         # 4. Construct request
         req = RobinhoodSyncRequest(
             username="test@example.com",
@@ -267,26 +268,26 @@ class TestExternalPortfolio(unittest.TestCase):
             mfa_secret="ABCD EFGH IJKL MNOP",
             account_label="Robinhood"
         )
-        
+
         # 5. Call API handler
         res = sync_robinhood_api(req, db=self.db)
-        
+
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["account_label"], "Robinhood")
         self.assertEqual(res["cash"], 257932.92)
         self.assertEqual(res["positions_synced"], 2)
         self.assertEqual(res["transactions_synced"], 1)
-        
+
         # Verify db matches
         acct = self.db.query(ExternalAccount).filter(ExternalAccount.account_label == "Robinhood").first()
         self.assertEqual(acct.cash, 257932.92)
-        
+
         lots = self.db.query(EquityLot).filter(EquityLot.account_label == "Robinhood").all()
         self.assertEqual(len(lots), 2)
         self.assertEqual(lots[0].ticker, "AAPL")
         self.assertEqual(lots[0].shares, 36.0)
         self.assertEqual(lots[0].cost_basis_per_share, 150.0)
-        
+
         txs = self.db.query(ExternalTransaction).filter(ExternalTransaction.account_label == "Robinhood").all()
         self.assertEqual(len(txs), 1)
         self.assertEqual(txs[0].ticker, "AAPL")

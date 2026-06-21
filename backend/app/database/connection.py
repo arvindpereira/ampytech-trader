@@ -149,6 +149,23 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for vesting_complete on equity_vest_schedules: {em}")
 
+    # 9. Migrate external_accounts: independent strategy configuration
+    try:
+        cols_ext = {c["name"] for c in inspector.get_columns("external_accounts")}
+        migrations = {
+            "strategy_mode": "ALTER TABLE external_accounts ADD COLUMN strategy_mode VARCHAR NOT NULL DEFAULT 'growth'",
+            "aggression": "ALTER TABLE external_accounts ADD COLUMN aggression INTEGER NOT NULL DEFAULT 60",
+            "buckets_json": "ALTER TABLE external_accounts ADD COLUMN buckets_json VARCHAR",
+        }
+        for column, statement in migrations.items():
+            if cols_ext and column not in cols_ext:
+                with engine.connect() as conn:
+                    conn.execute(text(statement))
+                    conn.commit()
+                print(f"Successfully added {column} to external_accounts.")
+    except Exception as em:
+        print(f"Auto-migration check failed for external account strategy columns: {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE

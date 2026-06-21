@@ -981,7 +981,7 @@ def get_backtest_performance(mode: str = "live", db=Depends(get_db)):
 # ==========================================
 # Virtual Alpaca Broker & Holdings Endpoints
 # ==========================================
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 from typing import List, Optional
 
 SIM_DATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "sim_date.txt")
@@ -1379,13 +1379,13 @@ class BucketsRequest(BaseModel):
 @app.post("/api/strategy/buckets")
 def set_strategy_buckets(req: BucketsRequest, db=Depends(get_db)):
     """Set the capital fraction per strategy bucket. Rejected if they sum to more than 100%."""
-    swing = max(0.0, float(req.swing))
-    longterm = max(0.0, float(req.longterm))
-    high_risk = min(HIGH_RISK_CAP, max(0.0, float(req.high_risk)))   # hard-cap the high-risk sleeve
-    if swing + longterm + high_risk > 1.0001:
-        raise HTTPException(status_code=400, detail="Bucket weights cannot exceed 100% of equity.")
-    payload = _json.dumps({"swing": round(swing, 4), "longterm": round(longterm, 4),
-                           "high_risk": round(high_risk, 4)})
+    from app.services.account_strategy import StrategyValidationError, validate_buckets
+    try:
+        buckets = validate_buckets({"swing": req.swing, "longterm": req.longterm,
+                                    "high_risk": req.high_risk})
+    except StrategyValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = _json.dumps({key: round(value, 4) for key, value in buckets.items()})
     row = db.query(AppSetting).filter(AppSetting.key == "bucket_allocations").first()
     if row:
         row.value = payload
@@ -1393,7 +1393,7 @@ def set_strategy_buckets(req: BucketsRequest, db=Depends(get_db)):
         db.add(AppSetting(key="bucket_allocations", value=payload))
     db.commit()
     clear_suggestions_cache()
-    return {"status": "success", "buckets": {"swing": swing, "longterm": longterm}}
+    return {"status": "success", "buckets": buckets}
 
 class TickerStrategyRequest(BaseModel):
     ticker: str
@@ -2295,6 +2295,16 @@ class ExternalAccountRequest(BaseModel):
 class UpdateCashRequest(BaseModel):
     cash: float
 
+class ExternalBucketsRequest(BaseModel):
+    swing: float
+    longterm: float
+    high_risk: float = 0.0
+
+class ExternalStrategyRequest(BaseModel):
+    strategy_mode: str
+    aggression: StrictInt
+    buckets: Optional[ExternalBucketsRequest] = None
+
 class ConfirmOrderRequest(BaseModel):
     ticker: str
     side: str  # 'BUY' | 'SELL'
@@ -2313,8 +2323,26 @@ def _latest_external_price(db, symbol, fallback_price):
         return float(d.close)
     return float(fallback_price)
 
+def _external_price_with_source(db, symbol, fallback_price):
+    from app.database import RecentPrice, DailyPrice
+    r = db.query(RecentPrice).filter(RecentPrice.ticker == symbol).order_by(RecentPrice.date.desc()).first()
+    if r and r.close:
+        return float(r.close), False
+    d = db.query(DailyPrice).filter(DailyPrice.ticker == symbol).order_by(DailyPrice.date.desc()).first()
+    if d and d.close:
+        return float(d.close), False
+    return float(fallback_price), True
+
+def _latest_cached_model_signals():
+    """Read the newest shared suggestion snapshot without triggering model/broker side effects."""
+    for key, value in reversed(_suggestions_cache.items()):
+        if len(key) >= 2 and key[0] == "live" and key[1] == "real":
+            return value
+    return None
+
 @app.get("/api/external/accounts")
 def get_external_accounts(db=Depends(get_db)):
+    from app.services.account_strategy import effective_buckets
     accounts = db.query(ExternalAccount).all()
     # If empty, seed default Robinhood and Vanguard accounts
     if not accounts:
@@ -2341,10 +2369,44 @@ def get_external_accounts(db=Depends(get_db)):
             "holdings_value": round(holdings_value, 2),
             "total_value": round(acct.cash + holdings_value, 2),
             "risk_profile": acct.risk_profile,
+            "strategy_mode": acct.strategy_mode,
+            "aggression": acct.aggression,
+            "buckets": effective_buckets(acct, get_strategy_buckets(db)),
+            "inherits_global_buckets": acct.buckets_json is None,
             "created_at": acct.created_at,
             "updated_at": acct.updated_at
         })
     return results
+
+@app.post("/api/external/accounts/{account_label}/strategy")
+def update_external_account_strategy(account_label: str, req: ExternalStrategyRequest,
+                                     db=Depends(get_db)):
+    from app.services.account_strategy import (
+        STRATEGY_MODES, StrategyValidationError, effective_buckets, validate_buckets,
+    )
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if req.strategy_mode not in STRATEGY_MODES:
+        raise HTTPException(status_code=400, detail=f"strategy_mode must be one of {', '.join(STRATEGY_MODES)}")
+    if isinstance(req.aggression, bool) or not 0 <= req.aggression <= 100:
+        raise HTTPException(status_code=400, detail="aggression must be from 0 through 100")
+    raw_buckets = req.buckets.model_dump() if req.buckets is not None and hasattr(req.buckets, "model_dump") else (
+        req.buckets.dict() if req.buckets is not None else None
+    )
+    try:
+        validated = validate_buckets(raw_buckets)
+    except StrategyValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    acct.strategy_mode = req.strategy_mode
+    acct.aggression = req.aggression
+    acct.buckets_json = _json.dumps(validated, sort_keys=True) if validated is not None else None
+    acct.updated_at = datetime.now().isoformat(timespec="seconds")
+    db.commit()
+    return {"status": "success", "account_label": account_label,
+            "strategy_mode": acct.strategy_mode, "aggression": acct.aggression,
+            "buckets": effective_buckets(acct, get_strategy_buckets(db)),
+            "inherits_global_buckets": acct.buckets_json is None}
 
 @app.post("/api/external/accounts")
 def create_or_update_external_account(req: ExternalAccountRequest, db=Depends(get_db)):
@@ -2491,96 +2553,81 @@ def _stash_import_source(filename, data):
 
 @app.get("/api/external/suggestions")
 def get_external_suggestions(account_label: str, db=Depends(get_db)):
+    from app.services.account_strategy import (
+        StrategyValidationError, build_account_target, effective_buckets,
+        generate_trade_proposals,
+    )
     acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
     if not acct:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    cash = acct.cash
+    cash = float(acct.cash)
     lots = db.query(EquityLot).filter(EquityLot.account_label == account_label).all()
 
-    current_values = {}
+    current_values, quantities, prices, fallback_tickers = {}, {}, {}, set()
     portfolio_value = cash
     for lot in lots:
-        price = _latest_external_price(db, lot.ticker, lot.cost_basis_per_share)
+        price, fallback = _external_price_with_source(db, lot.ticker, lot.cost_basis_per_share)
+        prices[lot.ticker] = price
+        if fallback:
+            fallback_tickers.add(lot.ticker)
+        quantities[lot.ticker] = quantities.get(lot.ticker, 0.0) + lot.shares
         current_values[lot.ticker] = current_values.get(lot.ticker, 0.0) + (lot.shares * price)
         portfolio_value += (lot.shares * price)
 
+    buckets = effective_buckets(acct, get_strategy_buckets(db))
+    base = {"account_label": account_label, "portfolio_value": round(portfolio_value, 2),
+            "strategy_mode": acct.strategy_mode, "aggression": acct.aggression,
+            "effective_buckets": buckets, "target_weights": {}, "cash_target_weight": 1.0,
+            "target_reason_codes": {}, "crash_risk_coefficient": None,
+            "suggestions": [], "turnover_pct": 0.0, "warnings": []}
     if portfolio_value <= 0:
-        return {"orders": [], "portfolio_value": 0, "warnings": ["Portfolio value is zero or negative."]}
+        base["warnings"] = ["Portfolio value is zero or negative"]
+        return base
 
-    # Calculate MPT rebalancing weights based on the account's active risk profile
-    from ml_engine.defensive_strategist import build_defensive_playbook
-    preset = acct.risk_profile  # conservative / balanced / aggressive
-    pb = build_defensive_playbook(preset_name=preset)
-    d = float(pb.get("de_risk_coefficient", 0.0))
-
-    # Aggressive sleeve: current holdings proportions
-    has_positions = bool(current_values) and sum(current_values.values()) > 0
-    if has_positions:
-        total_pos_val = sum(current_values.values())
-        w_agg = {t: v / total_pos_val for t, v in current_values.items()}
-    else:
-        w_agg = {"SPY": 1.0}
-
-    # Defensive sleeve: target safe asset selection
-    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
-    w_def = {k: float(v) / 100.0 for k, v in safe_mix.items()}
-
-    all_tickers = set(w_agg) | set(w_def)
-    w_target = {t: (1.0 - d) * w_agg.get(t, 0.0) + d * w_def.get(t, 0.0) for t in all_tickers}
-
-    suggestions = []
-    # 1. Generate MPT safe asset rebalancing orders
-    for t in sorted(all_tickers):
-        target_val = portfolio_value * w_target[t]
-        curr_val = current_values.get(t, 0.0)
-        diff_val = target_val - curr_val
-        t_lots = [l for l in lots if l.ticker == t]
-        fallback_p = t_lots[0].cost_basis_per_share if t_lots else 100.0
-        price = _latest_external_price(db, t, fallback_p)
-
-        cur_w = (curr_val / portfolio_value * 100.0) if portfolio_value > 0 else 0.0
-        target_w = w_target[t] * 100.0
-
-        if abs(diff_val) > 50.0:
-            qty = abs(diff_val) / price
-            suggestions.append({
-                "ticker": t,
-                "side": "BUY" if diff_val > 0 else "SELL",
-                "qty": round(qty, 4),
-                "limit_price": round(price, 2),
-                "time_in_force": "GTC_90",
-                "reason": f"MPT defensive rebalancing (Target Weight: {target_w:.1f}%)"
-            })
-
-    # 2. Add Swing recommendations
+    current_weights = {ticker: value / portfolio_value for ticker, value in current_values.items()}
+    snapshot = _latest_cached_model_signals()
+    warnings = []
+    if snapshot is None:
+        warnings.append("No cached model signals are available; unsignalled holdings are preserved")
+    safe_mix, glide_coefficient = None, None
+    if acct.strategy_mode == "glide_path":
+        from ml_engine.defensive_strategist import build_defensive_playbook
+        playbook = build_defensive_playbook(preset_name="balanced")
+        safe_mix = playbook.get("stances", {}).get("safe_asset_selection", {}).get("mix")
+        glide_coefficient = playbook.get("de_risk_coefficient")
+        if not safe_mix or glide_coefficient is None:
+            base["target_weights"] = current_weights
+            base["cash_target_weight"] = cash / portfolio_value
+            base["warnings"] = warnings + [playbook.get("error", "No defensive snapshot is available")]
+            return base
     try:
-        from app.main import get_suggestions
-        suggs = get_suggestions(db=db)
-        for sug in suggs.get("swing_suggestions", []):
-            if sug.get("verdict") == "BUY":
-                ticker = sug["ticker"]
-                price = sug["price"]
-                if cash > 1000.0 and preset != "conservative":
-                    swing_val = min(cash * 0.5, portfolio_value * 0.02)
-                    qty = swing_val / price
-                    if qty > 0.01:
-                        suggestions.append({
-                            "ticker": ticker,
-                            "side": "BUY",
-                            "qty": round(qty, 4),
-                            "limit_price": round(price, 2),
-                            "time_in_force": "DAY",
-                            "reason": f"Active Swing Buy signal (Conviction: {sug.get('probability', 0)*100:.0f}%)"
-                        })
-    except Exception:
-        pass
+        target = build_account_target(current_weights, acct.strategy_mode, acct.aggression,
+                                      buckets, snapshot=snapshot, safe_mix=safe_mix,
+                                      glide_coefficient=glide_coefficient)
+    except StrategyValidationError as exc:
+        base["target_weights"] = current_weights
+        base["cash_target_weight"] = cash / portfolio_value
+        base["warnings"] = warnings + [str(exc)]
+        return base
 
-    return {
-        "portfolio_value": round(portfolio_value, 2),
-        "de_risk_coefficient": d,
-        "suggestions": suggestions
-    }
+    for ticker in target["target_weights"]:
+        if ticker not in prices:
+            price, fallback = _external_price_with_source(db, ticker, 100.0)
+            prices[ticker] = price
+            if fallback:
+                fallback_tickers.add(ticker)
+    suggestions, turnover, order_warnings = generate_trade_proposals(
+        target["target_weights"], target["cash_target_weight"], portfolio_value, cash,
+        quantities, prices, fallback_tickers,
+    )
+    base.update(target_weights={k: round(v, 8) for k, v in target["target_weights"].items()},
+                cash_target_weight=round(target["cash_target_weight"], 8),
+                target_reason_codes=target["target_reason_codes"],
+                crash_risk_coefficient=glide_coefficient,
+                suggestions=suggestions, turnover_pct=round(turnover, 6),
+                warnings=warnings + order_warnings)
+    return base
 
 @app.post("/api/external/orders/confirm")
 def confirm_external_order(req: ConfirmOrderRequest, account_label: str, db=Depends(get_db)):
