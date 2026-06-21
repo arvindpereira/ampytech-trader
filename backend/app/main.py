@@ -2441,28 +2441,38 @@ async def import_external_portfolio_pdf(
             result = import_robinhood_csv(data, override_account=override_account)
             if result.get("status") != "success":
                 raise HTTPException(status_code=422, detail=result.get("detail", "Could not parse CSV"))
-            # Held names are often outside the trade universe (no prices), so they'd otherwise be
-            # valued at cost basis. Pull current daily prices so holdings value is accurate.
-            if result.get("tickers"):
-                try:
-                    from data_ingestion.price_fetcher import fetch_equity_advisor_prices
-                    fetch_equity_advisor_prices(db, tickers=result["tickers"])
-                except Exception as e:
-                    print(f"External price fetch after CSV import failed (non-fatal): {e}")
-            return result
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Could not parse CSV: {e}")
+    else:
+        try:
+            from data_ingestion.external_importer import import_external_pdf
+            result = import_external_pdf(
+                db, data, filename=file.filename,
+                force_llm=force_llm, override_account=override_account
+            )
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Could not parse PDF: {e}")
+
+    # Whichever path ran: held names are often outside the trade universe (no price rows), so they'd
+    # otherwise be valued at COST basis. Pull current daily prices for this account's holdings so the
+    # portfolio value is accurate. Works for both the CSV reconstruction and monthly PDF statements.
+    _refresh_external_prices(db, result.get("account_label"), result.get("tickers"))
+    return result
+
+
+def _refresh_external_prices(db, account_label, tickers=None):
+    """Fetch current daily prices for an external account's holdings (or an explicit ticker list)."""
     try:
-        from data_ingestion.external_importer import import_external_pdf
-        result = import_external_pdf(
-            db, data, filename=file.filename,
-            force_llm=force_llm, override_account=override_account
-        )
-        return result
+        from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+        if not tickers and account_label:
+            tickers = [t[0] for t in db.query(EquityLot.ticker)
+                       .filter(EquityLot.account_label == account_label).distinct().all() if t[0]]
+        if tickers:
+            fetch_equity_advisor_prices(db, tickers=sorted({t.upper().strip() for t in tickers}))
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {e}")
+        print(f"External price refresh failed (non-fatal): {e}")
 
 @app.get("/api/external/suggestions")
 def get_external_suggestions(account_label: str, db=Depends(get_db)):
