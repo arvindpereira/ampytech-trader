@@ -77,10 +77,18 @@ def daily_data_fetch_job():
         # Keep externally-held / equity-advisor holdings (often outside the trade universe) priced at
         # market so the External Portfolio and Equity Advisor values stay accurate day to day.
         try:
-            from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+            from data_ingestion.price_fetcher import fetch_equity_advisor_prices, equity_lot_tickers
+            from app.database import SessionLocal
             fetch_equity_advisor_prices()
+            # Keep held names risk-classified (tier + volatility) for holdings-aware strategies.
+            from ml_engine.classify import classify_tickers
+            _db = SessionLocal()
+            try:
+                classify_tickers(equity_lot_tickers(_db))
+            finally:
+                _db.close()
         except Exception as e:
-            print(f"Equity/external holdings price fetch skipped: {e}")
+            print(f"Equity/external holdings price fetch/classify skipped: {e}")
         fetch_macro_indicators()
         fetch_sentiment()
         # Keep the swing model's LLM-news features current: incrementally score the last week's

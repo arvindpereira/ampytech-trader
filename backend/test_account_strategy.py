@@ -62,15 +62,33 @@ class TestAccountStrategyService(unittest.TestCase):
             self.assertAlmostEqual(midpoint["target_weights"][ticker], weight / 2)
         self.assertAlmostEqual(midpoint["cash_target_weight"], 0.5)
 
-    def test_glide_endpoint_uses_crash_risk_coefficient(self):
+    def test_de_risk_keeps_quality_and_sheds_speculative(self):
+        """Holdings-aware de-risk: a quality/low-vol holding (BRK.B) is kept far above a
+        speculative/high-vol one (BYND); the crash coefficient sets the cash floor."""
         buckets = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
-        safe_mix = {"BIL": 100.0}
-        low = build_account_target({}, "glide_path", 0, buckets,
-                                   safe_mix=safe_mix, glide_coefficient=0.0)
-        high = build_account_target({}, "glide_path", 0, buckets,
-                                    safe_mix=safe_mix, glide_coefficient=1.0)
-        self.assertEqual(low["target_weights"], ALL_WEATHER)
-        self.assertEqual(high["target_weights"], {"BIL": 1.0})
+        classifications = {"BRK.B": {"tier": "core", "volatility": 0.14},
+                           "BYND": {"tier": "speculative", "volatility": 2.0}}
+        res = build_account_target({"BRK.B": 0.5, "BYND": 0.5}, "de_risk", 0, buckets,
+                                   snapshot=None, classifications=classifications,
+                                   de_risk_coefficient=0.2)
+        tw = res["target_weights"]
+        self.assertGreater(tw.get("BRK.B", 0.0), 5 * tw.get("BYND", 0.0))
+        self.assertGreater(tw.get("BRK.B", 0.0), 0.5)                 # quality concentrated, not sold
+        self.assertAlmostEqual(res["cash_target_weight"], 0.2, places=2)
+
+    def test_defensive_mode_does_not_open_new_speculative(self):
+        """A de-risking account must not open a fresh speculative position from a model BUY."""
+        snapshot = {"high_risk_suggestions": [{"ticker": "BYND", "verdict": "BUY", "probability": 0.9}]}
+        res = build_account_target({}, "de_risk", 10,
+                                   {"swing": 0.0, "longterm": 0.0, "high_risk": 0.05},
+                                   snapshot=snapshot, classifications={}, de_risk_coefficient=0.0)
+        self.assertLess(res["target_weights"].get("BYND", 0.0), 0.01)
+
+    def test_glide_endpoint_requires_crash_coefficient(self):
+        buckets = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
+        with self.assertRaises(StrategyValidationError):
+            build_account_target({"AAPL": 1.0}, "glide_path", 0, buckets,
+                                 classifications={}, de_risk_coefficient=None)
 
     def test_invalid_buckets_are_rejected_not_clamped(self):
         for value in (

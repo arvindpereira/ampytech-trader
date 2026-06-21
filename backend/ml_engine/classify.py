@@ -110,6 +110,91 @@ def classify_universe(run_llm=False, progress_cb=None):
         db.close()
 
 
+def _risk_tier_from_vol(vol, vol_median):
+    """Risk-only tier for names without fundamentals (ETFs, ADRs, class shares): low realized
+    volatility reads as defensive ('core'), high as 'speculative'. Unknown vol stays neutral."""
+    if vol is None:
+        return "core"
+    return "speculative" if vol >= vol_median else "core"
+
+
+def classify_tickers(tickers, run_llm=False, progress_cb=None):
+    """Classify an explicit ticker set (e.g. external holdings outside the trade universe).
+
+    Tickers that have fundamentals get the same blended quant+LLM quality tier as the universe;
+    tickers without (ETFs/ADRs/BRK.B) fall back to a volatility-only risk tier so every held name
+    still receives a usable tier + volatility. Existing tier_override is preserved."""
+    if run_llm:
+        from ml_engine.fundamental_llm import assess_all
+        assess_all(progress_cb=progress_cb)
+
+    quant = compute_quant_quality()
+    db = SessionLocal()
+    try:
+        targets = {str(t).upper().strip() for t in tickers if t}
+        if not targets:
+            return {"rows": []}
+        vdd = _vol_and_dd(db, targets)
+        vols = [v for v, _ in vdd.values() if v is not None]
+        # Anchor the vol split on the broad universe median (stable) rather than just this subset.
+        uni_vdd = _vol_and_dd(db, [t.ticker for t in db.query(UniverseTicker).all()])
+        uni_vols = [v for v, _ in uni_vdd.values() if v is not None] or vols
+        vol_median = float(np.median(uni_vols)) if uni_vols else 0.4
+
+        existing = {c.ticker: c for c in db.query(TickerClassification).all()}
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        results = []
+        for tk in sorted(targets):
+            vol, dd22 = vdd.get(tk, (None, None))
+            row = existing.get(tk)
+            flags = []
+            if row and row.llm_flags:
+                try:
+                    flags = json.loads(row.llm_flags)
+                except Exception:
+                    flags = []
+            if tk in quant:
+                qq = quant[tk]["quality"]
+                distressed = quant[tk]["distressed"]
+                llm_q = row.llm_quality if row and row.llm_quality is not None else None
+                blended = (0.5 * qq + 0.5 * llm_q) if llm_q is not None else qq
+                if "bank" in flags and llm_q is not None:
+                    blended = llm_q
+                if any(f in flags for f in ("one_off_gain", "speculative")):
+                    blended = min(blended, 0.50)
+                if distressed or "distress" in flags:
+                    blended = min(blended, 0.20)
+                computed = _tier(blended, vol, vol_median, distressed)
+                quality_val = round(blended, 3)
+            elif row and row.quality is not None:
+                # No fundamentals this run but a prior quality exists (e.g. PINS) — preserve it,
+                # only refresh volatility/tier rather than clobbering quality to None.
+                qq, llm_q = row.quant_quality, row.llm_quality
+                distressed = bool(row.distressed)
+                quality_val = row.quality
+                computed = _tier(quality_val, vol, vol_median, distressed)
+            else:
+                qq, llm_q, distressed = None, None, False
+                computed = _risk_tier_from_vol(vol, vol_median)
+                quality_val = None
+            override = row.tier_override if row else None
+            tier = override or computed
+            vals = {"ticker": tk, "quant_quality": qq, "llm_quality": llm_q, "quality": quality_val,
+                    "volatility": round(vol, 3) if vol is not None else None,
+                    "dd_2022": round(dd22, 3) if dd22 is not None else None,
+                    "distressed": bool(distressed), "tier": tier,
+                    "updated_at": datetime.now().isoformat(timespec="seconds")}
+            stmt = sqlite_insert(TickerClassification).values(**vals)
+            stmt = stmt.on_conflict_do_update(index_elements=["ticker"],
+                                              set_={k: v for k, v in vals.items() if k != "ticker"})
+            db.execute(stmt)
+            results.append({**vals, "flags": flags})
+        db.commit()
+        return {"vol_median": vol_median, "rows": results}
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser(description="Classify universe into risk × quality tiers")

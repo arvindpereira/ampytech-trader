@@ -2560,7 +2560,15 @@ def _refresh_external_prices(db, account_label, tickers=None):
             tickers = [t[0] for t in db.query(EquityLot.ticker)
                        .filter(EquityLot.account_label == account_label).distinct().all() if t[0]]
         if tickers:
-            fetch_equity_advisor_prices(db, tickers=sorted({t.upper().strip() for t in tickers}))
+            tickers = sorted({t.upper().strip() for t in tickers})
+            fetch_equity_advisor_prices(db, tickers=tickers)
+            # Risk-classify held names (tier + volatility) so holdings-aware strategies can tell a
+            # defensive holding (BRK.B) from a speculative one (BYND). Best-effort.
+            try:
+                from ml_engine.classify import classify_tickers
+                classify_tickers(tickers)
+            except Exception as e:
+                print(f"Held-ticker classification skipped (non-fatal): {e}")
     except Exception as e:
         print(f"External price refresh failed (non-fatal): {e}")
 
@@ -2606,6 +2614,7 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
     base = {"account_label": account_label, "portfolio_value": round(portfolio_value, 2),
             "strategy_mode": acct.strategy_mode, "aggression": acct.aggression,
             "effective_buckets": buckets, "target_weights": {}, "cash_target_weight": 1.0,
+            "current_weights": {}, "tiers": {},
             "target_reason_codes": {}, "crash_risk_coefficient": None,
             "suggestions": [], "turnover_pct": 0.0, "warnings": []}
     if portfolio_value <= 0:
@@ -2617,21 +2626,28 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
     warnings = []
     if snapshot is None:
         warnings.append("No cached model signals are available; unsignalled holdings are preserved")
-    safe_mix, glide_coefficient = None, None
-    if acct.strategy_mode == "glide_path":
+
+    # Risk/quality tiers for held names so holdings-aware modes can keep quality and shed speculation.
+    from app.database import TickerClassification
+    classifications = {}
+    for c in db.query(TickerClassification).filter(
+            TickerClassification.ticker.in_(list(current_weights.keys()) or [""])).all():
+        classifications[c.ticker] = {"tier": c.tier_override or c.tier, "volatility": c.volatility}
+
+    glide_coefficient = None
+    if acct.strategy_mode in ("glide_path", "de_risk"):
         from ml_engine.defensive_strategist import build_defensive_playbook
         playbook = build_defensive_playbook(preset_name="balanced")
-        safe_mix = playbook.get("stances", {}).get("safe_asset_selection", {}).get("mix")
         glide_coefficient = playbook.get("de_risk_coefficient")
-        if not safe_mix or glide_coefficient is None:
+        if glide_coefficient is None:
             base["target_weights"] = current_weights
             base["cash_target_weight"] = cash / portfolio_value
-            base["warnings"] = warnings + [playbook.get("error", "No defensive snapshot is available")]
+            base["warnings"] = warnings + [playbook.get("error", "No crash-risk snapshot is available")]
             return base
     try:
         target = build_account_target(current_weights, acct.strategy_mode, acct.aggression,
-                                      buckets, snapshot=snapshot, safe_mix=safe_mix,
-                                      glide_coefficient=glide_coefficient)
+                                      buckets, snapshot=snapshot, classifications=classifications,
+                                      de_risk_coefficient=glide_coefficient)
     except StrategyValidationError as exc:
         base["target_weights"] = current_weights
         base["cash_target_weight"] = cash / portfolio_value
@@ -2648,9 +2664,14 @@ def get_external_suggestions(account_label: str, db=Depends(get_db)):
         target["target_weights"], target["cash_target_weight"], portfolio_value, cash,
         quantities, prices, fallback_tickers,
     )
+    # Per-ticker tier (held + target names) so the UI can show risk badges + a posture summary.
+    tiers = {t: info.get("tier") for t, info in classifications.items()}
+    for t in set(list(current_weights) + list(target["target_weights"])):
+        tiers.setdefault(t, None)
     base.update(target_weights={k: round(v, 8) for k, v in target["target_weights"].items()},
                 cash_target_weight=round(target["cash_target_weight"], 8),
-                target_reason_codes=target["target_reason_codes"],
+                current_weights={k: round(v, 8) for k, v in current_weights.items()},
+                target_reason_codes=target["target_reason_codes"], tiers=tiers,
                 crash_risk_coefficient=glide_coefficient,
                 suggestions=suggestions, turnover_pct=round(turnover, 6),
                 warnings=warnings + order_warnings)
