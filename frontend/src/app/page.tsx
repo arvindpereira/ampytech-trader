@@ -5234,7 +5234,12 @@ export default function Home() {
                               const r = await res.json();
                               setReconcileStatus(`Success: Ingested ${r.parsed_count} positions. Cash updated to ${money(r.cash_updated || 0)}.`);
                               fetchExternalAccounts();
-                              fetchExternalPositionsAndSuggestions(selectedAccount);
+                              if (r.account_label) {
+                                setSelectedAccount(r.account_label);
+                                fetchExternalPositionsAndSuggestions(r.account_label);
+                              } else {
+                                fetchExternalPositionsAndSuggestions(selectedAccount);
+                              }
                             } else {
                               const err = await res.json();
                               setReconcileStatus(`Import error: ${err.detail || 'Failed to parse Statement PDF.'}`);
@@ -5445,6 +5450,13 @@ export default function Home() {
                             if (res.ok) {
                               const r = await res.json();
                               setReconcileStatus(`Transactions imported: Added ${r.inserted_count} new entries, skipped ${r.skipped_count} duplicates.`);
+                              fetchExternalAccounts();
+                              if (r.account_label) {
+                                setSelectedAccount(r.account_label);
+                                fetchExternalPositionsAndSuggestions(r.account_label);
+                              } else {
+                                fetchExternalPositionsAndSuggestions(selectedAccount);
+                              }
                             } else {
                               const err = await res.json();
                               setReconcileStatus(`Import error: ${err.detail || 'Failed to parse Transactions PDF.'}`);

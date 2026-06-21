@@ -77,13 +77,51 @@ def extract_pdf_text(data: bytes) -> str:
 def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
     low = (text + " " + filename).lower()
     broker = "Unknown"
-    if "vanguard" in low:
-        broker = "Vanguard"
-    elif "robinhood" in low:
-        if "joint tenancy" in low or "joint account" in low or "116424851826" in low:
-            broker = "Robinhood Joint"
+    
+    # 1. Detect Brand
+    is_vanguard = "vanguard" in low
+    is_robinhood = "robinhood" in low
+    
+    # 2. Extract Account Number if present
+    account_number = None
+    if is_robinhood:
+        rh_acct_match = re.search(r"account\s*#:\s*(\d+)", low)
+        if rh_acct_match:
+            account_number = rh_acct_match.group(1)
+    elif is_vanguard:
+        vg_acct_match = re.search(r"account\s*number:\s*([\d-]+)", low)
+        if not vg_acct_match:
+            vg_acct_match = re.search(r"account\s*#\s*([\d-]+)", low)
+        if not vg_acct_match:
+            vg_acct_match = re.search(r"brokerage\s*account\s*#\s*([\d-]+)", low)
+        if vg_acct_match:
+            account_number = vg_acct_match.group(1)
+            
+    # 3. Detect Account Type
+    is_joint = any(k in low for k in ["joint tenancy", "joint account", "survivorship"])
+    
+    if is_robinhood:
+        if is_joint:
+            acct_type = "Joint"
         else:
-            broker = "Robinhood"
+            acct_type = "Individual"
+        if account_number:
+            broker = f"Robinhood {acct_type} ({account_number})"
+        else:
+            broker = "Robinhood Joint" if is_joint else "Robinhood"
+    elif is_vanguard:
+        if is_joint:
+            acct_type = "Joint"
+        elif "traditional ira" in low or "trad ira" in low:
+            acct_type = "IRA"
+        elif "roth ira" in low:
+            acct_type = "Roth IRA"
+        else:
+            acct_type = "Individual"
+        if account_number:
+            broker = f"Vanguard {acct_type} ({account_number})"
+        else:
+            broker = "Vanguard Joint" if is_joint else "Vanguard"
 
     # A monthly statement is classified as 'positions' if it lists held assets,
     # even if it also contains transactions.
@@ -368,10 +406,10 @@ def import_external_pdf(
         return {"status": "error", "message": "PDF contains no extractable text."}
 
     broker, doc_type = detect_broker_and_type(text, filename)
-    account_label = override_account or broker
-
-    if account_label == "Unknown":
-        account_label = "External Account"
+    if broker != "Unknown":
+        account_label = broker
+    else:
+        account_label = override_account or "External Account"
 
     # Create account if it doesn't exist
     acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
@@ -409,9 +447,11 @@ def import_external_pdf(
                 parsed_data["transactions"] = parse_robinhood_transactions(text)
             else:
                 parsed_data["transactions"] = parse_robinhood_transactions(text)
-        elif account_label == "Vanguard":
+        elif account_label.startswith("Vanguard"):
             if doc_type == "positions":
                 parsed_data["lots"] = parse_vanguard_positions(text)
+                for lot in parsed_data["lots"]:
+                    lot["account_label"] = account_label
                 # Parse transactions from the combined statement
                 parsed_data["transactions"] = parse_vanguard_transactions(text)
             else:

@@ -60,6 +60,19 @@ class TestExternalPortfolio(unittest.TestCase):
         self.assertEqual(broker, "Vanguard")
         self.assertEqual(doc_type, "transactions")
 
+        # Test dynamic account number extraction
+        rh_num_text = "Robinhood Financial Individual Account #:706393097"
+        broker, _ = detect_broker_and_type(rh_num_text)
+        self.assertEqual(broker, "Robinhood Individual (706393097)")
+
+        rh_joint_num_text = "Robinhood Joint Tenancy Account #:116424851826"
+        broker, _ = detect_broker_and_type(rh_joint_num_text)
+        self.assertEqual(broker, "Robinhood Joint (116424851826)")
+
+        vg_num_text = "Vanguard Brokerage Account Number: 1234-5678"
+        broker, _ = detect_broker_and_type(vg_num_text)
+        self.assertEqual(broker, "Vanguard Individual (1234-5678)")
+
     def test_parse_robinhood_positions(self):
         sample_text = "AAPL Apple Inc. 12.345600 Shares $182.30 Average Cost $150.50\nMSFT Microsoft Corp. 5.000000 Shares $420.00 Average Cost $400.00"
         lots = parse_robinhood_positions(sample_text)
