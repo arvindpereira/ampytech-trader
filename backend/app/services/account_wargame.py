@@ -8,7 +8,14 @@ import numpy as np
 import pandas as pd
 
 from app.services.account_strategy import build_account_target, StrategyValidationError
-from ml_engine.wargame import _metrics_from_curve
+from ml_engine.wargame import _metrics_from_curve, get_historical_era_dates
+
+CRASH_ERAS = {
+    "gfc": "Global Financial Crisis (2007–09)",
+    "covid": "COVID crash (Feb–Apr 2020)",
+    "dotcom": "Dot-com bust (2000–02)",
+    "2022": "2022 rate shock",
+}
 
 REBALANCE_DAYS = 21      # rebalance back to target ~monthly
 MODES = ("growth", "de_risk", "all_weather", "barbell")
@@ -127,3 +134,93 @@ def run_account_wargame(db, account_label, current_weights, classifications, sna
             "price_coverage_note": "Monthly-rebalanced; a holding enters when it begins trading "
                                    "(weight waits in cash until then). Coverage is the target weight "
                                    "that became investable in the window."}
+
+
+def _estimate_betas(db, tickers, lookback_days=504):
+    """Market beta vs SPY for each ticker from recent daily returns. Names with too little history
+    default to 1.0. Defensive assets come out low/negative (TLT, GLD, BIL ≈ 0), which is what makes
+    them protective in the synthetic crash."""
+    from app.database import DailyPrice
+    syms = list({*[t for t in tickers if t], "SPY"})
+    start = (datetime.now().date() - timedelta(days=int(lookback_days * 1.6))).isoformat()
+    rows = db.query(DailyPrice.date, DailyPrice.ticker, DailyPrice.close).filter(
+        DailyPrice.ticker.in_(syms), DailyPrice.date >= start).all()
+    if not rows:
+        return {t: 1.0 for t in tickers}
+    df = pd.DataFrame(rows, columns=["date", "ticker", "close"])
+    piv = df.pivot_table(index="date", columns="ticker", values="close").sort_index().tail(lookback_days)
+    rets = piv.pct_change().dropna(how="all")
+    if "SPY" not in rets or rets["SPY"].var() <= 0:
+        return {t: 1.0 for t in tickers}
+    spy = rets["SPY"]
+    var = spy.var()
+    betas = {}
+    for t in tickers:
+        if t == "SPY":
+            betas[t] = 1.0
+        elif t in rets:
+            pair = pd.concat([rets[t], spy], axis=1).dropna()
+            betas[t] = float(pair.iloc[:, 0].cov(pair.iloc[:, 1]) / var) if len(pair) > 30 else 1.0
+        else:
+            betas[t] = 1.0
+    return betas
+
+
+def run_account_crash_stress(db, account_label, era, current_weights, classifications, snapshot,
+                             buckets, de_risk_coefficient, aggression):
+    """Stress each strategy mode through a historical crash by mapping every holding to a synthetic
+    SPY-beta proxy over the era's actual SPY path (single market factor; no idiosyncratic/alpha). A
+    transparent 'what would each posture have done in 2008/2020' — defensive/low-beta names hold,
+    high-beta speculative names fall hard."""
+    if era not in CRASH_ERAS:
+        return {"error": f"Unknown era '{era}'."}
+    from app.database import DailyPrice
+    start_d, end_d = get_historical_era_dates(era)
+    spy_rows = db.query(DailyPrice.date, DailyPrice.close).filter(
+        DailyPrice.ticker == "SPY", DailyPrice.date >= start_d, DailyPrice.date <= end_d
+    ).order_by(DailyPrice.date.asc()).all()
+    if len(spy_rows) < 20:
+        return {"error": f"No SPY history for the {era} window."}
+    spy_dates = [pd.to_datetime(d) for d, _ in spy_rows]
+    spy_close = np.array([float(c) for _, c in spy_rows])
+    spy_ret = np.concatenate([[0.0], np.diff(spy_close) / spy_close[:-1]])
+
+    targets = {}
+    for mode in MODES:
+        coef = de_risk_coefficient if mode == "de_risk" else None
+        if mode == "de_risk" and coef is None:
+            continue
+        try:
+            t = build_account_target(current_weights, mode, aggression, buckets,
+                                     snapshot=snapshot, classifications=classifications,
+                                     de_risk_coefficient=coef)
+            targets[mode] = (t["target_weights"], t["cash_target_weight"])
+        except StrategyValidationError:
+            continue
+    all_tickers = set().union(*[set(w) for w, _ in targets.values()]) if targets else set()
+    betas = _estimate_betas(db, all_tickers)
+    # Synthesize each ticker's era price path from its beta and the actual SPY path.
+    synth = {t: spy_close if t == "SPY" else 100.0 * np.cumprod(1.0 + betas.get(t, 1.0) * spy_ret)
+             for t in all_tickers}
+    piv = pd.DataFrame(synth, index=pd.Index(spy_dates, name="date"))
+
+    keep = list(range(0, len(spy_dates), max(1, len(spy_dates) // 250)))
+    if keep and keep[-1] != len(spy_dates) - 1:
+        keep.append(len(spy_dates) - 1)
+    results = []
+    for mode, (w, cash) in targets.items():
+        curve, _cov = _simulate(w, cash, piv)
+        results.append({"mode": mode, "label": MODE_LABELS.get(mode, mode),
+                        "metrics": _metrics_from_curve(curve),
+                        "curve": [round(curve[i], 5) for i in keep],
+                        "avg_beta": round(sum(betas.get(t, 1.0) * v for t, v in w.items()), 3)})
+    if not results:
+        return {"error": "No tradeable strategy targets to stress."}
+    spy_metrics = _metrics_from_curve(spy_close)
+    return {"account_label": account_label, "era": era, "era_label": CRASH_ERAS[era],
+            "window": [start_d, end_d], "dates": [spy_dates[i].strftime("%Y-%m-%d") for i in keep],
+            "spy_drawdown": round(spy_metrics["max_drawdown"], 1),
+            "spy_return": round(spy_metrics["total_return"], 1), "results": results,
+            "method_note": "Synthetic single-factor stress: each holding = its SPY-beta × the era's "
+                           "actual SPY path (no idiosyncratic risk or alpha). Directional, not a "
+                           "literal backtest of names that didn't trade then."}
