@@ -464,6 +464,9 @@ class ExternalAccount(Base):
     strategy_mode = Column(String, nullable=False, default="growth")
     aggression = Column(Integer, nullable=False, default=60)
     buckets_json = Column(String, nullable=True)
+    # de-risk policy: 'rotate' (concentrate into quality, keep market exposure) or 'shed_beta'
+    # (move high-beta weight to cash). NULL = follow the model's recommendation.
+    de_risk_policy = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
     updated_at = Column(String, nullable=False)
 

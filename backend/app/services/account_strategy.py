@@ -146,7 +146,11 @@ def build_growth_target(current_weights, buckets, snapshot):
 _TIER_DEFENSIVENESS = {"core": 1.0, "quality_growth": 0.85, "value_trap": 0.30, "speculative": 0.12}
 
 
-def _defensiveness(ticker, classifications):
+def _defensiveness(ticker, classifications, beta_weight=0.0):
+    """How much of a held name to keep when de-risking: fundamental tier × a low-volatility tilt ×
+    a low-beta tilt. `beta_weight` (0..1) controls how hard market beta is penalized — at 0 the keep
+    score is pure quality (today's behavior); near 1 even a quality name is shed if it's high-beta,
+    so the book actually cuts market exposure in a crash. (Option C: the aggression slider sets it.)"""
     info = (classifications or {}).get(ticker) or {}
     base = _TIER_DEFENSIVENESS.get(info.get("tier"), 0.5)
     vol = info.get("volatility")
@@ -157,44 +161,90 @@ def _defensiveness(ticker, classifications):
                 base *= max(0.25, min(1.15, 1.0 - (v - 0.25) * 0.6))   # low vol kept, high vol shed
         except (TypeError, ValueError):
             pass
+    beta = info.get("beta")
+    if beta is not None and beta_weight > 0:
+        try:
+            b = float(beta)
+            if math.isfinite(b):
+                base *= max(0.10, 1.0 - beta_weight * max(0.0, b - 0.6) * 0.6)   # low beta kept, high beta shed
+        except (TypeError, ValueError):
+            pass
     return max(0.0, min(1.0, base))
 
 
-def holdings_defensive_target(current_weights, classifications, de_risk_coefficient):
-    """Holdings-aware de-risk: tilt toward the account's own low-vol / high-quality holdings, trim
-    speculative ones, and route the de-risked remainder to cash. `de_risk_coefficient` (0..1, from
-    the crash radar) sets how much of the book moves to cash."""
+def holdings_defensive_target(current_weights, classifications, de_risk_coefficient, beta_weight=0.0):
+    """Holdings-aware de-risk: tilt toward the account's own low-vol / high-quality / low-beta
+    holdings, trim the rest, and route the de-risked remainder to cash. `de_risk_coefficient` (0..1,
+    from the crash radar) sets how much of the book moves to cash; `beta_weight` sets how hard market
+    exposure is cut (driven by aggression)."""
     try:
         d = float(de_risk_coefficient)
     except (TypeError, ValueError):
         raise StrategyValidationError("The crash-risk coefficient is unavailable")
     if not math.isfinite(d) or not 0.0 <= d <= 1.0:
         raise StrategyValidationError("The crash-risk coefficient is invalid")
-    raw = {t: w * _defensiveness(t, classifications)
-           for t, w in current_weights.items() if w > 0}
-    total_raw = sum(raw.values())
-    if total_raw <= 0:                       # nothing to keep → all cash
+    bw = max(0.0, min(1.0, beta_weight))
+    keep = {t: w * _defensiveness(t, classifications, bw)
+            for t, w in current_weights.items() if w > 0}
+    total_keep = sum(keep.values())
+    if total_keep <= 0:                      # nothing to keep → all cash
         return {}, 1.0
-    equity_share = 1.0 - d                    # d of the book becomes cash; the rest stays in quality names
-    target = {t: equity_share * (rw / total_raw) for t, rw in raw.items()}
+    equity = 1.0 - d                          # crash-coefficient cash floor
+    # Two ways to spend the equity budget, blended by aggression:
+    #  - concentrate (high aggression / bw→0): fill `equity` by keep-share — over-weight the best
+    #    names, hold full market exposure ("keep quality", today's behaviour).
+    #  - shed beta (low aggression / bw→1): retain only each name's keep fraction; high-beta names
+    #    leak their weight to cash, so portfolio beta actually falls.
+    target = {}
+    for t, k in keep.items():
+        concentrate = equity * (k / total_keep)
+        shed_beta = equity * k                 # k ≤ w, so this sums to ≤ equity (rest → cash)
+        target[t] = (1.0 - bw) * concentrate + bw * shed_beta
     cash = max(0.0, 1.0 - sum(target.values()))
     return target, cash
 
 
-def defensive_endpoint(mode, current_weights=None, classifications=None, de_risk_coefficient=None):
+def defensive_endpoint(mode, current_weights=None, classifications=None, de_risk_coefficient=None,
+                       beta_weight=0.0):
     if mode == "growth":
         return {}, 1.0
     if mode == "all_weather":                 # explicit basket rotation (Dalio-inspired ETF mix)
         return dict(ALL_WEATHER), 0.0
     if mode == "barbell":                      # explicit basket rotation (T-bill-heavy + small growth)
         return dict(BARBELL), 0.0
-    if mode in ("glide_path", "de_risk"):      # holdings-aware de-risk (keep quality, raise cash)
-        return holdings_defensive_target(current_weights or {}, classifications, de_risk_coefficient)
+    if mode in ("glide_path", "de_risk"):      # holdings-aware de-risk (keep quality + low beta, raise cash)
+        return holdings_defensive_target(current_weights or {}, classifications, de_risk_coefficient,
+                                         beta_weight=beta_weight)
     raise StrategyValidationError(f"Unknown strategy mode: {mode}")
 
 
+DE_RISK_POLICIES = ("rotate", "shed_beta")
+
+
+def portfolio_beta(weights, classifications):
+    """Weighted market beta of a weight map (names with *unknown* beta assumed 1.0; a genuine 0.0,
+    e.g. cash-like assets, is respected)."""
+    total = 0.0
+    for t, w in weights.items():
+        b = (classifications or {}).get(t, {}).get("beta")
+        total += w * (float(b) if b is not None else 1.0)
+    return total
+
+
+def recommend_de_risk_policy(de_risk_coefficient, book_beta):
+    """Recommend 'shed_beta' (cut market exposure to cash) when the crash radar is signalling risk
+    or the book is high-beta; otherwise 'rotate' (stay invested, concentrate into quality)."""
+    coef = float(de_risk_coefficient or 0.0)
+    beta = float(book_beta or 0.0)
+    if coef >= 0.25 or beta >= 1.10:
+        return "shed_beta", (f"Crash-risk {coef * 100:.0f}% and book beta {beta:.2f} — cut market "
+                             f"exposure to cash.")
+    return "rotate", (f"Crash-risk {coef * 100:.0f}% and book beta {beta:.2f} — stay invested, "
+                      f"rotate into quality.")
+
+
 def build_account_target(current_weights, mode, aggression, buckets, snapshot=None,
-                         classifications=None, de_risk_coefficient=None):
+                         classifications=None, de_risk_coefficient=None, beta_weight=0.0):
     if mode not in STRATEGY_MODES:
         raise StrategyValidationError("Invalid strategy mode")
     if isinstance(aggression, bool) or not isinstance(aggression, int) or not 0 <= aggression <= 100:
@@ -207,8 +257,10 @@ def build_account_target(current_weights, mode, aggression, buckets, snapshot=No
     growth_buckets = dict(buckets)
     growth_buckets["high_risk"] = buckets["high_risk"] * a
     growth, growth_cash, explicit_sells = build_growth_target(current_weights, growth_buckets, snapshot)
+    # De-risk policy (caller-resolved): beta_weight 0 = rotate (concentrate into quality, keep market
+    # exposure); 1 = shed high-beta to cash (cut market exposure).
     defensive, defensive_cash = defensive_endpoint(mode, current_weights, classifications,
-                                                   de_risk_coefficient)
+                                                   de_risk_coefficient, beta_weight=beta_weight)
     tickers = set(growth) | set(defensive)
     target = {ticker: a * growth.get(ticker, 0.0) + (1.0 - a) * defensive.get(ticker, 0.0)
               for ticker in tickers}

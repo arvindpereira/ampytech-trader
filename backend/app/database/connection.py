@@ -156,6 +156,7 @@ def init_db():
             "strategy_mode": "ALTER TABLE external_accounts ADD COLUMN strategy_mode VARCHAR NOT NULL DEFAULT 'growth'",
             "aggression": "ALTER TABLE external_accounts ADD COLUMN aggression INTEGER NOT NULL DEFAULT 60",
             "buckets_json": "ALTER TABLE external_accounts ADD COLUMN buckets_json VARCHAR",
+            "de_risk_policy": "ALTER TABLE external_accounts ADD COLUMN de_risk_policy VARCHAR",
         }
         for column, statement in migrations.items():
             if cols_ext and column not in cols_ext:

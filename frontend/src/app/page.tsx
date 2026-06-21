@@ -635,9 +635,11 @@ export default function Home() {
   const [crashStressLoading, setCrashStressLoading] = useState<boolean>(false);
   const [crashEra, setCrashEra] = useState<string>('gfc');
   const [externalStrategyError, setExternalStrategyError] = useState<string>('');
-  const [externalStrategyEdit, setExternalStrategyEdit] = useState({
-    strategy_mode: 'growth', aggression: 60, swing: '100', longterm: '0', high_risk: '0'
+  const [externalStrategyEdit, setExternalStrategyEdit] = useState<any>({
+    strategy_mode: 'growth', aggression: 60, swing: '100', longterm: '0', high_risk: '0', de_risk_policy: ''
   });
+  const [policyCompare, setPolicyCompare] = useState<any>(null);
+  const [policyCompareLoading, setPolicyCompareLoading] = useState<boolean>(false);
   const [externalSuggestionsLoading, setExternalSuggestionsLoading] = useState<boolean>(false);
   const [reconcileStatus, setReconcileStatus] = useState<string>('');
   const [externalConfirmOrder, setExternalConfirmOrder] = useState<any>(null);
@@ -680,6 +682,20 @@ export default function Home() {
       console.error(err);
     } finally {
       setExternalWargameLoading(false);
+    }
+  };
+
+  const runPolicyCompare = async (acctLabel: string, years: number, era: string) => {
+    if (!acctLabel) return;
+    setPolicyCompareLoading(true);
+    setPolicyCompare(null);
+    try {
+      const res = await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(acctLabel)}/policy-compare?lookback_years=${years}&era=${era}`), { method: 'POST' });
+      if (res.ok) setPolicyCompare(await res.json());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setPolicyCompareLoading(false);
     }
   };
 
@@ -746,7 +762,9 @@ export default function Home() {
       swing: String(Math.round((buckets.swing || 0) * 100)),
       longterm: String(Math.round((buckets.longterm || 0) * 100)),
       high_risk: String(Math.round((buckets.high_risk || 0) * 100)),
+      de_risk_policy: acct.de_risk_policy || '',
     });
+    setPolicyCompare(null);
   }, [selectedAccount, externalAccounts]);
 
   const saveExternalStrategy = async (resetBuckets = false) => {
@@ -761,7 +779,8 @@ export default function Home() {
       const res = await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(selectedAccount)}/strategy`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strategy_mode: externalStrategyEdit.strategy_mode,
-          aggression: externalStrategyEdit.aggression, buckets }),
+          aggression: externalStrategyEdit.aggression, buckets,
+          de_risk_policy: externalStrategyEdit.de_risk_policy || null }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Could not save strategy');
@@ -5295,6 +5314,21 @@ export default function Home() {
                     {externalStrategyEdit.strategy_mode === 'all_weather' && 'Explicitly ROTATES into a fixed ETF basket: SPY 30 / TLT 40 / IEF 15 / GLD 7.5 / GSG 7.5 — this will sell holdings not in the basket.'}
                     {externalStrategyEdit.strategy_mode === 'barbell' && 'Explicitly ROTATES into a fixed basket: BIL 90 / QQQ 10. No options or tail hedge.'}
                   </div>
+                  {(externalStrategyEdit.strategy_mode === 'glide_path' || externalStrategyEdit.strategy_mode === 'de_risk') && (
+                    <label style={{ display: 'grid', gap: '4px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      De-risk policy
+                      <select value={externalStrategyEdit.de_risk_policy}
+                        onChange={(e) => setExternalStrategyEdit((prev: any) => ({ ...prev, de_risk_policy: e.target.value }))}
+                        style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
+                        <option value="">Auto — follow recommendation{externalStrategyResult?.recommended_policy ? ` (${externalStrategyResult.recommended_policy === 'shed_beta' ? 'shed to cash' : 'rotate'})` : ''}</option>
+                        <option value="rotate">Rotate — keep quality, hold market exposure</option>
+                        <option value="shed_beta">Shed high-beta to cash — cut crash exposure</option>
+                      </select>
+                      {externalStrategyResult?.recommendation_reason && (
+                        <span style={{ fontSize: '10.5px', color: 'var(--color-gold)' }}>💡 {externalStrategyResult.recommendation_reason}</span>
+                      )}
+                    </label>
+                  )}
                   <label style={{ display: 'grid', gap: '5px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     Aggression: <strong style={{ color: 'var(--text-primary)' }}>{externalStrategyEdit.aggression}</strong>
                     <input type="range" min={0} max={100} value={externalStrategyEdit.aggression}
@@ -5508,6 +5542,67 @@ export default function Home() {
                         </tbody>
                       </table>
                       <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{crashStress.method_note} Higher avg beta ⇒ more market exposure ⇒ deeper crash drawdown.</div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* De-risk policy comparison: rotate vs shed-to-cash */}
+              <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px', display: 'grid', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: '13px' }}>De-risk policy comparison</strong>
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>What each policy means: upside vs crash protection, side by side.</span>
+                  <button className="toggle-btn" disabled={policyCompareLoading || !selectedAccount}
+                    onClick={() => runPolicyCompare(selectedAccount, wargameYears, crashEra)}>
+                    {policyCompareLoading ? 'Comparing…' : 'Compare rotate vs shed-to-cash'}
+                  </button>
+                </div>
+                {policyCompare && policyCompare.error && (
+                  <div style={{ fontSize: '12px', color: 'var(--color-gold)' }}>⚠ {policyCompare.error}</div>
+                )}
+                {policyCompare && policyCompare.results && (() => {
+                  const COLORS: any = { rotate: '#F59E0B', shed_beta: '#38BDF8' };
+                  const chart = (policyCompare.dates || []).map((d: string, i: number) => {
+                    const row: any = { date: d };
+                    policyCompare.results.forEach((r: any) => { row[r.policy] = +(((r.curve[i] ?? 1) - 1) * 100).toFixed(2); });
+                    return row;
+                  });
+                  return (
+                    <>
+                      {policyCompare.recommendation_reason && (
+                        <div style={{ fontSize: '11.5px', color: 'var(--color-gold)' }}>💡 Recommended: <strong>{policyCompare.recommended_policy === 'shed_beta' ? 'Shed high-beta to cash' : 'Rotate into quality'}</strong> — {policyCompare.recommendation_reason}</div>
+                      )}
+                      <div style={{ height: 200 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={chart} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} minTickGap={48} />
+                            <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip contentStyle={{ background: 'rgba(16,20,38,0.97)', border: '1px solid var(--border-glass)', fontSize: 12 }}
+                              formatter={(v: any, name: any) => [`${v}%`, policyCompare.results.find((r: any) => r.policy === name)?.label || name]} />
+                            <Legend formatter={(v: any) => policyCompare.results.find((r: any) => r.policy === v)?.label || v} wrapperStyle={{ fontSize: 11 }} />
+                            {policyCompare.results.map((r: any) => (
+                              <Line key={r.policy} type="monotone" dataKey={r.policy} stroke={COLORS[r.policy] || '#888'} strokeWidth={2} dot={false} />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <table className="trade-table">
+                        <thead><tr><th>Policy</th><th>{policyCompare.lookback_years}-yr return</th><th>Recent DD</th><th>{policyCompare.crash_label?.split(' (')[0]} DD</th><th>Beta</th><th>Cash</th></tr></thead>
+                        <tbody>
+                          {policyCompare.results.map((r: any) => (
+                            <tr key={r.policy} style={r.policy === policyCompare.recommended_policy ? { background: 'rgba(245,158,11,0.08)' } : {}}>
+                              <td><span style={{ color: COLORS[r.policy] }}>●</span> {r.label}{r.policy === policyCompare.recommended_policy ? ' ★' : ''}</td>
+                              <td style={{ color: r.metrics.total_return >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{r.metrics.total_return >= 0 ? '+' : ''}{r.metrics.total_return.toFixed(1)}%</td>
+                              <td style={{ color: 'var(--color-sell)' }}>−{r.metrics.max_drawdown.toFixed(1)}%</td>
+                              <td style={{ color: 'var(--color-sell)' }}>{r.crash_drawdown != null ? `−${r.crash_drawdown}%` : '—'}</td>
+                              <td>{r.portfolio_beta.toFixed(2)}</td>
+                              <td>{(r.cash_target * 100).toFixed(0)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Recent = {policyCompare.lookback_years}-yr walk-forward on your holdings. Crash DD = synthetic {policyCompare.crash_label} (S&amp;P −{policyCompare.crash_spy_drawdown}%). Rotate = more upside, deeper crash; shed-to-cash = smoother, less upside.</div>
                     </>
                   );
                 })()}
