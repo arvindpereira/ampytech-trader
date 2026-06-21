@@ -54,6 +54,10 @@ backend/ml_engine/saved_models/_old_breakout_pth/
 # Premium News Archive
 backend/data/premium_news/archive/
 
+# Imported broker source files (financial PII) — backed up to Drive, never to git.
+backend/data/import_sources/
+backend/data/*.csv
+
 # TS build info
 *.tsbuildinfo
 frontend/tsconfig.tsbuildinfo

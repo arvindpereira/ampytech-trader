@@ -2437,6 +2437,7 @@ async def import_external_portfolio_pdf(
     # Robinhood transaction CSV → reconstruct holdings (with the 2026-05-31 statement as basis/snapshot anchor).
     if name.endswith(".csv"):
         try:
+            _stash_import_source(file.filename, data)   # keep a backed-up copy of the source export
             from data_ingestion.import_external_csv import import_robinhood_csv
             result = import_robinhood_csv(data, override_account=override_account)
             if result.get("status") != "success":
@@ -2473,6 +2474,20 @@ def _refresh_external_prices(db, account_label, tickers=None):
             fetch_equity_advisor_prices(db, tickers=sorted({t.upper().strip() for t in tickers}))
     except Exception as e:
         print(f"External price refresh failed (non-fatal): {e}")
+
+
+def _stash_import_source(filename, data):
+    """Keep a copy of an uploaded broker export in data/import_sources/ so it's captured by
+    `make backup` (and re-importable). Best-effort — never blocks the import."""
+    try:
+        from app.core.config import DATA_STORAGE_DIR
+        safe = os.path.basename(filename or "import.csv")
+        dest_dir = os.path.join(DATA_STORAGE_DIR, "import_sources")
+        os.makedirs(dest_dir, exist_ok=True)
+        with open(os.path.join(dest_dir, safe), "wb") as f:
+            f.write(data)
+    except Exception as e:
+        print(f"Could not stash import source (non-fatal): {e}")
 
 @app.get("/api/external/suggestions")
 def get_external_suggestions(account_label: str, db=Depends(get_db)):
