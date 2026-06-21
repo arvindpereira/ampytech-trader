@@ -5248,16 +5248,16 @@ export default function Home() {
                       onChange={(e) => setExternalStrategyEdit(prev => ({ ...prev, strategy_mode: e.target.value }))}
                       style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}>
                       <option value="growth">Model growth</option>
-                      <option value="glide_path">Crash-risk glide path</option>
-                      <option value="all_weather">Diversified defensive template</option>
-                      <option value="barbell">T-bill-heavy barbell template</option>
+                      <option value="glide_path">De-risk — keep quality (holdings-aware)</option>
+                      <option value="all_weather">Rotate into All-Weather basket (Dalio-style)</option>
+                      <option value="barbell">Rotate into barbell basket (T-bill heavy)</option>
                     </select>
                   </label>
                   <div style={{ fontSize: '11px', lineHeight: 1.45, color: 'var(--text-secondary)' }}>
-                    {externalStrategyEdit.strategy_mode === 'growth' && 'Uses shared model candidates; the defensive endpoint is cash.'}
-                    {externalStrategyEdit.strategy_mode === 'glide_path' && 'Tilts toward the current tradeable safe-asset template.'}
-                    {externalStrategyEdit.strategy_mode === 'all_weather' && 'Fixed SPY, Treasury, gold, and commodity template.'}
-                    {externalStrategyEdit.strategy_mode === 'barbell' && '90% BIL and 10% QQQ endpoint; no options or tail hedge.'}
+                    {externalStrategyEdit.strategy_mode === 'growth' && 'Deploys shared model BUY signals across your buckets; defensive endpoint is cash.'}
+                    {(externalStrategyEdit.strategy_mode === 'glide_path' || externalStrategyEdit.strategy_mode === 'de_risk') && 'Holdings-aware: keeps your low-volatility / quality names, trims speculative ones, raises cash — scaled by live crash risk. Does not open new speculative positions.'}
+                    {externalStrategyEdit.strategy_mode === 'all_weather' && 'Explicitly ROTATES into a fixed ETF basket: SPY 30 / TLT 40 / IEF 15 / GLD 7.5 / GSG 7.5 — this will sell holdings not in the basket.'}
+                    {externalStrategyEdit.strategy_mode === 'barbell' && 'Explicitly ROTATES into a fixed basket: BIL 90 / QQQ 10. No options or tail hedge.'}
                   </div>
                   <label style={{ display: 'grid', gap: '5px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     Aggression: <strong style={{ color: 'var(--text-primary)' }}>{externalStrategyEdit.aggression}</strong>
@@ -5293,20 +5293,54 @@ export default function Home() {
                   {externalStrategyError && <div style={{ fontSize: '12px', color: 'var(--color-sell)' }}>{externalStrategyError}</div>}
                 </div>
               </div>
-              {externalStrategyResult && (
-                <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px', display: 'grid', gap: '8px' }}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', fontSize: '11px' }}>
-                    {Object.entries(externalStrategyResult.target_weights || {}).sort((a: any, b: any) => b[1] - a[1]).slice(0, 8).map(([ticker, weight]: any) => (
-                      <span key={ticker} style={{ padding: '4px 7px', borderRadius: '5px', background: 'rgba(255,255,255,0.04)' }}>{ticker} {(weight * 100).toFixed(1)}%</span>
+              {externalStrategyResult && (() => {
+                const r = externalStrategyResult;
+                const tw = r.target_weights || {}; const cw = r.current_weights || {}; const tiers = r.tiers || {};
+                const TIER_LABEL: any = { quality_growth: ['🔥 Hot', '#10B981'], core: ['🛡️ Solid', '#38BDF8'], speculative: ['🎲 Long-shot', '#EF4444'], value_trap: ['🧊 Cold', '#94A3B8'] };
+                const REASON: any = { keep_quality: 'Keep — quality/low-vol', model_buy: 'Model BUY', shared_model_growth: 'Model growth', blended_growth_defensive: 'Blend', defensive_template: 'Defensive basket' };
+                const rows = Array.from(new Set([...Object.keys(tw), ...Object.keys(cw)]))
+                  .map((t) => ({ t, cur: cw[t] || 0, tgt: tw[t] || 0, tier: tiers[t], reason: (r.target_reason_codes || {})[t] }))
+                  .filter((x) => x.cur > 0.0005 || x.tgt > 0.0005)
+                  .sort((a, b) => b.tgt - a.tgt).slice(0, 16);
+                const keeping = rows.filter((x) => x.tgt >= x.cur && (x.tier === 'core' || x.tier === 'quality_growth')).map((x) => x.t);
+                const trimming = rows.filter((x) => x.tgt < x.cur - 0.001 && (x.tier === 'speculative' || x.tier === 'value_trap')).map((x) => x.t);
+                const badge = (tier: string) => { const m = TIER_LABEL[tier]; return m ? <span style={{ fontSize: '10px', color: m[1] }}>{m[0]}</span> : <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>—</span>; };
+                return (
+                  <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px', display: 'grid', gap: '10px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                      <span><strong style={{ color: 'var(--text-primary)' }}>{(r.strategy_mode || '').replace('_', ' ')}</strong> · aggression {r.aggression}</span>
+                      {r.crash_risk_coefficient != null && <span>Crash-risk de-risk: <strong style={{ color: 'var(--color-gold)' }}>{(r.crash_risk_coefficient * 100).toFixed(0)}%</strong></span>}
+                      <span>Cash target <strong style={{ color: '#10B981' }}>{((r.cash_target_weight || 0) * 100).toFixed(1)}%</strong></span>
+                      <span>Turnover {((r.turnover_pct || 0) * 100).toFixed(1)}%</span>
+                    </div>
+                    {(keeping.length > 0 || trimming.length > 0) && (
+                      <div style={{ fontSize: '11.5px', lineHeight: 1.5 }}>
+                        {keeping.length > 0 && <span style={{ color: '#38BDF8' }}>Keeping {keeping.slice(0, 6).join(', ')}</span>}
+                        {keeping.length > 0 && trimming.length > 0 && <span style={{ color: 'var(--text-secondary)' }}> · </span>}
+                        {trimming.length > 0 && <span style={{ color: '#EF4444' }}>Trimming {trimming.slice(0, 6).join(', ')}</span>}
+                      </div>
+                    )}
+                    <table className="trade-table">
+                      <thead><tr><th>Ticker</th><th>Risk</th><th>Current</th><th>Target</th><th></th><th>Why</th></tr></thead>
+                      <tbody>
+                        {rows.map((x) => (
+                          <tr key={x.t}>
+                            <td><strong>{x.t}</strong></td>
+                            <td>{badge(x.tier)}</td>
+                            <td>{(x.cur * 100).toFixed(1)}%</td>
+                            <td>{(x.tgt * 100).toFixed(1)}%</td>
+                            <td style={{ color: x.tgt > x.cur + 0.001 ? 'var(--color-buy)' : x.tgt < x.cur - 0.001 ? 'var(--color-sell)' : 'var(--text-secondary)' }}>{x.tgt > x.cur + 0.001 ? '▲' : x.tgt < x.cur - 0.001 ? '▼' : '—'}</td>
+                            <td style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{REASON[x.reason] || x.reason || ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {(r.warnings || []).map((warning: string, index: number) => (
+                      <div key={index} style={{ fontSize: '11px', color: 'var(--color-gold)' }}>⚠ {warning}</div>
                     ))}
-                    <span style={{ padding: '4px 7px', borderRadius: '5px', background: 'rgba(16,185,129,0.08)' }}>Cash {((externalStrategyResult.cash_target_weight || 0) * 100).toFixed(1)}%</span>
-                    <span style={{ padding: '4px 7px', color: 'var(--text-secondary)' }}>Turnover {((externalStrategyResult.turnover_pct || 0) * 100).toFixed(1)}%</span>
                   </div>
-                  {(externalStrategyResult.warnings || []).map((warning: string, index: number) => (
-                    <div key={index} style={{ fontSize: '11px', color: 'var(--color-gold)' }}>⚠ {warning}</div>
-                  ))}
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Split layout: Holdings/Lots vs suggestions */}

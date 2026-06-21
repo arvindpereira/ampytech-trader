@@ -6,7 +6,7 @@ import re
 from app.core.config import HIGH_RISK_CAP
 
 
-STRATEGY_MODES = ("growth", "glide_path", "all_weather", "barbell")
+STRATEGY_MODES = ("growth", "glide_path", "de_risk", "all_weather", "barbell")
 STRATEGY_KEYS = ("swing", "longterm", "high_risk")
 DEFAULT_BUCKETS = {"swing": 1.0, "longterm": 0.0, "high_risk": 0.0}
 ALL_WEATHER = {"SPY": 0.30, "TLT": 0.40, "IEF": 0.15, "GLD": 0.075, "GSG": 0.075}
@@ -18,6 +18,12 @@ _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
 
 class StrategyValidationError(ValueError):
     pass
+
+
+def canonical_ticker(value):
+    """Canonical symbol so holdings/signals/templates align. Class shares use a dot in our DB
+    (BRK.B); a dash form (BRK-B, as Yahoo uses) is normalized to it."""
+    return str(value or "").upper().strip().replace("-", ".")
 
 
 def validate_buckets(value):
@@ -80,7 +86,7 @@ def extract_model_signals(snapshot):
     for bucket, response_key in (("swing", "swing_suggestions"),
                                  ("high_risk", "high_risk_suggestions")):
         for item in snapshot.get(response_key) or []:
-            ticker = str(item.get("ticker", "")).upper().strip()
+            ticker = canonical_ticker(item.get("ticker"))
             verdict = str(item.get("verdict", item.get("action", ""))).upper()
             if not _TICKER_RE.fullmatch(ticker):
                 continue
@@ -135,45 +141,74 @@ def build_growth_target(current_weights, buckets, snapshot):
     return weights, cash, explicit_sells
 
 
-def defensive_endpoint(mode, safe_mix=None, glide_coefficient=None):
+# Per-name "defensiveness": how much of a held name to keep when de-risking. Quality/low-volatility
+# names (BRK.B, core) are kept; speculative/high-volatility names (BYND) are shed toward cash.
+_TIER_DEFENSIVENESS = {"core": 1.0, "quality_growth": 0.85, "value_trap": 0.30, "speculative": 0.12}
+
+
+def _defensiveness(ticker, classifications):
+    info = (classifications or {}).get(ticker) or {}
+    base = _TIER_DEFENSIVENESS.get(info.get("tier"), 0.5)
+    vol = info.get("volatility")
+    if vol is not None:
+        try:
+            v = float(vol)
+            if math.isfinite(v):
+                base *= max(0.25, min(1.15, 1.0 - (v - 0.25) * 0.6))   # low vol kept, high vol shed
+        except (TypeError, ValueError):
+            pass
+    return max(0.0, min(1.0, base))
+
+
+def holdings_defensive_target(current_weights, classifications, de_risk_coefficient):
+    """Holdings-aware de-risk: tilt toward the account's own low-vol / high-quality holdings, trim
+    speculative ones, and route the de-risked remainder to cash. `de_risk_coefficient` (0..1, from
+    the crash radar) sets how much of the book moves to cash."""
+    try:
+        d = float(de_risk_coefficient)
+    except (TypeError, ValueError):
+        raise StrategyValidationError("The crash-risk coefficient is unavailable")
+    if not math.isfinite(d) or not 0.0 <= d <= 1.0:
+        raise StrategyValidationError("The crash-risk coefficient is invalid")
+    raw = {t: w * _defensiveness(t, classifications)
+           for t, w in current_weights.items() if w > 0}
+    total_raw = sum(raw.values())
+    if total_raw <= 0:                       # nothing to keep → all cash
+        return {}, 1.0
+    equity_share = 1.0 - d                    # d of the book becomes cash; the rest stays in quality names
+    target = {t: equity_share * (rw / total_raw) for t, rw in raw.items()}
+    cash = max(0.0, 1.0 - sum(target.values()))
+    return target, cash
+
+
+def defensive_endpoint(mode, current_weights=None, classifications=None, de_risk_coefficient=None):
     if mode == "growth":
         return {}, 1.0
-    if mode == "all_weather":
+    if mode == "all_weather":                 # explicit basket rotation (Dalio-inspired ETF mix)
         return dict(ALL_WEATHER), 0.0
-    if mode == "barbell":
+    if mode == "barbell":                      # explicit basket rotation (T-bill-heavy + small growth)
         return dict(BARBELL), 0.0
-    if mode == "glide_path":
-        if not safe_mix:
-            raise StrategyValidationError("No defensive snapshot is available for glide_path")
-        values = {str(t).upper(): float(w) / 100.0 for t, w in safe_mix.items()}
-        if not values or any(not math.isfinite(w) or w < 0 for w in values.values()):
-            raise StrategyValidationError("The defensive safe-asset template is invalid")
-        total = sum(values.values())
-        if total <= 0:
-            raise StrategyValidationError("The defensive safe-asset template is empty")
-        safe = {ticker: weight / total for ticker, weight in values.items()}
-        try:
-            coefficient = float(glide_coefficient)
-        except (TypeError, ValueError):
-            raise StrategyValidationError("The crash-risk coefficient is unavailable")
-        if not math.isfinite(coefficient) or not 0.0 <= coefficient <= 1.0:
-            raise StrategyValidationError("The crash-risk coefficient is invalid")
-        tickers = set(ALL_WEATHER) | set(safe)
-        return {ticker: (1.0 - coefficient) * ALL_WEATHER.get(ticker, 0.0)
-                + coefficient * safe.get(ticker, 0.0) for ticker in tickers}, 0.0
+    if mode in ("glide_path", "de_risk"):      # holdings-aware de-risk (keep quality, raise cash)
+        return holdings_defensive_target(current_weights or {}, classifications, de_risk_coefficient)
     raise StrategyValidationError(f"Unknown strategy mode: {mode}")
 
 
-def build_account_target(current_weights, mode, aggression, buckets, snapshot=None, safe_mix=None,
-                         glide_coefficient=None):
+def build_account_target(current_weights, mode, aggression, buckets, snapshot=None,
+                         classifications=None, de_risk_coefficient=None):
     if mode not in STRATEGY_MODES:
         raise StrategyValidationError("Invalid strategy mode")
     if isinstance(aggression, bool) or not isinstance(aggression, int) or not 0 <= aggression <= 100:
         raise StrategyValidationError("aggression must be an integer from 0 through 100")
     buckets = validate_buckets(buckets)
-    growth, growth_cash, explicit_sells = build_growth_target(current_weights, buckets, snapshot)
-    defensive, defensive_cash = defensive_endpoint(mode, safe_mix, glide_coefficient)
     a = aggression / 100.0
+    # No fresh speculative deployment in defensive postures: scale the high_risk bucket by aggression
+    # so a de-risking account doesn't open new speculative positions (BYND). Existing speculative
+    # holdings are preserved by growth but trimmed by the defensive endpoint.
+    growth_buckets = dict(buckets)
+    growth_buckets["high_risk"] = buckets["high_risk"] * a
+    growth, growth_cash, explicit_sells = build_growth_target(current_weights, growth_buckets, snapshot)
+    defensive, defensive_cash = defensive_endpoint(mode, current_weights, classifications,
+                                                   de_risk_coefficient)
     tickers = set(growth) | set(defensive)
     target = {ticker: a * growth.get(ticker, 0.0) + (1.0 - a) * defensive.get(ticker, 0.0)
               for ticker in tickers}
@@ -187,8 +222,16 @@ def build_account_target(current_weights, mode, aggression, buckets, snapshot=No
     reasons = {}
     for ticker in target:
         in_growth, in_defensive = ticker in growth, ticker in defensive
-        reasons[ticker] = "blended_growth_defensive" if in_growth and in_defensive else (
-            "shared_model_growth" if in_growth else "defensive_template")
+        held = current_weights.get(ticker, 0.0) > 0
+        tier = (classifications or {}).get(ticker, {}).get("tier")
+        if in_defensive and held and tier in ("core", "quality_growth"):
+            reasons[ticker] = "keep_quality"
+        elif in_growth and in_defensive:
+            reasons[ticker] = "blended_growth_defensive"
+        elif in_growth:
+            reasons[ticker] = "model_buy" if not held else "shared_model_growth"
+        else:
+            reasons[ticker] = "defensive_template"
     return {"target_weights": target, "cash_target_weight": cash,
             "target_reason_codes": reasons, "explicit_sells": explicit_sells}
 
