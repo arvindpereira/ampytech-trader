@@ -10,66 +10,107 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "trading_system.db")
+ANCHOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anchors")
 
-# Ground-truth holdings from the 2026-05-31 monthly statement. Used to (a) supply cost basis for
-# positions that arrived via internal transfer / corporate action with no price in the CSV export,
-# and (b) reconcile reconstructed share counts (backfill any residual gap).
-INDIVIDUAL_PDF_HOLDINGS = {
-    "AAPL": {"shares": 36.0, "avg_cost": 312.06},
-    "AMD": {"shares": 11.0, "avg_cost": 516.10},
-    "AMZN": {"shares": 110.0, "avg_cost": 270.64},
-    "AVAV": {"shares": 1.0, "avg_cost": 207.24},
-    "BABA": {"shares": 110.0, "avg_cost": 124.22},
-    "BRK.B": {"shares": 48.0, "avg_cost": 474.48},
-    "GEV": {"shares": 12.0, "avg_cost": 968.32},
-    "GOOGL": {"shares": 30.0, "avg_cost": 380.34},
-    "HMC": {"shares": 240.0, "avg_cost": 26.99},  # 57 + 183
-    "HOOD": {"shares": 200.0, "avg_cost": 94.30},
-    "INTC": {"shares": 10.0, "avg_cost": 114.68},
-    "KMX": {"shares": 200.0, "avg_cost": 44.62},
-    "LUV": {"shares": 100.0, "avg_cost": 42.95},
-    "META": {"shares": 107.0, "avg_cost": 632.51},
-    "MSFT": {"shares": 24.0, "avg_cost": 450.24},
-    "NFLX": {"shares": 380.0, "avg_cost": 86.02},
-    "NVDA": {"shares": 125.0, "avg_cost": 211.14},
-    "PLTR": {"shares": 45.0, "avg_cost": 156.54},
-    "QCOM": {"shares": 22.0, "avg_cost": 251.02},
-    "RYCEY": {"shares": 2000.0, "avg_cost": 17.95},
-    "TSM": {"shares": 25.0, "avg_cost": 418.45},
-    "VTI": {"shares": 1.0, "avg_cost": 372.54},
-    "WMT": {"shares": 291.0, "avg_cost": 115.75},
-    "KDK": {"shares": 2250.0, "avg_cost": 7.04},
-    "REMX": {"shares": 12.0, "avg_cost": 99.63}
+# Account labels (the BYND/KDK markers below are only used to auto-detect which account a CSV is for —
+# they are NOT a basis source).
+ACCOUNT_LABELS = {
+    "joint": "Robinhood Joint (116424851826)",
+    "individual": "Robinhood Individual (706393097)",
 }
 
-JOINT_PDF_HOLDINGS = {
-    "AAPL": {"shares": 35.0, "avg_cost": 312.06},
-    "AMD": {"shares": 20.0, "avg_cost": 516.10},
-    "AMZN": {"shares": 10.0, "avg_cost": 270.64},
-    "BYND": {"shares": 2000.0, "avg_cost": 0.7885},
-    "DKNG": {"shares": 10.0, "avg_cost": 24.49},
-    "FSLY": {"shares": 150.0, "avg_cost": 17.765},
-    "HOOD": {"shares": 35.0, "avg_cost": 94.30},
-    "JKS": {"shares": 52.0, "avg_cost": 23.31},
-    "NFLX": {"shares": 60.0, "avg_cost": 86.02},
-    "NIO": {"shares": 40.0, "avg_cost": 5.60},
-    "ROKU": {"shares": 14.0, "avg_cost": 130.18},
-    "RUN": {"shares": 40.0, "avg_cost": 16.72},
-    "RYCEY": {"shares": 800.0, "avg_cost": 17.95},
-    "SHOP": {"shares": 5.0, "avg_cost": 118.71},
-    "SPY": {"shares": 20.0, "avg_cost": 756.48},
-    "TSLA": {"shares": 132.5, "avg_cost": 435.79}
+# Seed anchor files for accounts whose cost basis can't be reconstructed from their own CSV (positions
+# transferred in with no trade price). These hold the formerly-hardcoded values as plain data; a real
+# monthly statement PDF import overwrites them. Accounts NOT listed here reconstruct purely from the CSV.
+SEED_ANCHORS = {
+    ACCOUNT_LABELS["joint"]: os.path.join(ANCHOR_DIR, "robinhood_joint_2026-05-31.csv"),
+    ACCOUNT_LABELS["individual"]: os.path.join(ANCHOR_DIR, "robinhood_individual_2026-05-31.csv"),
 }
 
-STATEMENT_DATE = datetime(2026, 5, 31)
 # Transaction codes that bring shares IN with no purchase price in the export (internal transfer,
-# ACATS-in, merger/spinoff received). These are the lots that were wrongly booked at $0 basis.
+# ACATS-in, merger/spinoff received).
 TRANSFER_IN_CODES = {"ITRF", "ACATI", "MRGS", "SPR", "SOFF"}
 
-ACCOUNTS = {
-    "joint": ("Robinhood Joint (116424851826)", JOINT_PDF_HOLDINGS),
-    "individual": ("Robinhood Individual (706393097)", INDIVIDUAL_PDF_HOLDINGS),
-}
+
+# ---------------------------------------------------------------------------
+# Statement anchor (cost-basis + share-count snapshot) — replaces the old hardcoded dicts.
+# Populated automatically from a monthly statement PDF, or seeded from a data CSV.
+# ---------------------------------------------------------------------------
+def _ensure_anchor_table(cursor):
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS external_statement_holdings ("
+        "account_label TEXT NOT NULL, ticker TEXT NOT NULL, shares REAL NOT NULL, avg_cost REAL, "
+        "statement_date TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'pdf', created_at TEXT NOT NULL, "
+        "PRIMARY KEY (account_label, ticker))"
+    )
+
+
+def get_statement_anchor(account_label, db_path=None):
+    """Return the account's anchor as {TICKER: {shares, avg_cost, statement_date}} (empty if none)."""
+    conn = sqlite3.connect(db_path or DB_PATH)
+    cur = conn.cursor()
+    _ensure_anchor_table(cur)
+    cur.execute("SELECT ticker, shares, avg_cost, statement_date FROM external_statement_holdings "
+                "WHERE account_label = ?", (account_label,))
+    rows = cur.fetchall()
+    conn.close()
+    return {r[0].upper(): {"shares": r[1], "avg_cost": r[2], "statement_date": r[3]} for r in rows}
+
+
+def set_statement_anchor(account_label, holdings, statement_date, source="pdf", db_path=None):
+    """Replace the account's anchor with `holdings` (iterable of dicts with ticker/shares and an
+    optional avg_cost or cost_basis_per_share). Returns the number of rows written."""
+    conn = sqlite3.connect(db_path or DB_PATH)
+    cur = conn.cursor()
+    _ensure_anchor_table(cur)
+    now = datetime.now().isoformat(timespec="seconds")
+    cur.execute("DELETE FROM external_statement_holdings WHERE account_label = ?", (account_label,))
+    n = 0
+    for h in holdings:
+        ticker = str(h.get("ticker") or "").upper().strip()
+        if not ticker:
+            continue
+        try:
+            shares = float(h.get("shares") or 0)
+        except (TypeError, ValueError):
+            continue
+        if shares <= 0:
+            continue
+        raw_cost = h.get("avg_cost", h.get("cost_basis_per_share"))
+        try:
+            avg_cost = float(raw_cost) if raw_cost not in (None, "") else None
+        except (TypeError, ValueError):
+            avg_cost = None
+        cur.execute("INSERT OR REPLACE INTO external_statement_holdings "
+                    "(account_label, ticker, shares, avg_cost, statement_date, source, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (account_label, ticker, shares, avg_cost, statement_date, source, now))
+        n += 1
+    conn.commit()
+    conn.close()
+    return n
+
+
+def load_anchor_csv(path, account_label, statement_date=None, source="csv-seed", db_path=None):
+    """Load a simple `ticker,shares,avg_cost` CSV into the anchor for an account."""
+    if statement_date is None:
+        base = os.path.basename(path)
+        statement_date = base.rsplit("_", 1)[-1].replace(".csv", "") if "_" in base else datetime.now().strftime("%Y-%m-%d")
+    holdings = []
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            holdings.append({"ticker": row.get("ticker"), "shares": row.get("shares"),
+                             "avg_cost": row.get("avg_cost")})
+    return set_statement_anchor(account_label, holdings, statement_date, source=source, db_path=db_path)
+
+
+def _resolve_anchor(account_label, db_path):
+    """Return the account's anchor, auto-seeding from a bundled data CSV the first time if one exists."""
+    anchor = get_statement_anchor(account_label, db_path)
+    if not anchor and account_label in SEED_ANCHORS and os.path.exists(SEED_ANCHORS[account_label]):
+        load_anchor_csv(SEED_ANCHORS[account_label], account_label, db_path=db_path)
+        anchor = get_statement_anchor(account_label, db_path)
+    return anchor
 
 
 def _latest_price(cursor, ticker):
@@ -77,30 +118,38 @@ def _latest_price(cursor, ticker):
     try:
         cursor.execute("SELECT close FROM recent_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1", (ticker,))
         r = cursor.fetchone()
+        if r and r[0]:
+            return float(r[0])
+        cursor.execute("SELECT close FROM daily_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1", (ticker,))
+        r = cursor.fetchone()
         return float(r[0]) if r and r[0] else None
     except Exception:
         return None
 
 
-def _select_account(rows, override_account):
+def _select_account_label(rows, override_account):
     override = (override_account or "").strip().lower()
     if "joint" in override:
-        return ACCOUNTS["joint"]
+        return ACCOUNT_LABELS["joint"]
     if "indiv" in override:
-        return ACCOUNTS["individual"]
+        return ACCOUNT_LABELS["individual"]
     tickers = {r[3].strip().upper() for r in rows if r[3] and r[3].strip()}
     if "BYND" in tickers:
-        return ACCOUNTS["joint"]
+        return ACCOUNT_LABELS["joint"]
     if "KDK" in tickers:
-        return ACCOUNTS["individual"]
-    return (None, None)
+        return ACCOUNT_LABELS["individual"]
+    return None
 
 
 def import_robinhood_csv(content, override_account=None, db_path=None):
-    """Reconstruct a Robinhood account's holdings from a transaction-history CSV export and write
-    them to the external-portfolio tables. `content` is the CSV text (str or bytes). Returns a
-    summary dict. Positions that arrive via internal transfer / corporate action (no price in the
-    export) get their cost basis from the 2026-05-31 statement so they are never booked at $0."""
+    """Reconstruct a Robinhood account's holdings from a transaction-history CSV export.
+
+    Cost basis comes from real trade prices in the CSV. If the account has a statement *anchor*
+    (from a monthly PDF import or a seed CSV) it is used to (a) supply basis for positions that
+    transferred in with no price and (b) snap share counts to the month-end snapshot before rolling
+    forward later trades. Accounts with no anchor (e.g. the Individual account, which has full history
+    from account opening) reconstruct purely from the CSV, with deficit-aware FIFO so a sell that
+    precedes its buy doesn't leave phantom shares."""
     if isinstance(content, bytes):
         content = content.decode("utf-8", errors="replace")
     db_path = db_path or DB_PATH
@@ -114,11 +163,20 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
             continue
         rows.append(r)
 
-    account_label, pdf_holdings = _select_account(rows, override_account)
+    account_label = _select_account_label(rows, override_account)
     if not account_label:
         return {"status": "error",
                 "detail": "Could not identify the account (no BYND/KDK marker found). "
                           "Re-upload and choose Individual or Joint."}
+
+    anchor = _resolve_anchor(account_label, db_path)
+    anchor_date = None
+    if anchor:
+        try:
+            anchor_date = datetime.strptime(next(iter(anchor.values()))["statement_date"], "%Y-%m-%d")
+        except Exception:
+            anchor_date = None
+    notes.append(f"Anchor: {'yes (' + str(len(anchor)) + ' holdings)' if anchor else 'none — pure CSV reconstruction'}")
 
     def get_date(row):
         return datetime.strptime(row[0], "%m/%d/%Y")
@@ -140,20 +198,46 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
     )
 
     cash = 0.0
-    positions = collections.defaultdict(list)  # ticker -> [{date, qty, price, notes?}]
+    positions = collections.defaultdict(list)   # ticker -> [{date, qty, price, notes?}]
+    deficits = collections.defaultdict(float)    # ticker -> shares sold before they were held (FIFO deficit)
 
     def resolve_basis(ticker, price_val):
-        """Never return $0 for a real holding: prefer the trade price, then the statement avg cost,
-        then the latest local price."""
         if price_val and price_val > 0:
             return price_val, None
-        gt = pdf_holdings.get(ticker)
-        if gt and gt.get("avg_cost"):
-            return float(gt["avg_cost"]), "basis from 2026-05-31 statement (transferred-in, no trade price)"
+        a = anchor.get(ticker)
+        if a and a.get("avg_cost"):
+            return float(a["avg_cost"]), "basis from statement anchor (transferred-in / no trade price)"
         lp = _latest_price(cursor, ticker)
         if lp:
-            return lp, "basis estimated from latest market price (no statement entry)"
-        return 0.0, "basis unknown — verify manually"
+            return lp, "basis estimated from latest market price — verify"
+        return 0.0, "basis unknown — enter manually"
+
+    def add_buy(ticker, qty, dt_iso, price_val):
+        d = deficits[ticker]
+        if d > 0:
+            repay = min(d, qty)
+            deficits[ticker] -= repay
+            qty -= repay
+        if qty <= 1e-9:
+            return
+        basis, note = resolve_basis(ticker, price_val)
+        lot = {"date": dt_iso, "qty": qty, "price": basis}
+        if note:
+            lot["notes"] = note
+        positions[ticker].append(lot)
+
+    def do_sell(ticker, qty):
+        qty_to_sell = abs(qty)
+        lots = positions[ticker]
+        while qty_to_sell > 1e-9 and lots:
+            if lots[0]["qty"] <= qty_to_sell + 1e-9:
+                qty_to_sell -= lots[0]["qty"]
+                lots.pop(0)
+            else:
+                lots[0]["qty"] -= qty_to_sell
+                qty_to_sell = 0.0
+        if qty_to_sell > 1e-9:      # sold more than we held (sell precedes its buy) — carry a deficit
+            deficits[ticker] += qty_to_sell
 
     def apply_transactions(tx_rows):
         nonlocal cash
@@ -207,22 +291,9 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
                 actual_code = "SELL"
 
             if actual_code in ["Buy", "BUY"] and ticker:
-                basis, note = resolve_basis(ticker, price_val)
-                lot = {"date": dt_iso, "qty": qty_val, "price": basis}
-                if note:
-                    lot["notes"] = note
-                positions[ticker].append(lot)
+                add_buy(ticker, qty_val, dt_iso, price_val)
             elif actual_code in ["Sell", "SELL"] and ticker:
-                qty_to_sell = abs(qty_val)
-                lots = positions[ticker]
-                while qty_to_sell > 1e-9 and lots:
-                    first_lot = lots[0]
-                    if first_lot["qty"] <= qty_to_sell + 1e-9:
-                        qty_to_sell -= first_lot["qty"]
-                        lots.pop(0)
-                    else:
-                        first_lot["qty"] -= qty_to_sell
-                        qty_to_sell = 0.0
+                do_sell(ticker, qty_val)
             elif trans_code == "SPL" and ticker:
                 lots = positions[ticker]
                 existing_qty = sum(l["qty"] for l in lots)
@@ -232,42 +303,44 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
                         lot["qty"] *= split_ratio
                         lot["price"] /= split_ratio
 
-    pre_statement = [r for r in rows if get_date(r) <= STATEMENT_DATE]
-    post_statement = [r for r in rows if get_date(r) > STATEMENT_DATE]
-    notes.append(f"Pre-statement rows: {len(pre_statement)}, post-statement rows: {len(post_statement)}")
-
-    apply_transactions(pre_statement)
-
-    # Snap every position to the 2026-05-31 statement (the authoritative month-end snapshot), then
-    # roll forward post-statement transactions. This makes holdings accurate even when the CSV's
-    # FIFO reconstruction drifts (e.g. a leading sell with no prior lots leaves phantom shares) and
-    # preserves correct post-statement buys.
-    for ticker in set(positions.keys()) | set(pdf_holdings.keys()):
-        reconstructed = sum(l["qty"] for l in positions[ticker])
-        gt = pdf_holdings.get(ticker)
-        if gt:
-            diff = round(gt["shares"] - reconstructed, 6)
-            if diff > 1e-4:
-                positions[ticker].append({"date": "2026-05-31", "qty": diff, "price": gt["avg_cost"],
-                                          "notes": "Backfilled from 2026-05-31 statement"})
-                notes.append(f"{ticker}: backfilled {diff:.4f} sh @ ${gt['avg_cost']} to match statement {gt['shares']}")
-            elif diff < -1e-4:
-                to_trim = -diff
-                lots = positions[ticker]
-                while to_trim > 1e-9 and lots:
-                    if lots[0]["qty"] <= to_trim + 1e-9:
-                        to_trim -= lots[0]["qty"]
-                        lots.pop(0)
-                    else:
-                        lots[0]["qty"] -= to_trim
-                        to_trim = 0.0
-                notes.append(f"{ticker}: trimmed {(-diff):.4f} sh to match statement {gt['shares']}")
-        else:
-            if reconstructed > 1e-4:
-                notes.append(f"{ticker}: cleared {reconstructed:.4f} sh — not held per 2026-05-31 statement")
-            positions[ticker] = []
-
-    apply_transactions(post_statement)
+    if anchor and anchor_date:
+        # Replay up to the statement, snap to the anchor (authoritative snapshot), roll forward.
+        pre = [r for r in rows if get_date(r) <= anchor_date]
+        post = [r for r in rows if get_date(r) > anchor_date]
+        notes.append(f"Pre-anchor rows: {len(pre)}, post-anchor rows: {len(post)}")
+        apply_transactions(pre)
+        for ticker in set(positions.keys()) | set(anchor.keys()):
+            reconstructed = sum(l["qty"] for l in positions[ticker])
+            a = anchor.get(ticker)
+            if a:
+                diff = round(a["shares"] - reconstructed, 6)
+                if diff > 1e-4:
+                    basis = a["avg_cost"] if a.get("avg_cost") else resolve_basis(ticker, 0)[0]
+                    positions[ticker].append({"date": a["statement_date"], "qty": diff, "price": basis,
+                                              "notes": "Backfilled from statement anchor"})
+                    notes.append(f"{ticker}: backfilled {diff:.4f} sh to match anchor {a['shares']}")
+                elif diff < -1e-4:
+                    to_trim = -diff
+                    lots = positions[ticker]
+                    while to_trim > 1e-9 and lots:
+                        if lots[0]["qty"] <= to_trim + 1e-9:
+                            to_trim -= lots[0]["qty"]
+                            lots.pop(0)
+                        else:
+                            lots[0]["qty"] -= to_trim
+                            to_trim = 0.0
+                    notes.append(f"{ticker}: trimmed {(-diff):.4f} sh to match anchor {a['shares']}")
+            else:
+                if reconstructed > 1e-4:
+                    notes.append(f"{ticker}: cleared {reconstructed:.4f} sh — not in the statement anchor")
+                positions[ticker] = []
+        apply_transactions(post)
+    else:
+        # No anchor: reconstruct holdings purely from the full CSV history.
+        apply_transactions(rows)
+        leftover = {t: round(d, 2) for t, d in deficits.items() if d > 1e-4}
+        if leftover:
+            notes.append(f"Unresolved sell deficits (sold more than reconstructed): {leftover}")
 
     conn_cash = round(cash, 2)
     cursor.execute("UPDATE external_accounts SET cash = ?, updated_at = ? WHERE account_label = ?",
@@ -275,10 +348,12 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
 
     lots_written = 0
     zero_basis = 0
+    held_tickers = set()
     for ticker, lots in positions.items():
         for lot in lots:
             if lot["qty"] > 1e-9:
                 note = lot.get("notes") or "Parsed from Robinhood CSV transaction history"
+                held_tickers.add(ticker)
                 if lot["price"] <= 0:
                     zero_basis += 1
                 cursor.execute(
@@ -318,10 +393,12 @@ def import_robinhood_csv(content, override_account=None, db_path=None):
         "orders_inserted": orders_inserted,
         "cash": conn_cash,
         "zero_basis_lots": zero_basis,
+        "anchored": bool(anchor),
+        "tickers": sorted(held_tickers),
         "reconciliation": notes,
     }
     print(f"[import_robinhood_csv] {account_label}: {lots_written} lots, {orders_inserted} orders, "
-          f"cash ${conn_cash:,.2f}, zero-basis lots {zero_basis}")
+          f"cash ${conn_cash:,.2f}, zero-basis lots {zero_basis}, anchored={bool(anchor)}")
     return summary
 
 

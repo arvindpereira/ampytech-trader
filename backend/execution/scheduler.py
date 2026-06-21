@@ -74,6 +74,13 @@ def daily_data_fetch_job():
     try:
         fetch_recent_prices()
         fetch_daily_history()
+        # Keep externally-held / equity-advisor holdings (often outside the trade universe) priced at
+        # market so the External Portfolio and Equity Advisor values stay accurate day to day.
+        try:
+            from data_ingestion.price_fetcher import fetch_equity_advisor_prices
+            fetch_equity_advisor_prices()
+        except Exception as e:
+            print(f"Equity/external holdings price fetch skipped: {e}")
         fetch_macro_indicators()
         fetch_sentiment()
         # Keep the swing model's LLM-news features current: incrementally score the last week's

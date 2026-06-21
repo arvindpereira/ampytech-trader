@@ -77,11 +77,11 @@ def extract_pdf_text(data: bytes) -> str:
 def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
     low = (text + " " + filename).lower()
     broker = "Unknown"
-    
+
     # 1. Detect Brand
     is_vanguard = "vanguard" in low
     is_robinhood = "robinhood" in low
-    
+
     # 2. Extract Account Number if present
     account_number = None
     if is_robinhood:
@@ -96,10 +96,10 @@ def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
             vg_acct_match = re.search(r"brokerage\s*account\s*#\s*([\d-]+)", low)
         if vg_acct_match:
             account_number = vg_acct_match.group(1)
-            
+
     # 3. Detect Account Type
     is_joint = any(k in low for k in ["joint tenancy", "joint account", "survivorship"])
-    
+
     if is_robinhood:
         if is_joint:
             acct_type = "Joint"
@@ -137,6 +137,28 @@ def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
 def _mdy_to_iso(s: str) -> str:
     dt = datetime.strptime(s.strip(), "%m/%d/%Y")
     return dt.strftime("%Y-%m-%d")
+
+
+def _extract_statement_date(text: str) -> str:
+    """Best-effort statement period-end date for the anchor (so later CSV trades roll forward from
+    it). Falls back to today if no date is found."""
+    # "... - June 30, 2026" / "Statement Period ... December 31, 2025"
+    m = re.search(r"(?:through|to|[-–])\s*([A-Z][a-z]+ \d{1,2},\s*\d{4})", text)
+    if not m:
+        m = re.search(r"([A-Z][a-z]+ \d{1,2},\s*\d{4})", text)
+    if m:
+        for fmt in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(m.group(1).strip(), fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+    m = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", text)
+    if m:
+        try:
+            return _mdy_to_iso(m.group(1))
+        except ValueError:
+            pass
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def parse_robinhood_cash(text: str) -> Optional[float]:
@@ -547,6 +569,24 @@ def import_external_pdf(
                 txs_inserted += 1
 
         db.commit()
+
+        # Update the statement anchor (cost basis + share-count snapshot) for this account so future
+        # CSV transaction imports reconstruct holdings against the latest real statement instead of a
+        # hardcoded/seed snapshot.
+        anchor_written = 0
+        if parsed_data["lots"]:
+            try:
+                from data_ingestion.import_external_csv import set_statement_anchor
+                stmt_date = _extract_statement_date(text)
+                anchor_written = set_statement_anchor(
+                    account_label,
+                    [{"ticker": l["ticker"], "shares": l["shares"], "avg_cost": l["cost_basis_per_share"]}
+                     for l in parsed_data["lots"]],
+                    statement_date=stmt_date, source="pdf",
+                )
+            except Exception as e:
+                print(f"Statement-anchor update skipped (non-fatal): {e}")
+
         return {
             "status": "success",
             "account_label": account_label,
@@ -554,6 +594,7 @@ def import_external_pdf(
             "parsed_count": inserted_count,
             "cash_updated": parsed_data["cash"],
             "transactions_imported": txs_inserted,
+            "anchor_holdings": anchor_written,
             "format": parsed_data["format"],
             "warnings": parsed_data["warnings"]
         }
