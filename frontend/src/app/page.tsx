@@ -631,6 +631,9 @@ export default function Home() {
   const [externalWargame, setExternalWargame] = useState<any>(null);
   const [externalWargameLoading, setExternalWargameLoading] = useState<boolean>(false);
   const [wargameYears, setWargameYears] = useState<number>(3);
+  const [crashStress, setCrashStress] = useState<any>(null);
+  const [crashStressLoading, setCrashStressLoading] = useState<boolean>(false);
+  const [crashEra, setCrashEra] = useState<string>('gfc');
   const [externalStrategyError, setExternalStrategyError] = useState<string>('');
   const [externalStrategyEdit, setExternalStrategyEdit] = useState({
     strategy_mode: 'growth', aggression: 60, swing: '100', longterm: '0', high_risk: '0'
@@ -680,6 +683,20 @@ export default function Home() {
     }
   };
 
+  const runCrashStress = async (acctLabel: string, era: string) => {
+    if (!acctLabel) return;
+    setCrashStressLoading(true);
+    setCrashStress(null);
+    try {
+      const res = await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(acctLabel)}/crash-stress?era=${era}`), { method: 'POST' });
+      if (res.ok) setCrashStress(await res.json());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setCrashStressLoading(false);
+    }
+  };
+
   const fetchExternalPositionsAndSuggestions = async (acctLabel: string) => {
     if (!acctLabel) return;
     try {
@@ -687,6 +704,7 @@ export default function Home() {
       setExternalSuggestions([]);
       setExternalStrategyResult(null);
       setExternalWargame(null);
+      setCrashStress(null);
       const [posRes, suggRes] = await Promise.all([
         fetch(apiUrl(`/api/external/positions?account_label=${encodeURIComponent(acctLabel)}`)),
         fetch(apiUrl(`/api/external/suggestions?account_label=${encodeURIComponent(acctLabel)}`))
@@ -5425,6 +5443,75 @@ export default function Home() {
                   </>
                 );
               })()}
+
+              {/* Crash-era stress test (synthetic SPY-beta proxy) */}
+              <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px', display: 'grid', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: '13px' }}>Crash-era stress test</strong>
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Re-runs each mode through a historical crash via a synthetic SPY-beta proxy of your holdings.</span>
+                  <select value={crashEra} onChange={(e) => setCrashEra(e.target.value)}
+                    style={{ background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '6px' }}>
+                    <option value="gfc">2008 Financial Crisis</option>
+                    <option value="covid">2020 COVID crash</option>
+                    <option value="dotcom">2000 Dot-com bust</option>
+                    <option value="2022">2022 rate shock</option>
+                  </select>
+                  <button className="toggle-btn" disabled={crashStressLoading || !selectedAccount}
+                    onClick={() => runCrashStress(selectedAccount, crashEra)}>
+                    {crashStressLoading ? 'Stressing…' : 'Run crash stress'}
+                  </button>
+                </div>
+                {crashStress && crashStress.error && (
+                  <div style={{ fontSize: '12px', color: 'var(--color-gold)' }}>⚠ {crashStress.error}</div>
+                )}
+                {crashStress && crashStress.results && (() => {
+                  const COLORS: any = { de_risk: '#38BDF8', growth: '#10B981', all_weather: '#F59E0B', barbell: '#A78BFA' };
+                  const chart = (crashStress.dates || []).map((d: string, i: number) => {
+                    const row: any = { date: d };
+                    crashStress.results.forEach((r: any) => { row[r.mode] = +(((r.curve[i] ?? 1) - 1) * 100).toFixed(2); });
+                    return row;
+                  });
+                  const sorted = [...crashStress.results].sort((a: any, b: any) => a.metrics.max_drawdown - b.metrics.max_drawdown);
+                  return (
+                    <>
+                      <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
+                        <strong style={{ color: 'var(--text-primary)' }}>{crashStress.era_label}</strong> — S&amp;P 500 fell <strong style={{ color: 'var(--color-sell)' }}>{crashStress.spy_drawdown}%</strong>.
+                      </div>
+                      <div style={{ height: 220 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={chart} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                            <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} minTickGap={48} />
+                            <YAxis tick={{ fontSize: 10, fill: 'var(--text-secondary)' }} tickFormatter={(v) => `${v}%`} />
+                            <Tooltip contentStyle={{ background: 'rgba(16,20,38,0.97)', border: '1px solid var(--border-glass)', fontSize: 12 }}
+                              formatter={(v: any, name: any) => [`${v}%`, crashStress.results.find((r: any) => r.mode === name)?.label || name]} />
+                            <Legend formatter={(v: any) => crashStress.results.find((r: any) => r.mode === v)?.label || v} wrapperStyle={{ fontSize: 11 }} />
+                            <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
+                            {crashStress.results.map((r: any) => (
+                              <Line key={r.mode} type="monotone" dataKey={r.mode} stroke={COLORS[r.mode] || '#888'}
+                                strokeWidth={r.mode === crashStress.account_mode ? 3 : 1.5} dot={false} />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <table className="trade-table">
+                        <thead><tr><th>Strategy</th><th>Return</th><th>Max DD</th><th>Avg beta</th></tr></thead>
+                        <tbody>
+                          {sorted.map((r: any) => (
+                            <tr key={r.mode} style={r.mode === crashStress.account_mode ? { background: 'rgba(56,189,248,0.08)' } : {}}>
+                              <td><span style={{ color: COLORS[r.mode] }}>●</span> {r.label}{r.mode === crashStress.account_mode ? ' (current)' : ''}</td>
+                              <td style={{ color: r.metrics.total_return >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{r.metrics.total_return >= 0 ? '+' : ''}{r.metrics.total_return.toFixed(1)}%</td>
+                              <td style={{ color: 'var(--color-sell)' }}>−{r.metrics.max_drawdown.toFixed(1)}%</td>
+                              <td style={{ color: r.avg_beta > 0.8 ? 'var(--color-gold)' : 'var(--text-secondary)' }}>{r.avg_beta.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{crashStress.method_note} Higher avg beta ⇒ more market exposure ⇒ deeper crash drawdown.</div>
+                    </>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* Split layout: Holdings/Lots vs suggestions */}

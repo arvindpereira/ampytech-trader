@@ -2727,6 +2727,24 @@ def external_account_wargame(account_label: str, lookback_years: int = 3, db=Dep
     result["aggression"] = acct.aggression
     return result
 
+
+@app.post("/api/external/accounts/{account_label}/crash-stress")
+def external_account_crash_stress(account_label: str, era: str = "gfc", db=Depends(get_db)):
+    """Stress each strategy mode through a historical crash (2008/2020/…) by mapping holdings to a
+    synthetic SPY-beta proxy over that era's actual SPY path."""
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    ctx = _external_account_context(db, acct)
+    if ctx["portfolio_value"] <= 0 or not ctx["current_weights"]:
+        return {"error": "Account has no priced holdings to stress.", "account_mode": acct.strategy_mode}
+    from app.services.account_wargame import run_account_crash_stress
+    result = run_account_crash_stress(db, account_label, era, ctx["current_weights"],
+                                      ctx["classifications"], ctx["snapshot"], ctx["buckets"],
+                                      ctx["de_risk_coefficient"], acct.aggression)
+    result["account_mode"] = acct.strategy_mode
+    return result
+
 @app.post("/api/external/orders/confirm")
 def confirm_external_order(req: ConfirmOrderRequest, account_label: str, db=Depends(get_db)):
     acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
