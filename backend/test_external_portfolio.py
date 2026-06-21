@@ -359,3 +359,71 @@ class TestExternalPortfolio(unittest.TestCase):
         self.assertEqual(txs[0].ticker, "AAPL")
         self.assertEqual(txs[0].qty, 5.0)
         self.assertEqual(txs[0].price, 160.0)
+
+    def test_detect_vanguard_joint_account_number(self):
+        from data_ingestion.external_importer import detect_broker_and_type
+        text = "Vanguard Joint brokerage account—XXXX7062"
+        broker, doc_type = detect_broker_and_type(text)
+        self.assertEqual(broker, "Vanguard Joint (7062)")
+        self.assertEqual(doc_type, "positions")
+
+    def test_parse_vanguard_monthly_statement(self):
+        from data_ingestion.external_importer import parse_vanguard_statement_pdf
+        # Sample text representing the actual layout of the PDF
+        sample_text = """
+Balances and holdings for Vanguard Brokerage Account—XXXX7062  continuedSweep programName QuantityPrice on05/31/2026Balance on04/30/2026Balance on05/31/2026267,314.0600$1.00$266,515.54$267,314.06VANGUARD FEDERAL MONEYMARKET FUND7-day SEC Yield: 3.55%Total Sweep Balance$266,515.54$267,314.06Mutual fundsSymbolName UnrealizedGains/LossesTotal Cost BasisQuantityPrice on05/31/2026Balance on04/30/2026Balance on05/31/2026VASGX $5,353.12$7,509.71230.0220$55.92$12,388.98$12,862.83VANGUARDLIFESTRATEGY 80/20
+Completed transactionsSettlementdateTradedateSymbolNameTransaction typeAccount typeQuantityPriceCommissions& feesAmount05/1405/14AAPLAPPLE INCReinvestmentCash0.0460299.8370- -13.70
+        """
+        res = parse_vanguard_statement_pdf(sample_text)
+        self.assertEqual(res["cash"], 267314.06)
+        self.assertEqual(len(res["lots"]), 1)
+        self.assertEqual(res["lots"][0]["ticker"], "VASGX")
+        self.assertEqual(res["lots"][0]["shares"], 230.0220)
+        self.assertAlmostEqual(res["lots"][0]["cost_basis_per_share"], 7509.71 / 230.0220, places=4)
+        
+        self.assertEqual(len(res["transactions"]), 1)
+        self.assertEqual(res["transactions"][0]["ticker"], "AAPL")
+        self.assertEqual(res["transactions"][0]["side"], "BUY")
+        self.assertEqual(res["transactions"][0]["qty"], 0.0460)
+        self.assertEqual(res["transactions"][0]["price"], 299.8370)
+
+    def test_delete_external_account(self):
+        from app.main import delete_external_account, get_pending_external_orders
+        from app.database import ExternalStatementHolding, TradingBlock
+
+        label = "Robinhood Delete Me"
+        acct = ExternalAccount(account_label=label, cash=1000.0, risk_profile="balanced", created_at="2026-06-21", updated_at="2026-06-21")
+        self.db.add(acct)
+        
+        lot = EquityLot(ticker="AAPL", account_label=label, lot_type="other", shares=10, cost_basis_per_share=150.0, acquisition_date="2026-06-21", created_at="2026-06-21")
+        self.db.add(lot)
+        
+        holding = ExternalStatementHolding(account_label=label, ticker="AAPL", shares=10, avg_cost=150.0, statement_date="2026-06-21", source="manual", created_at="2026-06-21")
+        self.db.add(holding)
+        
+        order = ExternalOrder(account_label=label, ticker="AAPL", side="BUY", qty=5, limit_price=150.0, time_in_force="DAY", status="proposed", created_at="2026-06-21", updated_at="2026-06-21")
+        self.db.add(order)
+        
+        tx = ExternalTransaction(account_label=label, ticker="AAPL", side="BUY", qty=5, price=150.0, execution_date="2026-06-21", created_at="2026-06-21")
+        self.db.add(tx)
+        
+        block = TradingBlock(ticker="AAPL", block_type="permanent", active=True, reason="test", account_label=label, created_at="2026-06-21")
+        self.db.add(block)
+        
+        self.db.commit()
+        
+        # Verify get_pending_external_orders returns our proposed order
+        pending = get_pending_external_orders(db=self.db)
+        self.assertTrue(any(p["account_label"] == label and p["ticker"] == "AAPL" for p in pending))
+        
+        # Now delete the account
+        res = delete_external_account(account_label=label, db=self.db)
+        self.assertEqual(res["status"], "success")
+        
+        # Check database: everything should be deleted
+        self.assertIsNone(self.db.query(ExternalAccount).filter(ExternalAccount.account_label == label).first())
+        self.assertEqual(self.db.query(EquityLot).filter(EquityLot.account_label == label).count(), 0)
+        self.assertEqual(self.db.query(ExternalStatementHolding).filter(ExternalStatementHolding.account_label == label).count(), 0)
+        self.assertEqual(self.db.query(ExternalOrder).filter(ExternalOrder.account_label == label).count(), 0)
+        self.assertEqual(self.db.query(ExternalTransaction).filter(ExternalTransaction.account_label == label).count(), 0)
+        self.assertEqual(self.db.query(TradingBlock).filter(TradingBlock.account_label == label).count(), 0)

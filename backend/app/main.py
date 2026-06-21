@@ -2150,7 +2150,10 @@ def _run_equity_analyze_job(jid, req_data):
     db = SessionLocal()
     try:
         _job_update(jid, progress=10, stage="Loading lots and tax profile")
-        lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+        from app.database import ExternalAccount
+        all_lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+        external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+        lots = [l for l in all_lots if l.account_label not in external_labels]
         profile = db.query(TaxProfile).filter(TaxProfile.id == 1).first()
         if not profile:
             profile = TaxProfile(id=1)
@@ -2191,7 +2194,10 @@ def _run_equity_analyze_job(jid, req_data):
 
 @app.get("/api/equity/lots")
 def get_equity_lots(db=Depends(get_db)):
-    lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+    from app.database import ExternalAccount
+    all_lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+    external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+    lots = [l for l in all_lots if l.account_label not in external_labels]
     from data_ingestion.analyst_fetcher import latest_or_refresh
     from data_ingestion.price_fetcher import fetch_equity_advisor_prices
     from data_ingestion.equity_universe_sync import (
@@ -2307,7 +2313,7 @@ async def import_equity_lots_pdf(
 
 
 # --- External Portfolio Manager (Tab 6) Endpoints ---
-from app.database import ExternalAccount, ExternalOrder, ExternalTransaction
+from app.database import ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding
 from pydantic import BaseModel
 
 class ExternalAccountRequest(BaseModel):
@@ -2468,9 +2474,51 @@ def update_external_account_cash(account_label: str, req: UpdateCashRequest, db=
     db.commit()
     return {"status": "success", "account_label": acct.account_label, "cash": acct.cash}
 
+@app.delete("/api/external/accounts/{account_label}")
+def delete_external_account(account_label: str, db=Depends(get_db)):
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    db.query(EquityLot).filter(EquityLot.account_label == account_label).delete()
+    db.query(ExternalStatementHolding).filter(ExternalStatementHolding.account_label == account_label).delete()
+    db.query(ExternalOrder).filter(ExternalOrder.account_label == account_label).delete()
+    db.query(ExternalTransaction).filter(ExternalTransaction.account_label == account_label).delete()
+    db.query(TradingBlock).filter(TradingBlock.account_label == account_label).delete()
+
+    db.delete(acct)
+    db.commit()
+
+    from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+    sync_equity_lot_universe(db)
+    clear_suggestions_cache()
+
+    return {"status": "success", "account_label": account_label}
+
+@app.get("/api/external/orders/pending")
+def get_pending_external_orders(db=Depends(get_db)):
+    orders = db.query(ExternalOrder).filter(ExternalOrder.status == "proposed").all()
+    return [{
+        "id": o.id,
+        "account_label": o.account_label,
+        "ticker": o.ticker,
+        "side": o.side,
+        "qty": o.qty,
+        "limit_price": o.limit_price,
+        "time_in_force": o.time_in_force,
+        "status": o.status,
+        "created_at": o.created_at,
+        "updated_at": o.updated_at
+    } for o in orders]
+
 @app.get("/api/external/positions")
 def get_external_positions(account_label: str, db=Depends(get_db)):
-    lots = db.query(EquityLot).filter(EquityLot.account_label == account_label).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+    if account_label == "consolidated":
+        all_lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+        external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+        lots = [l for l in all_lots if l.account_label in external_labels]
+    else:
+        lots = db.query(EquityLot).filter(EquityLot.account_label == account_label).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
 
     # Group by ticker
     grouped = {}
@@ -2495,6 +2543,7 @@ def get_external_positions(account_label: str, db=Depends(get_db)):
 
         lots_list = [{
             "id": l.id,
+            "account_label": l.account_label,
             "acquisition_date": l.acquisition_date,
             "shares": l.shares,
             "cost_basis_per_share": l.cost_basis_per_share,
@@ -2540,6 +2589,7 @@ async def import_external_portfolio_pdf(
             raise HTTPException(status_code=422, detail=f"Could not parse CSV: {e}")
     else:
         try:
+            _stash_import_source(file.filename, data)   # keep a backed-up copy of the source PDF
             from data_ingestion.external_importer import import_external_pdf
             result = import_external_pdf(
                 db, data, filename=file.filename,
@@ -3376,8 +3426,10 @@ def get_equity_grant_timeline(ticker: str, db=Depends(get_db)):
     The line is downsampled for payload size but every grant day is preserved. Powers the GrantTimeline
     UI component (reusable across any held ticker)."""
     ticker = ticker.upper().strip()
-    lots = db.query(EquityLot).filter(EquityLot.ticker == ticker).order_by(
-        EquityLot.acquisition_date.asc()).all()
+    from app.database import ExternalAccount
+    all_lots = db.query(EquityLot).filter(EquityLot.ticker == ticker).order_by(EquityLot.acquisition_date.asc()).all()
+    external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+    lots = [l for l in all_lots if l.account_label not in external_labels]
     if not lots:
         raise HTTPException(status_code=404, detail=f"No grants/lots recorded for {ticker}")
 
@@ -3543,7 +3595,11 @@ def set_equity_auto_trade_block(req: EquityAutoTradeBlockRequest, db=Depends(get
     """Toggle whether the auto-trader may buy a ticker you hold externally (e.g. PINS for wash-sale harvest)."""
     from data_ingestion.equity_universe_sync import set_equity_auto_trade_block as _set_block
     ticker = req.ticker.upper().strip()
-    if not db.query(EquityLot).filter(EquityLot.ticker == ticker).first():
+    from app.database import ExternalAccount
+    external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+    all_lots = db.query(EquityLot).filter(EquityLot.ticker == ticker).all()
+    has_advisor_lot = any(l.account_label not in external_labels for l in all_lots)
+    if not has_advisor_lot:
         raise HTTPException(status_code=404, detail=f"No equity lots for {ticker}")
     blocked = _set_block(db, ticker, req.blocked)
     return {"status": "success", "ticker": ticker, "blocked": req.blocked, "auto_trade_blocked": blocked}

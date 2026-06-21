@@ -151,7 +151,10 @@ def schedule_dict(row: EquityVestSchedule) -> dict:
 
 def ensure_vest_schedules(db) -> list[dict]:
     """Create inferred schedules for tickers/lot-types that lack one."""
-    lots = db.query(EquityLot).all()
+    from app.database import ExternalAccount
+    all_lots = db.query(EquityLot).all()
+    external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+    lots = [l for l in all_lots if l.account_label not in external_labels]
     by_key: dict[tuple[str, str], list[EquityLot]] = {}
     for lot in lots:
         lt = lot.lot_type if lot.lot_type in ("rsu", "espp") else "rsu"

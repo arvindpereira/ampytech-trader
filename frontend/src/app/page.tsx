@@ -654,6 +654,10 @@ export default function Home() {
   const [robinhoodSyncError, setRobinhoodSyncError] = useState<string>('');
   const [robinhoodMfaRequired, setRobinhoodMfaRequired] = useState<boolean>(false);
 
+  const [accountToDelete, setAccountToDelete] = useState<string | null>(null);
+  const [pendingOrders, setPendingOrders] = useState<any[]>([]);
+  const [pendingOrdersLoading, setPendingOrdersLoading] = useState<boolean>(false);
+
   const fetchExternalAccounts = async () => {
     try {
       const res = await fetch(apiUrl('/api/external/accounts'));
@@ -661,14 +665,184 @@ export default function Home() {
         const data = await res.json();
         setExternalAccounts(data);
         if (data.length > 0) {
-          if (!data.some((a: any) => a.account_label === selectedAccount)) {
-            setSelectedAccount(data[0].account_label);
+          const hasMultiple = data.length > 1;
+          const currentExists = data.some((a: any) => a.account_label === selectedAccount);
+          if (selectedAccount === 'consolidated') {
+            if (!hasMultiple) {
+              setSelectedAccount(data[0].account_label);
+            }
+          } else if (!currentExists) {
+            setSelectedAccount(hasMultiple ? 'consolidated' : data[0].account_label);
           }
         }
       }
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const fetchPendingOrders = async () => {
+    setPendingOrdersLoading(true);
+    try {
+      const res = await fetch(apiUrl('/api/external/orders/pending'));
+      if (res.ok) {
+        setPendingOrders(await res.json());
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setPendingOrdersLoading(false);
+    }
+  };
+
+  const fetchConsolidatedPositions = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/external/positions?account_label=consolidated'));
+      if (res.ok) {
+        setExternalPositions(await res.json());
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const getMergedHoldings = () => {
+    const merged: Record<string, { ticker: string, internalShares: number, internalValue: number, externalShares: number, externalValue: number, totalShares: number, totalValue: number }> = {};
+    
+    // Add internal holdings (from portfolio?.holdings)
+    if (portfolio && portfolio.holdings) {
+      portfolio.holdings.forEach((h: any) => {
+        const ticker = h.ticker.toUpperCase();
+        if (!merged[ticker]) {
+          merged[ticker] = { ticker, internalShares: 0, internalValue: 0, externalShares: 0, externalValue: 0, totalShares: 0, totalValue: 0 };
+        }
+        merged[ticker].internalShares += h.shares || 0;
+        merged[ticker].internalValue += h.market_value || 0;
+        merged[ticker].totalShares += h.shares || 0;
+        merged[ticker].totalValue += h.market_value || 0;
+      });
+    }
+    
+    // Add external holdings (from externalPositions)
+    if (externalPositions) {
+      externalPositions.forEach((pos: any) => {
+        const ticker = pos.ticker.toUpperCase();
+        if (!merged[ticker]) {
+          merged[ticker] = { ticker, internalShares: 0, internalValue: 0, externalShares: 0, externalValue: 0, totalShares: 0, totalValue: 0 };
+        }
+        merged[ticker].externalShares += pos.total_shares || 0;
+        merged[ticker].externalValue += pos.market_value || 0;
+        merged[ticker].totalShares += pos.total_shares || 0;
+        merged[ticker].totalValue += pos.market_value || 0;
+      });
+    }
+    
+    return Object.values(merged).sort((a, b) => b.totalValue - a.totalValue);
+  };
+
+  const getPendingOrdersByAccount = () => {
+    const grouped: Record<string, any[]> = {};
+    pendingOrders.forEach((o: any) => {
+      const label = o.account_label || 'Unknown';
+      if (!grouped[label]) {
+        grouped[label] = [];
+      }
+      grouped[label].push(o);
+    });
+    return grouped;
+  };
+
+  const getHoldingsByAccount = () => {
+    const grouped: Record<string, { accountLabel: string, holdings: any[], totalValue: number }> = {};
+    
+    // 1. Add internal holdings under "Internal Account"
+    if (portfolio && portfolio.holdings && portfolio.holdings.length > 0) {
+      const internalLabel = "Internal Account";
+      grouped[internalLabel] = {
+        accountLabel: internalLabel,
+        holdings: portfolio.holdings.map((h: any) => ({
+          ticker: h.ticker.toUpperCase(),
+          shares: h.shares || 0,
+          value: h.market_value || 0,
+          price: h.current_price || 0,
+          avg_cost: h.entry_price || 0
+        })),
+        totalValue: portfolio.totals?.market_value || 0
+      };
+    }
+    
+    // 2. Add external holdings from externalPositions
+    if (externalPositions) {
+      externalPositions.forEach((pos: any) => {
+        const ticker = pos.ticker.toUpperCase();
+        const price = pos.current_price || 0;
+        
+        pos.lots.forEach((lot: any) => {
+          const label = lot.account_label || 'External Account';
+          if (!grouped[label]) {
+            grouped[label] = { accountLabel: label, holdings: [], totalValue: 0 };
+          }
+          
+          let existing = grouped[label].holdings.find(h => h.ticker === ticker);
+          if (!existing) {
+            existing = { ticker, shares: 0, value: 0, cost_basis: 0 };
+            grouped[label].holdings.push(existing);
+          }
+          existing.shares += lot.shares || 0;
+          const lotVal = (lot.shares || 0) * price;
+          existing.value += lotVal;
+          existing.cost_basis += (lot.shares || 0) * (lot.cost_basis_per_share || 0);
+          grouped[label].totalValue += lotVal;
+        });
+      });
+    }
+    
+    // Calculate average costs and sort by value
+    Object.values(grouped).forEach((group) => {
+      group.holdings.forEach((h: any) => {
+        if (h.shares > 0 && h.cost_basis !== undefined) {
+          h.avg_cost = h.cost_basis / h.shares;
+        }
+      });
+      group.holdings.sort((a, b) => b.value - a.value);
+    });
+    
+    return Object.values(grouped).sort((a, b) => b.totalValue - a.totalValue);
+  };
+
+  const getAccountTheme = (label: string) => {
+    const normalized = label.toLowerCase();
+    if (normalized.includes('internal')) {
+      return {
+        border: 'rgba(16, 185, 129, 0.3)', // Emerald
+        bg: 'rgba(16, 185, 129, 0.03)',
+        text: '#10B981',
+        badgeBg: 'rgba(16, 185, 129, 0.15)'
+      };
+    }
+    if (normalized.includes('vanguard')) {
+      return {
+        border: 'rgba(99, 102, 241, 0.3)', // Indigo
+        bg: 'rgba(99, 102, 241, 0.03)',
+        text: '#6366F1',
+        badgeBg: 'rgba(99, 102, 241, 0.15)'
+      };
+    }
+    if (normalized.includes('joint')) {
+      return {
+        border: 'rgba(139, 92, 246, 0.3)', // Purple
+        bg: 'rgba(139, 92, 246, 0.03)',
+        text: '#8B5CF6',
+        badgeBg: 'rgba(139, 92, 246, 0.15)'
+      };
+    }
+    // Default (e.g. Robinhood Individual / others)
+    return {
+      border: 'rgba(56, 189, 248, 0.3)', // Sky blue
+      bg: 'rgba(56, 189, 248, 0.03)',
+      text: '#38BDF8',
+      badgeBg: 'rgba(56, 189, 248, 0.15)'
+    };
   };
 
   const runExternalWargame = async (acctLabel: string, years: number) => {
@@ -713,6 +887,20 @@ export default function Home() {
     }
   };
 
+  const deleteAccount = async (label: string) => {
+    try {
+      const res = await fetch(apiUrl(`/api/external/accounts/${encodeURIComponent(label)}`), {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setAccountToDelete(null);
+        await fetchExternalAccounts();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const fetchExternalPositionsAndSuggestions = async (acctLabel: string) => {
     if (!acctLabel) return;
     try {
@@ -743,12 +931,18 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === 'external') {
       fetchExternalAccounts();
+      fetchPendingOrders();
     }
   }, [activeTab]);
 
   useEffect(() => {
     if (activeTab === 'external' && selectedAccount) {
-      fetchExternalPositionsAndSuggestions(selectedAccount);
+      if (selectedAccount === 'consolidated') {
+        fetchPendingOrders();
+        fetchConsolidatedPositions();
+      } else {
+        fetchExternalPositionsAndSuggestions(selectedAccount);
+      }
     }
   }, [selectedAccount, activeTab]);
 
@@ -5202,7 +5396,21 @@ export default function Home() {
                     Track, manage, and manually execute strategy-driven MPT/Swing rebalances across your Robinhood and Vanguard accounts.
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  {externalAccounts.length > 1 && (
+                    <button
+                      onClick={() => setSelectedAccount('consolidated')}
+                      className="toggle-btn"
+                      style={{
+                        borderColor: selectedAccount === 'consolidated' ? 'var(--color-buy)' : 'var(--border-glass)',
+                        background: selectedAccount === 'consolidated' ? 'rgba(0, 242, 254, 0.1)' : 'transparent',
+                        color: selectedAccount === 'consolidated' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        fontWeight: 600
+                      }}
+                    >
+                      Consolidated View
+                    </button>
+                  )}
                   {externalAccounts.map(acct => (
                     <button
                       key={acct.account_label}
@@ -5212,10 +5420,35 @@ export default function Home() {
                         borderColor: selectedAccount === acct.account_label ? 'var(--color-buy)' : 'var(--border-glass)',
                         background: selectedAccount === acct.account_label ? 'rgba(0, 242, 254, 0.1)' : 'transparent',
                         color: selectedAccount === acct.account_label ? 'var(--text-primary)' : 'var(--text-secondary)',
-                        fontWeight: 600
+                        fontWeight: 600,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px'
                       }}
                     >
                       {acct.account_label}
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAccountToDelete(acct.account_label);
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background: 'rgba(239, 68, 68, 0.15)',
+                          color: '#EF4444',
+                          border: 'none',
+                          borderRadius: '4px',
+                          width: '16px',
+                          height: '16px',
+                          cursor: 'pointer',
+                          marginLeft: '4px'
+                        }}
+                        title="Delete Account"
+                      >
+                        <Trash2 size={10} />
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -5223,6 +5456,42 @@ export default function Home() {
 
               {/* Account summary cards */}
               {(() => {
+                if (selectedAccount === 'consolidated') {
+                  const totalCash = externalAccounts.reduce((sum, a) => sum + (a.cash || 0), 0);
+                  const totalHoldings = externalAccounts.reduce((sum, a) => sum + (a.holdings_value || 0), 0);
+                  const totalVal = totalCash + totalHoldings;
+                  const totalPendingVal = pendingOrders.reduce((sum, o) => sum + (o.qty * o.limit_price || 0), 0);
+                  
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginTop: '20px' }}>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Consolidated Cash</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
+                          {sharePrice(totalCash)}
+                        </div>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Consolidated Holdings</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
+                          {sharePrice(totalHoldings)}
+                        </div>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Consolidated Value</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--color-buy)', marginTop: '4px' }}>
+                          {sharePrice(totalVal)}
+                        </div>
+                      </div>
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Pending Orders</div>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--color-gold)', marginTop: '4px' }}>
+                          {pendingOrders.length} ({sharePrice(totalPendingVal)})
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 const currentAcct = externalAccounts.find(a => a.account_label === selectedAccount);
                 if (!currentAcct) return null;
                 return (
@@ -5281,7 +5550,9 @@ export default function Home() {
               })()}
             </div>
 
-            {/* Per-account model allocation policy */}
+            {selectedAccount !== 'consolidated' ? (
+              <>
+                {/* Per-account model allocation policy */}
             <div className="glass-card" style={{ padding: '20px', display: 'grid', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start' }}>
                 <div>
@@ -5907,10 +6178,221 @@ export default function Home() {
               </div>
 
             </div>
+          </>
+        ) : (
+          <div style={{ display: 'grid', gap: '20px' }}>
+            {/* Consolidated Holdings by Account */}
+            <div className="glass-card" style={{ padding: '24px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Consolidated Holdings by Account</h3>
+              <p style={{ margin: '4px 0 20px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Summary of holdings grouped into visual bubbles for each of your internal and external portfolios.
+              </p>
+              
+              <div style={{ display: 'grid', gap: '20px' }}>
+                {(() => {
+                  const groups = getHoldingsByAccount();
+                  if (groups.length === 0) {
+                    return (
+                      <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        No holdings found across internal or external portfolios.
+                      </div>
+                    );
+                  }
+                  
+                  return groups.map((g) => {
+                    const theme = getAccountTheme(g.accountLabel);
+                    return (
+                      <div
+                        key={g.accountLabel}
+                        style={{
+                          background: theme.bg,
+                          border: `1px solid ${theme.border}`,
+                          borderRadius: '12px',
+                          padding: '18px',
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
+                        }}
+                      >
+                        {/* Account Group Header Bubble */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{
+                              background: theme.badgeBg,
+                              color: theme.text,
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              padding: '4px 10px',
+                              borderRadius: '20px',
+                              letterSpacing: '0.5px',
+                              textTransform: 'uppercase'
+                            }}>
+                              {g.accountLabel}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            Account Total: <strong style={{ color: 'var(--text-primary)' }}>{sharePrice(g.totalValue)}</strong>
+                          </div>
+                        </div>
+
+                        {/* Holdings Table for this Account */}
+                        <div style={{ overflowX: 'auto' }}>
+                          <table className="trade-table" style={{ width: '100%' }}>
+                            <thead>
+                              <tr>
+                                <th>Ticker</th>
+                                <th style={{ textAlign: 'right' }}>Shares</th>
+                                <th style={{ textAlign: 'right' }}>Avg Cost</th>
+                                <th style={{ textAlign: 'right' }}>Current Price</th>
+                                <th style={{ textAlign: 'right' }}>Market Value</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {g.holdings.map((h: any) => (
+                                <tr key={h.ticker}>
+                                  <td style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{h.ticker}</td>
+                                  <td style={{ textAlign: 'right', color: 'var(--text-primary)' }}>{h.shares.toFixed(4)}</td>
+                                  <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                    {h.avg_cost > 0 ? sharePrice(h.avg_cost) : '—'}
+                                  </td>
+                                  <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
+                                    {h.price > 0 ? sharePrice(h.price) : '—'}
+                                  </td>
+                                  <td style={{ textAlign: 'right', fontWeight: 700, color: theme.text }}>
+                                    {sharePrice(h.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            {/* Pending External Orders Grouped by Account */}
+            <div className="glass-card" style={{ padding: '24px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Pending External Orders</h3>
+              <p style={{ margin: '4px 0 16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Proposed trade orders across your external accounts waiting for execution confirmation.
+              </p>
+              
+              {pendingOrdersLoading ? (
+                <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  Loading pending orders...
+                </div>
+              ) : pendingOrders.length === 0 ? (
+                <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  No pending/proposed orders across any external accounts.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: '20px' }}>
+                  {Object.entries(getPendingOrdersByAccount()).map(([accountLabel, orders]) => (
+                    <div key={accountLabel} style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-glass)', paddingBottom: '8px', marginBottom: '12px' }}>
+                        {accountLabel}
+                      </div>
+                      <div style={{ display: 'grid', gap: '10px' }}>
+                        {orders.map((o: any) => (
+                          <div
+                            key={o.id}
+                            style={{
+                              background: 'rgba(255,255,255,0.01)',
+                              border: '1px solid var(--border-glass)',
+                              borderRadius: '8px',
+                              padding: '12px 14px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span
+                                  style={{
+                                    background: o.side === 'BUY' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                                    color: o.side === 'BUY' ? '#10B981' : '#EF4444',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    padding: '2px 6px',
+                                    borderRadius: '4px'
+                                  }}
+                                >
+                                  {o.side}
+                                </span>
+                                <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>{o.ticker}</strong>
+                              </div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                {o.qty.toFixed(4)} shares @ limit {sharePrice(o.limit_price)} · Total: {sharePrice(o.qty * o.limit_price)}
+                              </div>
+                              <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                Duration: <strong>{o.time_in_force === 'DAY' ? 'Day order' : '90 Days GTC'}</strong> · Proposed: {o.created_at.slice(0, 10)}
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => {
+                                setExternalConfirmOrder(o);
+                                setExternalExecutionPrice(String(o.limit_price));
+                              }}
+                              className="toggle-btn"
+                              style={{ padding: '6px 12px', fontSize: '12px', background: 'rgba(255,255,255,0.05)', borderColor: 'var(--border-glass)' }}
+                            >
+                              Confirm Fill
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
           </section>
         )}
       </main>
+
+      {/* Account Deletion Warning Modal */}
+      {accountToDelete && (
+        <div
+          onClick={() => setAccountToDelete(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '420px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <div style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#EF4444', borderRadius: '50%', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <AlertTriangle size={20} />
+              </div>
+              <h2 style={{ marginTop: 0, marginBottom: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>Delete External Account</h2>
+            </div>
+            
+            <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+              Are you sure you want to delete the account <strong style={{ color: '#EF4444' }}>{accountToDelete}</strong>?
+            </p>
+            <p style={{ margin: '0 0 20px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              This action is permanent and cannot be undone. All holdings, tax lots, transaction history, statement records, and trading blocks associated with this account label will be completely removed from the database.
+            </p>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setAccountToDelete(null)}
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', cursor: 'pointer', fontSize: '13px' }}>
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteAccount(accountToDelete)}
+                className="toggle-btn"
+                style={{ background: '#EF4444', border: 'none', color: 'white', fontWeight: 700, padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}
+              >
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirm Manual Order Fill Modal */}
       {externalConfirmOrder && (
@@ -5965,8 +6447,9 @@ export default function Home() {
                     execution_date: externalExecutionDate,
                     time_in_force: externalConfirmOrder.time_in_force
                   };
+                  const targetAccount = externalConfirmOrder.account_label || selectedAccount;
                   try {
-                    const res = await fetch(apiUrl(`/api/external/orders/confirm?account_label=${encodeURIComponent(selectedAccount)}`), {
+                    const res = await fetch(apiUrl(`/api/external/orders/confirm?account_label=${encodeURIComponent(targetAccount)}`), {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(body)
@@ -5974,7 +6457,12 @@ export default function Home() {
                     if (res.ok) {
                       setExternalConfirmOrder(null);
                       fetchExternalAccounts();
-                      fetchExternalPositionsAndSuggestions(selectedAccount);
+                      if (selectedAccount === 'consolidated') {
+                        fetchPendingOrders();
+                        fetchConsolidatedPositions();
+                      } else {
+                        fetchExternalPositionsAndSuggestions(selectedAccount);
+                      }
                     }
                   } catch (err) {
                     console.error(err);

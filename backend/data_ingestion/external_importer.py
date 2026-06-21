@@ -65,6 +65,37 @@ _VG_TX_RE = re.compile(
     re.IGNORECASE
 )
 
+# Vanguard Statement Summary Regex:
+_VG_POS_BLOCK_RE = re.compile(
+    r"\b([A-Z]{3,7})\b\s*"
+    r"([-+]?\$?[\d,]+\.\d{2})\s*"
+    r"(\$?[\d,]+\.\d{2})\s*"
+    r"([\d,]+\.\d{4})\s*"
+    r"([$ \d,.-]*?\.\d{2,4}[$ \d,.-]*?\.\d{2}[$ \d,.-]*?\.\d{2})",
+    re.IGNORECASE
+)
+
+# Vanguard Statement Transactions Regex: Date, Symbol, Name, Type, Account, Qty, Price, Comm, Amount
+_VG_TX_STATEMENT_RE = re.compile(
+    r"(\d{2}/\d{2})\s*"
+    r"(\d{2}/\d{2})\s*"
+    r"([A-Z]{3,5}|-)\s*"
+    r"(.*?)\s*"
+    r"(Dividend|Reinvestment|Stock Split|ADR Custody Fee|Sweep out|Sweep in)\s*"
+    r"(Cash|-)?\s*"
+    r"([\d,]+\.\d{4}|-)?\s*"
+    r"([\d,]+\.\d{2,4}|-)?\s*"
+    r"(-)?\s*"
+    r"(-?\$?[\d,]+\.\d{2})",
+    re.IGNORECASE
+)
+
+KNOWN_VANGUARD_TICKERS = {
+    "VASGX", "VFIAX", "VSMGX", "VTSAX",
+    "VUG", "VXUS", "VOO", "VTI", "PALL", "QQQ", "IAU", "IWF", "GLD",
+    "BABA", "AAPL", "XYZ", "ISRG", "META", "MSFT", "NFLX", "NVDA", "PYPL", "HOOD", "ROKU", "SHOP"
+}
+
 
 def extract_pdf_text(data: bytes) -> str:
     from pypdf import PdfReader
@@ -78,9 +109,14 @@ def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
     low = (text + " " + filename).lower()
     broker = "Unknown"
 
-    # 1. Detect Brand
     is_vanguard = "vanguard" in low
     is_robinhood = "robinhood" in low
+
+    if is_vanguard and is_robinhood:
+        if low.count("vanguard") > low.count("robinhood"):
+            is_robinhood = False
+        else:
+            is_vanguard = False
 
     # 2. Extract Account Number if present
     account_number = None
@@ -94,11 +130,13 @@ def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
             vg_acct_match = re.search(r"account\s*#\s*([\d-]+)", low)
         if not vg_acct_match:
             vg_acct_match = re.search(r"brokerage\s*account\s*#\s*([\d-]+)", low)
+        if not vg_acct_match:
+            vg_acct_match = re.search(r"account\s*[-–—]\s*(?:xxxx)?(\d+)", low)
         if vg_acct_match:
             account_number = vg_acct_match.group(1)
 
     # 3. Detect Account Type
-    is_joint = any(k in low for k in ["joint tenancy", "joint account", "survivorship"])
+    is_joint = any(k in low for k in ["joint tenancy", "joint account", "survivorship", "joint"])
 
     if is_robinhood:
         if is_joint:
@@ -315,6 +353,115 @@ def parse_vanguard_transactions(text: str) -> list[dict]:
     return txs
 
 
+def clean_ticker(ticker_cand: str) -> str:
+    tc = ticker_cand.upper()
+    if tc in KNOWN_VANGUARD_TICKERS:
+        return tc
+    for known in KNOWN_VANGUARD_TICKERS:
+        if known in tc:
+            return known
+    return tc
+
+
+def parse_price_and_balances(ticker: str, raw_str: str) -> tuple[str, str, str]:
+    clean_str = raw_str.replace(" ", "").replace("$", "")
+    is_mutual_fund = len(ticker) == 5 and ticker.startswith("V")
+    price_decimals = 2 if is_mutual_fund else 4
+    first_dot_idx = clean_str.find(".")
+    if first_dot_idx == -1:
+        raise ValueError("No decimal point found for Price")
+    price_end_idx = first_dot_idx + 1 + price_decimals
+    price = clean_str[:price_end_idx]
+    remaining = clean_str[price_end_idx:]
+    second_dot_idx = remaining.find(".")
+    if second_dot_idx == -1:
+        raise ValueError("No decimal point found for Prev Balance")
+    prev_bal_end_idx = second_dot_idx + 1 + 2
+    prev_bal = remaining[:prev_bal_end_idx]
+    curr_bal = remaining[prev_bal_end_idx:]
+    return price, prev_bal, curr_bal
+
+
+def _vg_tx_date_to_iso(month_day_str: str, statement_date_str: str) -> str:
+    stmt_dt = datetime.strptime(statement_date_str, "%Y-%m-%d")
+    stmt_year = stmt_dt.year
+    stmt_month = stmt_dt.month
+    tx_month, tx_day = map(int, month_day_str.split("/"))
+    if tx_month == 12 and stmt_month == 1:
+        year = stmt_year - 1
+    else:
+        year = stmt_year
+    return f"{year:04d}-{tx_month:02d}-{tx_day:02d}"
+
+
+def parse_vanguard_statement_pdf(text: str) -> dict:
+    lots = []
+    transactions = []
+    cash = None
+    
+    cleaned_text = re.sub(r"(\d{4})([A-Z]{3,7})", r"\1 \2", text)
+    
+    # 1. Parse positions
+    pos_matches = _VG_POS_BLOCK_RE.findall(cleaned_text)
+    for raw_ticker, gain_loss, cost_basis, qty, block in pos_matches:
+        ticker = clean_ticker(raw_ticker)
+        try:
+            price, prev_bal, curr_bal = parse_price_and_balances(ticker, block)
+            shares = float(qty.replace(",", ""))
+            total_cost = float(cost_basis.replace("$", "").replace(",", ""))
+            cost_basis_per_share = total_cost / shares if shares > 0 else 0.0
+            lots.append({
+                "ticker": ticker,
+                "lot_type": "other",
+                "shares": shares,
+                "cost_basis_per_share": round(cost_basis_per_share, 4),
+                "acquisition_date": datetime.now().strftime("%Y-%m-%d"),
+                "notes": "Parsed from Vanguard Statement Positions"
+            })
+        except Exception as e:
+            pass
+            
+    # 2. Parse Cash sweep
+    cash_match = re.search(
+        r"Total Sweep Balance\s*\$?([\d,]+\.\d{2})\s*\$?([\d,]+\.\d{2})",
+        cleaned_text, re.IGNORECASE
+    )
+    if cash_match:
+        cash = float(cash_match.group(2).replace(",", ""))
+        
+    # 3. Completed transactions
+    tx_matches = _VG_TX_STATEMENT_RE.findall(cleaned_text)
+    stmt_date = _extract_statement_date(cleaned_text)
+    for settle, trade, symbol, name, tx_type, acct, qty, price, comm, amount in tx_matches:
+        cleaned_symbol = clean_ticker(symbol)
+        if cleaned_symbol == "-":
+            continue
+        if tx_type.lower() in ("buy", "bought", "sell", "sold", "reinvestment"):
+            side = "BUY"
+            if tx_type.lower() in ("sell", "sold"):
+                side = "SELL"
+            try:
+                tx_qty = float(qty.replace(",", "")) if qty and qty != "-" else 0.0
+                tx_price = float(price.replace(",", "")) if price and price != "-" else 0.0
+                if tx_qty > 0:
+                    txs_date = _vg_tx_date_to_iso(trade, stmt_date)
+                    transactions.append({
+                        "date": txs_date,
+                        "ticker": cleaned_symbol,
+                        "side": side,
+                        "qty": tx_qty,
+                        "price": tx_price
+                    })
+            except Exception as e:
+                pass
+                
+    return {
+        "lots": lots,
+        "cash": cash,
+        "transactions": transactions
+    }
+
+
 _POSITIONS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -470,14 +617,23 @@ def import_external_pdf(
             else:
                 parsed_data["transactions"] = parse_robinhood_transactions(text)
         elif account_label.startswith("Vanguard"):
-            if doc_type == "positions":
-                parsed_data["lots"] = parse_vanguard_positions(text)
+            if "acquisition date:" in text.lower():
+                if doc_type == "positions":
+                    parsed_data["lots"] = parse_vanguard_positions(text)
+                    for lot in parsed_data["lots"]:
+                        lot["account_label"] = account_label
+                    # Parse transactions from the combined statement
+                    parsed_data["transactions"] = parse_vanguard_transactions(text)
+                else:
+                    parsed_data["transactions"] = parse_vanguard_transactions(text)
+            else:
+                v_res = parse_vanguard_statement_pdf(text)
+                parsed_data["lots"] = v_res["lots"]
                 for lot in parsed_data["lots"]:
                     lot["account_label"] = account_label
-                # Parse transactions from the combined statement
-                parsed_data["transactions"] = parse_vanguard_transactions(text)
-            else:
-                parsed_data["transactions"] = parse_vanguard_transactions(text)
+                if v_res["cash"] is not None:
+                    parsed_data["cash"] = v_res["cash"]
+                parsed_data["transactions"] = v_res["transactions"]
 
     # Fallback to LLM if deterministic regex failed to extract anything
     extracted_any = bool(parsed_data["lots"]) or bool(parsed_data["transactions"])
@@ -600,6 +756,7 @@ def import_external_pdf(
             "format": parsed_data["format"],
             "warnings": parsed_data["warnings"],
             "universe_tickers_added": universe_sync["added"],
+            "tickers": list({l["ticker"] for l in parsed_data["lots"]} | {t["ticker"] for t in parsed_data["transactions"]})
         }
     else:
         # Ingest transactions, deduplicating against existing logs
@@ -638,5 +795,6 @@ def import_external_pdf(
             "inserted_count": inserted_count,
             "skipped_count": skipped_count,
             "format": parsed_data["format"],
-            "warnings": parsed_data["warnings"]
+            "warnings": parsed_data["warnings"],
+            "tickers": list({t["ticker"] for t in parsed_data["transactions"]})
         }

@@ -333,7 +333,10 @@ def ingest_parsed_lots(
     replace_ticker_account: bool = False,
 ) -> dict:
     """Insert deduped lots into equity_lots. Optionally replace all lots for ticker+account first."""
-    existing = db.query(EquityLot).all()
+    from app.database import ExternalAccount
+    all_lots = db.query(EquityLot).all()
+    external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
+    existing = [l for l in all_lots if l.account_label not in external_labels]
     new_lots, skipped = dedupe_against_existing(parsed_lots, existing)
 
     removed = 0
