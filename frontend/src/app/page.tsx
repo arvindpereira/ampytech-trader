@@ -622,6 +622,7 @@ export default function Home() {
   // Tab 6: External Portfolio Manager States
   const [externalAccounts, setExternalAccounts] = useState<any[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<string>('Robinhood');
+  const [cashFocused, setCashFocused] = useState<boolean>(false);
   const [externalPositions, setExternalPositions] = useState<any[]>([]);
   const [expandedPositions, setExpandedPositions] = useState<Record<string, boolean>>({});
   const [externalSuggestions, setExternalSuggestions] = useState<any[]>([]);
@@ -1973,15 +1974,15 @@ export default function Home() {
                           <React.Fragment key={idx}>
                           <tr>
                             <td><TickerTag t={item.ticker} /></td>
-                            <td>${item.close.toFixed(2)}</td>
+                            <td>{sharePrice(item.close)}</td>
                             <td>
                               <span className={`badge badge-${item.action.toLowerCase()}`}>
                                 {item.action}
                               </span>
                             </td>
                             <td>{(item.confidence * 100).toFixed(0)}%</td>
-                            <td className="text-red">{item.stop_loss ? `$${item.stop_loss.toFixed(2)}` : '-'}</td>
-                            <td className="text-green">{item.take_profit ? `$${item.take_profit.toFixed(2)}` : '-'}</td>
+                            <td className="text-red">{item.stop_loss ? sharePrice(item.stop_loss) : '-'}</td>
+                            <td className="text-green">{item.take_profit ? sharePrice(item.take_profit) : '-'}</td>
                             <td style={{ color: 'var(--text-secondary)', fontSize: '13px', maxWidth: '300px' }}>
                               {item.reasoning}
                             </td>
@@ -2004,7 +2005,7 @@ export default function Home() {
                                   {item.hedge && (
                                     <span style={{ display: 'block', marginTop: '4px', color: 'var(--color-sell)' }}>
                                       Hedge leg: SHORT {item.hedge.shares ?? '?'} sh {item.hedge.symbol}
-                                      {item.hedge.price ? ` @ $${item.hedge.price.toFixed(2)}` : ''} ({item.hedge.ratio}× notional)
+                                      {item.hedge.price ? ` @ ${sharePrice(item.hedge.price)}` : ''} ({item.hedge.ratio}× notional)
                                     </span>
                                   )}
                                 </div>
@@ -2059,7 +2060,7 @@ export default function Home() {
                         {swingSuggestions.map((item, idx) => (
                           <tr key={idx}>
                             <td><TickerTag t={item.ticker} /></td>
-                            <td>${item.close.toFixed(2)}</td>
+                            <td>{sharePrice(item.close)}</td>
                             <td>
                               <span className={`badge badge-${item.action.toLowerCase()}`}>
                                 {item.action}
@@ -2069,8 +2070,8 @@ export default function Home() {
                             <td style={{ color: item.llm_news > 0.02 ? 'var(--color-buy)' : item.llm_news < -0.02 ? 'var(--color-sell)' : 'var(--text-secondary)' }}>
                               {item.llm_news > 0.02 ? '▲' : item.llm_news < -0.02 ? '▼' : '—'} {item.llm_news.toFixed(2)}
                             </td>
-                            <td className="text-red">{item.stop_loss ? `$${item.stop_loss.toFixed(2)}` : '-'}</td>
-                            <td className="text-green">{item.take_profit ? `$${item.take_profit.toFixed(2)}` : '-'}</td>
+                            <td className="text-red">{item.stop_loss ? sharePrice(item.stop_loss) : '-'}</td>
+                            <td className="text-green">{item.take_profit ? sharePrice(item.take_profit) : '-'}</td>
                             <td style={{ color: 'var(--text-secondary)', fontSize: '13px', maxWidth: '300px' }}>
                               {item.reasoning}
                             </td>
@@ -2184,15 +2185,15 @@ export default function Home() {
                                       <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
                                         <strong>{item.current_shares?.toFixed(1)}</strong> shares owned
                                       </div>
-                                      <div style={{ marginTop: '2px', fontSize: '11px' }}>Value: ${item.current_value?.toFixed(2)} @ ${item.current_price?.toFixed(2)}</div>
-                                      <div style={{ fontSize: '11px' }}>Cost Basis: {item.entry_price && item.entry_price > 0 ? `$${item.entry_price.toFixed(2)}` : '—'}</div>
+                                      <div style={{ marginTop: '2px', fontSize: '11px' }}>Value: {sharePrice(item.current_value)} @ {sharePrice(item.current_price)}</div>
+                                      <div style={{ fontSize: '11px' }}>Cost Basis: {item.entry_price && item.entry_price > 0 ? sharePrice(item.entry_price) : '—'}</div>
                                     </div>
                                     <div>
                                       <span style={{ color: 'var(--text-primary)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em', display: 'block', marginBottom: '4px' }}>TARGET ALLOCATION</span>
                                       <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
                                         <strong>{item.target_shares?.toFixed(1)}</strong> shares
                                       </div>
-                                      <div style={{ marginTop: '2px', fontSize: '11px' }}>Target Value: ${item.target_value?.toFixed(2)}</div>
+                                      <div style={{ marginTop: '2px', fontSize: '11px' }}>Target Value: {sharePrice(item.target_value)}</div>
                                       <div style={{ fontSize: '11px' }}>Target Weight: {(item.weight * 100).toFixed(1)}%</div>
                                     </div>
                                   </div>
@@ -2298,7 +2299,7 @@ export default function Home() {
                                     </span>
                                   )}
                                 </div>
-                                <span style={{ fontWeight: 600, fontSize: '14px' }}>${p.price.toFixed(2)}</span>
+                                <span style={{ fontWeight: 600, fontSize: '14px' }}>{sharePrice(p.price)}</span>
                               </div>
                               <div style={{ display: 'flex', gap: '4px' }}>
                                 {renderChg('1D', p.d1)}
@@ -3307,11 +3308,11 @@ export default function Home() {
                 {portfolio?.totals && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '18px' }}>
                     {([
-                      ['Market Value', `$${portfolio.totals.market_value.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
-                      ['Cost Basis', `$${portfolio.totals.cost_basis.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
-                      ['Unrealized P&L', `${portfolio.totals.unrealized_pl >= 0 ? '+' : ''}$${portfolio.totals.unrealized_pl.toLocaleString(undefined, {maximumFractionDigits: 0})} (${portfolio.totals.unrealized_pl_pct >= 0 ? '+' : ''}${portfolio.totals.unrealized_pl_pct.toFixed(2)}%)`, portfolio.totals.unrealized_pl],
-                      ['Cash', `$${portfolio.totals.cash.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
-                      ['Total Equity', `$${portfolio.totals.equity.toLocaleString(undefined, {maximumFractionDigits: 0})}`, null],
+                      ['Market Value', money(portfolio.totals.market_value), null],
+                      ['Cost Basis', money(portfolio.totals.cost_basis), null],
+                      ['Unrealized P&L', `${portfolio.totals.unrealized_pl >= 0 ? '+' : ''}${money(portfolio.totals.unrealized_pl)} (${portfolio.totals.unrealized_pl_pct >= 0 ? '+' : ''}${portfolio.totals.unrealized_pl_pct.toFixed(2)}%)`, portfolio.totals.unrealized_pl],
+                      ['Cash', money(portfolio.totals.cash), null],
+                      ['Total Equity', money(portfolio.totals.equity), null],
                     ] as [string, string, number | null][]).map(([label, val, pl], i) => (
                       <div key={i} style={{ flex: '1 1 130px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '12px 14px' }}>
                         <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>{label}</div>
@@ -3436,9 +3437,9 @@ export default function Home() {
                               <tr key={idx} style={h.monitored ? { opacity: 0.72 } : undefined}>
                                 <td style={{ fontWeight: 600 }}>{h.ticker}</td>
                                 <td>{h.monitored ? '0' : h.shares.toFixed(2)}</td>
-                                <td>{h.monitored ? '—' : `$${h.entry_price.toFixed(2)}`}</td>
-                                <td>{h.current_price > 0 ? `$${h.current_price.toFixed(2)}` : '—'}</td>
-                                <td>{h.monitored ? '—' : `$${h.market_value.toLocaleString(undefined, {maximumFractionDigits: 0})}`}</td>
+                                <td>{h.monitored ? '—' : sharePrice(h.entry_price)}</td>
+                                <td>{h.current_price > 0 ? sharePrice(h.current_price) : '—'}</td>
+                                <td>{h.monitored ? '—' : money(h.market_value)}</td>
                                 <td className={h.monitored ? '' : h.unrealized_pl > 0 ? 'text-green' : h.unrealized_pl < 0 ? 'text-red' : ''} style={{ fontWeight: 600 }}>
                                   {h.monitored ? '—' : (
                                     <>
@@ -5129,10 +5130,13 @@ export default function Home() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
                         <DollarSign size={18} color="var(--color-buy)" />
                         <input
-                          type="number"
-                          value={currentAcct.cash}
+                          type="text"
+                          inputMode="decimal"
+                          value={cashFocused ? (currentAcct.cash ?? '') : sharePrice(currentAcct.cash)}
+                          onFocus={() => setCashFocused(true)}
+                          onBlur={() => setCashFocused(false)}
                           onChange={async (e) => {
-                            const newCash = parseFloat(e.target.value) || 0.0;
+                            const newCash = parseFloat(e.target.value.replace(/[$,\s]/g, '')) || 0.0;
                             setExternalAccounts(prev => prev.map(a => a.account_label === selectedAccount ? { ...a, cash: newCash } : a));
                             await fetch(apiUrl(`/api/external/accounts/${selectedAccount}/cash`), {
                               method: 'POST',
@@ -5146,7 +5150,7 @@ export default function Home() {
                             color: 'var(--text-primary)',
                             fontSize: '18px',
                             fontWeight: 700,
-                            width: '120px',
+                            width: '140px',
                             borderBottom: '1px dashed var(--border-glass)'
                           }}
                         />
@@ -5155,13 +5159,13 @@ export default function Home() {
                     <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
                       <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Holdings Value</div>
                       <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
-                        {money(currentAcct.holdings_value)}
+                        {sharePrice(currentAcct.holdings_value)}
                       </div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
                       <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Total Account Value</div>
                       <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--color-buy)', marginTop: '4px' }}>
-                        {money(currentAcct.total_value)}
+                        {sharePrice(currentAcct.total_value)}
                       </div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
