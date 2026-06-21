@@ -121,7 +121,7 @@ help:
 	@echo "  make crash-backfill    - Recompute coherent point-in-time odds for the ENTIRE snapshot history"
 	@echo ""
 	@echo "Backups (Google Drive, commit-stamped):"
-	@echo "  make backup            - Back up the DB + files (models, configs & cached JSON) [BACKUP_KEEP=10]"
+	@echo "  make backup            - Back up the DB + files (models, caches, anchor CSVs & imported broker sources) [BACKUP_KEEP=10]"
 	@echo "  make restore           - Restore the newest DB + files backup (or RESTORE=<name>)"
 	@echo "  make restore-commit    - Restore the newest backup matching the current git commit"
 	@echo "  make db-backup / files-backup / *-list / *-verify - Operate on just one side"

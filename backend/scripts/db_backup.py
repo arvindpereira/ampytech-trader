@@ -124,6 +124,8 @@ def _commit_of(f):
 _STATIC_FILES_TARGETS = [
     "ml_engine/saved_models",
     "data/premium_news/archive",
+    "data_ingestion/anchors",      # statement-anchor seed CSVs (cost basis / share snapshots)
+    "data/import_sources",         # copies of imported broker source files (Robinhood/Vanguard CSVs)
 ]
 
 # data/*.json files that must NEVER leave the machine (secrets) or are pure runtime junk.
@@ -132,13 +134,13 @@ _DATA_JSON_EXCLUDE = {"gdrive_token.json"}
 
 def _files_backup_targets(backend_dir):
     """Resolve the concrete relative paths to back up/restore: the static targets plus every cached
-    JSON in data/ (e.g. wargame_cache.json, crash_forecast_state.json, ipo_markers.json,
-    premium_ingest_state.json, llm_pricing.json), excluding secrets like the OAuth token."""
+    JSON and every data CSV in data/ (e.g. wargame_cache.json, crash_forecast_state.json, plus any
+    imported/exported *.csv), excluding secrets like the OAuth token."""
     targets = list(_STATIC_FILES_TARGETS)
     data_dir = os.path.join(backend_dir, "data")
     if os.path.isdir(data_dir):
         for fn in sorted(os.listdir(data_dir)):
-            if fn.endswith(".json") and fn not in _DATA_JSON_EXCLUDE:
+            if (fn.endswith(".json") or fn.endswith(".csv")) and fn not in _DATA_JSON_EXCLUDE:
                 targets.append(os.path.join("data", fn))
     return targets
 
