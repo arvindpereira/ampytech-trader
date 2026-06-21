@@ -42,11 +42,11 @@ def compute_defensive_coefficient(z, trend_score, theta, k, L, U, gamma):
     """
     # Trend gate shifts the threshold rightward during an uptrend to avoid exiting early.
     theta_eff = theta + gamma * trend_score
-    
+
     # Sigmoid function
     exp_val = np.clip(-k * (z - theta_eff), -50, 50) # Prevent overflow
     sigmoid = 1.0 / (1.0 + np.exp(exp_val))
-    
+
     # Scale between L and U
     d_val = L + (U - L) * sigmoid
     return float(max(0.0, min(1.0, d_val)))
@@ -58,16 +58,16 @@ def blend_portfolios(agg_weights, def_weights, d_val):
     """
     # Ensure they are dictionaries matching tickers
     tickers = set(agg_weights.keys()).union(def_weights.keys())
-    
+
     blended = {}
     for t in tickers:
         w_agg = agg_weights.get(t, 0.0)
         w_def = def_weights.get(t, 0.0)
         blended[t] = (1.0 - d_val) * w_agg + d_val * w_def
-        
+
     # Enforce sum to 1.0 to absorb any floating point rounding drift
     total = sum(blended.values())
     if total > 0:
         blended = {k: v / total for k, v in blended.items()}
-        
+
     return blended

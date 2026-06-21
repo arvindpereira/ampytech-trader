@@ -1,0 +1,558 @@
+"""Import external broker statements/confirmations from Vanguard and Robinhood.
+
+Supports extracting positions (with tax lots) and transaction histories.
+Uses deterministic regex parsers first; falls back to LLM JSON extraction (OpenAI or local Ollama).
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import datetime
+from typing import Any, Optional
+
+import requests
+from app.core.config import (
+    OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL,
+    OLLAMA_URL, LLM_MODEL
+)
+from app.core.llm_cost import record_usage
+from app.database.models import EquityLot, ExternalAccount, ExternalTransaction
+
+# Robinhood Positions Regex: Ticker, Qty, Price, Average Cost
+# e.g., "AAPL Apple Inc. 10.000000 Shares $182.30 Average Cost $165.20"
+_RH_POS_RE = re.compile(
+    r"\b([A-Z]{1,5})\b.*?\b([\d,]+\.\d+)\s+Shares.*?\bAverage Cost\s+\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+
+# Robinhood Positions without Average Cost:
+# e.g. "AAPL Margin 36 $312.06000 $11,234.16" or "BRK.B Margin 48 $474.48000 $22,775.04"
+_RH_POS_NEW_RE = re.compile(
+    r"\b([A-Z]{1,5}(?:\.[A-Z]{1,5})?)\s+(Margin|Cash|Short)\s+([\d,]+(?:\.\d+)?)\s+\$?([\d,]+\.\d+)\s+\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+
+# Robinhood Transactions Regex: Date, Side (Buy/Sell), Ticker, Qty, Price
+# e.g., "06/12/2026 Buy AAPL 5.000000 Shares at $175.00 Executed"
+_RH_TX_RE = re.compile(
+    r"\b(\d{2}/\d{2}/\d{4})\b.*?\b(Buy|Sell|Bought|Sold|Market Buy|Market Sell)\b.*?\b([A-Z]{1,5})\b.*?\b([\d,]+\.\d+)\s+Shares\s+(?:at|@)\s+\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+
+# Robinhood Transactions without Shares keyword:
+# e.g. "KDK Margin Buy 05/07/2026 100 $6.13000 $613.00"
+_RH_TX_NEW_RE = re.compile(
+    r"\b([A-Z]{1,5}(?:\.[A-Z]{1,5})?)\s+(Margin|Cash|Short)\s+(Buy|Sell)\s+(\d{2}/\d{2}/\d{4})\s+([\d,]+(?:\.\d+)?)\s+\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+
+# Vanguard Positions Regex: e.g. "Apple Inc. (AAPL) 100.0000 $175.50 $17,550.00"
+# or "AAPL Acquisition Date: 05/12/2025 Shares: 50.000 Cost basis per share: $145.00"
+_VG_POS_LOT_RE = re.compile(
+    r"\b([A-Z]{1,5})\b.*?\bAcquisition Date:\s*(\d{2}/\d{2}/\d{4})\b.*?\bShares:\s*([\d,]+\.\d+)\b.*?\b(?:Cost basis per share|Cost basis):\s*\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+_VG_POS_LINE_RE = re.compile(
+    r"\b([A-Z]{1,5})\b.*?\b([\d,]+\.\d+)\s+\$?[\d,]+\.\d+\s+\$?[\d,]+\.\d+\s+\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+
+# Vanguard Transactions Regex: Date, Side, Ticker, Qty, Price
+# e.g., "06/10/2026 Buy AAPL 10.0000 $180.00"
+_VG_TX_RE = re.compile(
+    r"\b(\d{2}/\d{2}/\d{4})\b\s+\b(Buy|Sell|Bought|Sold)\b\s+\b([A-Z]{1,5})\b\s+([\d,]+\.\d+)\s+\$?([\d,]+\.\d+)",
+    re.IGNORECASE
+)
+
+
+def extract_pdf_text(data: bytes) -> str:
+    from pypdf import PdfReader
+    import io
+
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def detect_broker_and_type(text: str, filename: str = "") -> tuple[str, str]:
+    low = (text + " " + filename).lower()
+    broker = "Unknown"
+    if "vanguard" in low:
+        broker = "Vanguard"
+    elif "robinhood" in low:
+        if "joint tenancy" in low or "joint account" in low or "116424851826" in low:
+            broker = "Robinhood Joint"
+        else:
+            broker = "Robinhood"
+
+    # A monthly statement is classified as 'positions' if it lists held assets,
+    # even if it also contains transactions.
+    doc_type = "transactions"
+    if any(k in low for k in ["portfolio summary", "securities held", "positions held", "holdings", "position summary"]):
+        doc_type = "positions"
+    elif not any(k in low for k in ["transaction", "activity", "trade confirmation", "bought", "sold"]):
+        doc_type = "positions"
+
+    return broker, doc_type
+
+
+def _mdy_to_iso(s: str) -> str:
+    dt = datetime.strptime(s.strip(), "%m/%d/%Y")
+    return dt.strftime("%Y-%m-%d")
+
+
+def parse_robinhood_cash(text: str) -> Optional[float]:
+    brokerage_match = re.search(
+        r"Brokerage Cash Balance\s*\*?\s*\$?([\d,]+\.\d+)\s+\$?([\d,]+\.\d+)",
+        text, re.IGNORECASE
+    )
+    sweep_match = re.search(
+        r"Deposit Sweep Balance\s*\*?\s*\$?([\d,]+\.\d+)\s+\$?([\d,]+\.\d+)",
+        text, re.IGNORECASE
+    )
+
+    total_cash = 0.0
+    found = False
+    if brokerage_match:
+        total_cash += float(brokerage_match.group(2).replace(",", ""))
+        found = True
+    if sweep_match:
+        total_cash += float(sweep_match.group(2).replace(",", ""))
+        found = True
+
+    return total_cash if found else None
+
+
+def parse_robinhood_positions(text: str) -> list[dict]:
+    lots = []
+    # 1. Try to find matching position rows with average cost
+    for m in _RH_POS_RE.finditer(text):
+        ticker = m.group(1).upper()
+        shares = float(m.group(2).replace(",", ""))
+        avg_cost = float(m.group(3).replace(",", ""))
+        lots.append({
+            "ticker": ticker,
+            "account_label": "Robinhood",
+            "lot_type": "other",
+            "shares": shares,
+            "cost_basis_per_share": avg_cost,
+            "acquisition_date": datetime.now().strftime("%Y-%m-%d"), # statement date proxy
+            "notes": "Parsed from Robinhood Statement Positions"
+        })
+
+    # 2. Try the new regex format if no lots or to catch additional tickers
+    for m in _RH_POS_NEW_RE.finditer(text):
+        ticker = m.group(1).upper()
+        shares = float(m.group(3).replace(",", ""))
+        price = float(m.group(4).replace(",", ""))
+
+        # Deduplicate with the old regex if they match the same ticker and shares
+        if any(l["ticker"] == ticker and abs(l["shares"] - shares) < 1e-4 for l in lots):
+            continue
+
+        lots.append({
+            "ticker": ticker,
+            "account_label": "Robinhood",
+            "lot_type": "other",
+            "shares": shares,
+            "cost_basis_per_share": price,  # Default to current price as cost basis
+            "acquisition_date": datetime.now().strftime("%Y-%m-%d"), # statement date proxy
+            "notes": "Parsed from Robinhood Statement Positions (Price used as cost basis)"
+        })
+    return lots
+
+
+def parse_robinhood_transactions(text: str) -> list[dict]:
+    txs = []
+    # 1. Try old format
+    for m in _RH_TX_RE.finditer(text):
+        date_str = _mdy_to_iso(m.group(1))
+        side = "BUY" if "buy" in m.group(2).lower() else "SELL"
+        ticker = m.group(3).upper()
+        shares = float(m.group(4).replace(",", ""))
+        price = float(m.group(5).replace(",", ""))
+        txs.append({
+            "date": date_str,
+            "ticker": ticker,
+            "side": side,
+            "qty": shares,
+            "price": price
+        })
+
+    # 2. Try new format
+    for m in _RH_TX_NEW_RE.finditer(text):
+        ticker = m.group(1).upper()
+        side = m.group(3).upper()
+        date_str = _mdy_to_iso(m.group(4))
+        shares = float(m.group(5).replace(",", ""))
+        price = float(m.group(6).replace(",", ""))
+
+        # Deduplicate
+        if any(t["ticker"] == ticker and t["date"] == date_str and t["side"] == side and abs(t["qty"] - shares) < 1e-4 for t in txs):
+            continue
+
+        txs.append({
+            "date": date_str,
+            "ticker": ticker,
+            "side": side,
+            "qty": shares,
+            "price": price
+        })
+    return txs
+
+
+def parse_vanguard_positions(text: str) -> list[dict]:
+    lots = []
+    # 1. First try detailed lot details (with dates)
+    for m in _VG_POS_LOT_RE.finditer(text):
+        ticker = m.group(1).upper()
+        date_str = _mdy_to_iso(m.group(2))
+        shares = float(m.group(3).replace(",", ""))
+        cost = float(m.group(4).replace(",", ""))
+        lots.append({
+            "ticker": ticker,
+            "account_label": "Vanguard",
+            "lot_type": "other",
+            "shares": shares,
+            "cost_basis_per_share": cost,
+            "acquisition_date": date_str,
+            "notes": "Parsed from Vanguard detailed tax lots"
+        })
+
+    # 2. If no detailed lots found, fall back to line items (using statement date as acquisition date)
+    if not lots:
+        for m in _VG_POS_LINE_RE.finditer(text):
+            ticker = m.group(1).upper()
+            shares = float(m.group(2).replace(",", ""))
+            cost = float(m.group(3).replace(",", ""))
+            lots.append({
+                "ticker": ticker,
+                "account_label": "Vanguard",
+                "lot_type": "other",
+                "shares": shares,
+                "cost_basis_per_share": cost,
+                "acquisition_date": datetime.now().strftime("%Y-%m-%d"),
+                "notes": "Parsed from Vanguard Positions line item"
+            })
+    return lots
+
+
+def parse_vanguard_transactions(text: str) -> list[dict]:
+    txs = []
+    for m in _VG_TX_RE.finditer(text):
+        date_str = _mdy_to_iso(m.group(1))
+        side = "BUY" if "buy" in m.group(2).lower() else "SELL"
+        ticker = m.group(3).upper()
+        shares = float(m.group(4).replace(",", ""))
+        price = float(m.group(5).replace(",", ""))
+        txs.append({
+            "date": date_str,
+            "ticker": ticker,
+            "side": side,
+            "qty": shares,
+            "price": price
+        })
+    return txs
+
+
+_POSITIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "format_detected": {"type": "string"},
+        "account_label": {"type": "string"},
+        "cash": {"type": "number"},
+        "positions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "shares": {"type": "number"},
+                    "cost_basis_per_share": {"type": "number"},
+                    "acquisition_date": {"type": "string"}, # YYYY-MM-DD
+                    "lot_type": {"type": "string", "enum": ["rsu", "espp", "other"]},
+                },
+                "required": ["ticker", "shares", "cost_basis_per_share"]
+            }
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}}
+    },
+    "required": ["format_detected", "positions", "warnings"]
+}
+
+_TRANSACTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "format_detected": {"type": "string"},
+        "account_label": {"type": "string"},
+        "transactions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string"}, # YYYY-MM-DD
+                    "ticker": {"type": "string"},
+                    "side": {"type": "string", "enum": ["BUY", "SELL"]},
+                    "qty": {"type": "number"},
+                    "price": {"type": "number"}
+                },
+                "required": ["date", "ticker", "side", "qty", "price"]
+            }
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}}
+    },
+    "required": ["format_detected", "transactions", "warnings"]
+}
+
+
+def parse_with_llm(text: str, filename: str, doc_type: str) -> dict:
+    """Invokes LLM (OpenAI or local Ollama) to extract positions or transactions from statement text."""
+    schema = _POSITIONS_SCHEMA if doc_type == "positions" else _TRANSACTIONS_SCHEMA
+    prompt = (
+        f"Extract broker {doc_type} from this statement PDF text export.\n\n"
+        "Rules:\n"
+        "- Return JSON object matching the requested schema.\n"
+        "- Extract ticker, shares, cost basis per share (for positions), and execution details (for transactions).\n"
+        "- Infer account_label (e.g. Robinhood or Vanguard) from header references.\n"
+        "- Dates must be in YYYY-MM-DD format.\n"
+        "- Add warnings if any figures are estimated or ambiguous.\n\n"
+        f"Filename: {filename}\n\n"
+        f"PDF text:\n{text[:28000]}\n\n"
+        f"Schema:\n{json.dumps(schema)}"
+    )
+
+    if OPENAI_API_KEY:
+        # Use OpenAI API
+        body = {
+            "model": OPENAI_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "response_format": {"type": "json_object"}
+        }
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        r = requests.post(f"{OPENAI_BASE_URL}/chat/completions", json=body, headers=headers, timeout=180)
+        r.raise_for_status()
+        j = r.json()
+        u = j.get("usage") or {}
+        record_usage("external_import_llm", OPENAI_MODEL, u.get("prompt_tokens", 0), u.get("completion_tokens", 0), provider="openai")
+        return json.loads(j["choices"][0]["message"]["content"])
+    else:
+        # Fallback to local Ollama
+        body = {
+            "model": LLM_MODEL,
+            "prompt": prompt,
+            "system": "You are a precise data extractor. Respond only with a raw JSON object matching the requested schema.",
+            "stream": False,
+            "options": {"temperature": 0}
+        }
+        r = requests.post(f"{OLLAMA_URL}/api/generate", json=body, timeout=180)
+        r.raise_for_status()
+        res_text = r.json().get("response", "")
+        # Clean up any potential markdown formatting from Ollama response
+        match = re.search(r"(\{.*\})", res_text, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        raise RuntimeError("Failed to parse local Ollama response as JSON object.")
+
+
+def import_external_pdf(
+    db,
+    data: bytes,
+    filename: str = "",
+    force_llm: bool = False,
+    override_account: Optional[str] = None
+) -> dict:
+    """Parse PDF bytes, detect account and type, insert positions or transactions into database."""
+    text = extract_pdf_text(data)
+    if not text.strip():
+        return {"status": "error", "message": "PDF contains no extractable text."}
+
+    broker, doc_type = detect_broker_and_type(text, filename)
+    account_label = override_account or broker
+
+    if account_label == "Unknown":
+        account_label = "External Account"
+
+    # Create account if it doesn't exist
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        now_str = datetime.now().isoformat(timespec="seconds")
+        acct = ExternalAccount(
+            account_label=account_label,
+            cash=0.0,
+            risk_profile="balanced",
+            created_at=now_str,
+            updated_at=now_str
+        )
+        db.add(acct)
+        db.commit()
+
+    parsed_data: dict[str, Any] = {
+        "format": "regex",
+        "lots": [],
+        "transactions": [],
+        "warnings": [],
+        "cash": None
+    }
+
+    # Deterministic parsing attempts
+    if not force_llm:
+        if account_label.startswith("Robinhood"):
+            if doc_type == "positions":
+                parsed_data["lots"] = parse_robinhood_positions(text)
+                for lot in parsed_data["lots"]:
+                    lot["account_label"] = account_label
+                cash_val = parse_robinhood_cash(text)
+                if cash_val is not None:
+                    parsed_data["cash"] = cash_val
+                # Parse transactions from the combined statement
+                parsed_data["transactions"] = parse_robinhood_transactions(text)
+            else:
+                parsed_data["transactions"] = parse_robinhood_transactions(text)
+        elif account_label == "Vanguard":
+            if doc_type == "positions":
+                parsed_data["lots"] = parse_vanguard_positions(text)
+                # Parse transactions from the combined statement
+                parsed_data["transactions"] = parse_vanguard_transactions(text)
+            else:
+                parsed_data["transactions"] = parse_vanguard_transactions(text)
+
+    # Fallback to LLM if deterministic regex failed to extract anything
+    extracted_any = bool(parsed_data["lots"]) or bool(parsed_data["transactions"])
+    if force_llm or not extracted_any:
+        try:
+            llm_res = parse_with_llm(text, filename, doc_type)
+            parsed_data["format"] = llm_res.get("format_detected", "llm")
+            parsed_data["warnings"] = llm_res.get("warnings") or []
+            if doc_type == "positions":
+                parsed_data["cash"] = llm_res.get("cash")
+                raw_positions = llm_res.get("positions") or []
+                lots = []
+                for p in raw_positions:
+                    lots.append({
+                        "ticker": p["ticker"].upper(),
+                        "account_label": account_label,
+                        "lot_type": p.get("lot_type") or "other",
+                        "shares": float(p["shares"]),
+                        "cost_basis_per_share": float(p["cost_basis_per_share"]),
+                        "acquisition_date": p.get("acquisition_date") or datetime.now().strftime("%Y-%m-%d"),
+                        "notes": f"LLM parsed from {filename}"
+                    })
+                parsed_data["lots"] = lots
+            else:
+                raw_txs = llm_res.get("transactions") or []
+                txs = []
+                for t in raw_txs:
+                    txs.append({
+                        "date": t["date"],
+                        "ticker": t["ticker"].upper(),
+                        "side": t["side"].upper(),
+                        "qty": float(t["qty"]),
+                        "price": float(t["price"])
+                    })
+                parsed_data["transactions"] = txs
+        except Exception as e:
+            if not extracted_any:
+                raise RuntimeError(f"Deterministic parser failed and LLM parser errored: {e}")
+            parsed_data["warnings"].append(f"LLM fallback failed with error: {e}")
+
+    # Process and commit parsed data
+    now_str = datetime.now().isoformat(timespec="seconds")
+    if doc_type == "positions":
+        # Delete existing lots for this account before replacing
+        db.query(EquityLot).filter(EquityLot.account_label == account_label).delete()
+
+        inserted_count = 0
+        for lot in parsed_data["lots"]:
+            db_lot = EquityLot(
+                ticker=lot["ticker"],
+                account_label=account_label,
+                lot_type=lot["lot_type"],
+                shares=lot["shares"],
+                cost_basis_per_share=lot["cost_basis_per_share"],
+                acquisition_date=lot["acquisition_date"],
+                notes=lot.get("notes") or f"Imported from {filename}",
+                created_at=now_str
+            )
+            db.add(db_lot)
+            inserted_count += 1
+
+        if parsed_data["cash"] is not None:
+            acct.cash = float(parsed_data["cash"])
+            acct.updated_at = now_str
+
+        # Commit transactions found in the combined statement
+        txs_inserted = 0
+        if parsed_data["transactions"]:
+            existing_txs = db.query(ExternalTransaction).filter(ExternalTransaction.account_label == account_label).all()
+            existing_fingerprints = {
+                (t.execution_date, t.ticker, t.side, round(t.qty, 4), round(t.price, 4))
+                for t in existing_txs
+            }
+            for tx in parsed_data["transactions"]:
+                fingerprint = (tx["date"], tx["ticker"], tx["side"], round(tx["qty"], 4), round(tx["price"], 4))
+                if fingerprint in existing_fingerprints:
+                    continue
+                db_tx = ExternalTransaction(
+                    account_label=account_label,
+                    ticker=tx["ticker"],
+                    side=tx["side"],
+                    qty=tx["qty"],
+                    price=tx["price"],
+                    execution_date=tx["date"],
+                    raw_details=f"Imported from statement {filename}",
+                    created_at=now_str
+                )
+                db.add(db_tx)
+                txs_inserted += 1
+
+        db.commit()
+        return {
+            "status": "success",
+            "account_label": account_label,
+            "doc_type": "positions",
+            "parsed_count": inserted_count,
+            "cash_updated": parsed_data["cash"],
+            "transactions_imported": txs_inserted,
+            "format": parsed_data["format"],
+            "warnings": parsed_data["warnings"]
+        }
+    else:
+        # Ingest transactions, deduplicating against existing logs
+        existing_txs = db.query(ExternalTransaction).filter(ExternalTransaction.account_label == account_label).all()
+        existing_fingerprints = {
+            (t.execution_date, t.ticker, t.side, round(t.qty, 4), round(t.price, 4))
+            for t in existing_txs
+        }
+
+        inserted_count = 0
+        skipped_count = 0
+        for tx in parsed_data["transactions"]:
+            fingerprint = (tx["date"], tx["ticker"], tx["side"], round(tx["qty"], 4), round(tx["price"], 4))
+            if fingerprint in existing_fingerprints:
+                skipped_count += 1
+                continue
+
+            db_tx = ExternalTransaction(
+                account_label=account_label,
+                ticker=tx["ticker"],
+                side=tx["side"],
+                qty=tx["qty"],
+                price=tx["price"],
+                execution_date=tx["date"],
+                raw_details=f"Imported from {filename}",
+                created_at=now_str
+            )
+            db.add(db_tx)
+            inserted_count += 1
+
+        db.commit()
+        return {
+            "status": "success",
+            "account_label": account_label,
+            "doc_type": "transactions",
+            "inserted_count": inserted_count,
+            "skipped_count": skipped_count,
+            "format": parsed_data["format"],
+            "warnings": parsed_data["warnings"]
+        }

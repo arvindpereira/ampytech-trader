@@ -31,7 +31,7 @@ _FORECAST_STATE_PATH = os.path.join(DATA_STORAGE_DIR, "crash_forecast_state.json
 def prepare_features_df():
     """Loads and aligns daily/monthly macro and price features chronologically."""
     db = SessionLocal()
-    
+
     # 1. Fetch daily SPY close prices
     spy_records = db.query(DailyPrice.date, DailyPrice.close).filter(
         DailyPrice.ticker == "SPY"
@@ -39,14 +39,14 @@ def prepare_features_df():
     if not spy_records:
         db.close()
         return pd.DataFrame()
-        
+
     df = pd.DataFrame(spy_records, columns=["date", "spy_close"])
     df["date"] = pd.to_datetime(df["date"])
-    
+
     # 2. Fetch target macro indicators
     indicators = ["cape", "buffett_indicator", "term_spread_10y3m", "yield_spread",
                   "excess_bond_premium", "nfci_leverage"]
-                  
+
     for ind in indicators:
         records = db.query(MacroIndicator.date, MacroIndicator.value).filter(
             MacroIndicator.indicator_name == ind
@@ -56,9 +56,9 @@ def prepare_features_df():
             ind_df["date"] = pd.to_datetime(ind_df["date"])
             # Merge (forward fill macro indicators since they are monthly/weekly)
             df = pd.merge_asof(df.sort_values("date"), ind_df.sort_values("date"), on="date", direction="backward")
-            
+
     db.close()
-    
+
     # Clean term spread
     if "term_spread_10y3m" in df.columns and "yield_spread" in df.columns:
         df["term_spread"] = df["term_spread_10y3m"].fillna(df["yield_spread"])
@@ -66,7 +66,7 @@ def prepare_features_df():
         df["term_spread"] = df["yield_spread"]
     else:
         df["term_spread"] = 1.5 # default fallback
-        
+
     df = df.sort_values("date").reset_index(drop=True)
     # Forward fill missing values
     df = df.ffill().dropna()
@@ -78,27 +78,27 @@ def generate_drawdown_labels(df, dd_threshold, horizon_days):
     close_prices = df["spy_close"].values
     dates = df["date"].values
     n = len(df)
-    
+
     for i in range(n):
         ref_price = close_prices[i]
         ref_date = dates[i]
-        
+
         # Find all prices within forward horizon_days
         limit_date = ref_date + np.timedelta64(horizon_days, 'D')
         forward_window = df[(df["date"] > ref_date) & (df["date"] <= limit_date)]["spy_close"].values
-        
+
         if len(forward_window) == 0:
             labels.append(np.nan) # Cannot label end of series
             continue
-            
+
         min_price = np.min(forward_window)
         max_dd = (min_price - ref_price) / ref_price
-        
+
         if max_dd <= -dd_threshold:
             labels.append(1)
         else:
             labels.append(0)
-            
+
     return pd.Series(labels, index=df.index)
 
 def purged_embargo_kfold_split(df, n_splits=3, purge_window=180, embargo_window=30):
@@ -109,32 +109,32 @@ def purged_embargo_kfold_split(df, n_splits=3, purge_window=180, embargo_window=
     n = len(df)
     dates = df["date"].values
     indices = np.arange(n)
-    
+
     # Split into K contiguous blocks
     block_size = n // n_splits
     splits = []
-    
+
     for k in range(n_splits):
         test_start_idx = k * block_size
         test_end_idx = min((k + 1) * block_size, n - 1)
         test_indices = indices[test_start_idx:test_end_idx+1]
-        
+
         test_start_date = dates[test_start_idx]
         test_end_date = dates[test_end_idx]
-        
+
         # Determine train indices (exclude test, purged, and embargoed ranges)
         # Purge range: test_start_date - purge_window to test_end_date
         # Embargo range: test_end_date to test_end_date + embargo_window
         purge_limit = test_start_date - np.timedelta64(purge_window, 'D')
         embargo_limit = test_end_date + np.timedelta64(embargo_window, 'D')
-        
+
         train_indices = [
             i for i in indices
             if (dates[i] < purge_limit) or (dates[i] > embargo_limit)
         ]
-        
+
         splits.append((np.array(train_indices), np.array(test_indices)))
-        
+
     return splits
 
 def enforce_coherent_monotonicity(prob_grid, levels_asc, horizons_asc):

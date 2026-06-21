@@ -264,4 +264,3 @@ PORTFOLIO_USE_KELLY = os.getenv("PORTFOLIO_USE_KELLY", "False").lower() in ("tru
 PORTFOLIO_KELLY_SCALE = float(os.getenv("PORTFOLIO_KELLY_SCALE", "0.25"))
 PORTFOLIO_KELLY_MIN = float(os.getenv("PORTFOLIO_KELLY_MIN", "0.01"))
 PORTFOLIO_KELLY_MAX = float(os.getenv("PORTFOLIO_KELLY_MAX", "0.10"))
-

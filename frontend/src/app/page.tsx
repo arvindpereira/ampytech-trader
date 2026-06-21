@@ -173,7 +173,7 @@ function TimingBadge({ lastRun, lastLabel = 'Updated', nextScheduled, schedule, 
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor' | 'crash'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor' | 'crash' | 'external'>('dashboard');
 
   // Crash Radar States
   const [crashData, setCrashData] = useState<any>(null);
@@ -618,6 +618,78 @@ export default function Home() {
   const [equityTarget, setEquityTarget] = useState<string>('10000');
   const [equityTargetTicker, setEquityTargetTicker] = useState<string>('ADBE');
   const [equityPlan, setEquityPlan] = useState<any>(null);
+
+  // Tab 6: External Portfolio Manager States
+  const [externalAccounts, setExternalAccounts] = useState<any[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState<string>('Robinhood');
+  const [externalPositions, setExternalPositions] = useState<any[]>([]);
+  const [expandedPositions, setExpandedPositions] = useState<Record<string, boolean>>({});
+  const [externalSuggestions, setExternalSuggestions] = useState<any[]>([]);
+  const [externalSuggestionsLoading, setExternalSuggestionsLoading] = useState<boolean>(false);
+  const [reconcileStatus, setReconcileStatus] = useState<string>('');
+  const [externalConfirmOrder, setExternalConfirmOrder] = useState<any>(null);
+  const [externalExecutionPrice, setExternalExecutionPrice] = useState<string>('');
+  const [externalExecutionDate, setExternalExecutionDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [showRobinhoodSyncModal, setShowRobinhoodSyncModal] = useState<boolean>(false);
+  const [robinhoodUsername, setRobinhoodUsername] = useState<string>('');
+  const [robinhoodPassword, setRobinhoodPassword] = useState<string>('');
+  const [robinhoodMfaSecret, setRobinhoodMfaSecret] = useState<string>('');
+  const [robinhoodMfaCode, setRobinhoodMfaCode] = useState<string>('');
+  const [robinhoodSyncLoading, setRobinhoodSyncLoading] = useState<boolean>(false);
+  const [robinhoodSyncError, setRobinhoodSyncError] = useState<string>('');
+  const [robinhoodMfaRequired, setRobinhoodMfaRequired] = useState<boolean>(false);
+
+  const fetchExternalAccounts = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/external/accounts'));
+      if (res.ok) {
+        const data = await res.json();
+        setExternalAccounts(data);
+        if (data.length > 0) {
+          if (!data.some((a: any) => a.account_label === selectedAccount)) {
+            setSelectedAccount(data[0].account_label);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchExternalPositionsAndSuggestions = async (acctLabel: string) => {
+    if (!acctLabel) return;
+    try {
+      setExternalSuggestionsLoading(true);
+      const [posRes, suggRes] = await Promise.all([
+        fetch(apiUrl(`/api/external/positions?account_label=${encodeURIComponent(acctLabel)}`)),
+        fetch(apiUrl(`/api/external/suggestions?account_label=${encodeURIComponent(acctLabel)}`))
+      ]);
+      if (posRes.ok) {
+        setExternalPositions(await posRes.json());
+      }
+      if (suggRes.ok) {
+        const data = await suggRes.json();
+        setExternalSuggestions(data.suggestions || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setExternalSuggestionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'external') {
+      fetchExternalAccounts();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'external' && selectedAccount) {
+      fetchExternalPositionsAndSuggestions(selectedAccount);
+    }
+  }, [selectedAccount, activeTab]);
+
   const [equityRunning, setEquityRunning] = useState<boolean>(false);
   const [equityProgress, setEquityProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [tradingBlocks, setTradingBlocks] = useState<any[]>([]);
@@ -1741,6 +1813,12 @@ export default function Home() {
             onClick={() => setActiveTab('crash')}
           >
             Crash Radar
+          </button>
+          <button
+            className={`toggle-btn ${activeTab === 'external' ? 'active' : ''}`}
+            onClick={() => setActiveTab('external')}
+          >
+            External Portfolio
           </button>
         </div>
       </div>
@@ -4216,7 +4294,7 @@ export default function Home() {
 
         {activeTab === 'crash' && (
           <section className="crash-grid">
-            
+
             {/* Full-width Timeline Graph Card */}
             <div className="glass-card" style={{ gridColumn: '1 / -1', padding: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -4238,7 +4316,7 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-              
+
               <div style={{ width: '100%', height: '300px' }}>
                 {timelineData && timelineData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -4262,8 +4340,8 @@ export default function Home() {
                           <stop offset="1" stopColor="#10B981" stopOpacity={0.05} />
                         </linearGradient>
                       </defs>
-                      <XAxis 
-                        dataKey="date" 
+                      <XAxis
+                        dataKey="date"
                         tickFormatter={(tick) => {
                           const date = new Date(tick);
                           return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -4272,8 +4350,8 @@ export default function Home() {
                         fontSize={10}
                         tickLine={false}
                       />
-                      <YAxis 
-                        domain={[0, 100]} 
+                      <YAxis
+                        domain={[0, 100]}
                         ticks={[0, 40, 65, 80, 100]}
                         stroke="var(--text-secondary)"
                         fontSize={10}
@@ -4283,7 +4361,7 @@ export default function Home() {
                       <ReferenceLine y={40} stroke="#3B82F6" strokeDasharray="3 3" strokeOpacity={0.35} />
                       <ReferenceLine y={65} stroke="#F59E0B" strokeDasharray="3 3" strokeOpacity={0.35} />
                       <ReferenceLine y={80} stroke="#EF4444" strokeDasharray="3 3" strokeOpacity={0.45} />
-                      <Tooltip 
+                      <Tooltip
                         content={({ active, payload }) => {
                           if (active && payload && payload.length) {
                             const data = payload[0].payload;
@@ -4310,13 +4388,13 @@ export default function Home() {
                           return null;
                         }}
                       />
-                      <Area 
-                        type="monotone" 
-                        dataKey="composite_index" 
-                        stroke="url(#crashStroke)" 
+                      <Area
+                        type="monotone"
+                        dataKey="composite_index"
+                        stroke="url(#crashStroke)"
                         strokeWidth={2.5}
-                        fillOpacity={1} 
-                        fill="url(#crashFill)" 
+                        fillOpacity={1}
+                        fill="url(#crashFill)"
                       />
                     </AreaChart>
                   </ResponsiveContainer>
@@ -4330,7 +4408,7 @@ export default function Home() {
 
             {/* COLUMN 1: RISK ASSESSMENT & GLIDE PATH KNOBS */}
             <div style={{ display: 'grid', gap: '20px', alignContent: 'start' }}>
-              
+
               {/* Card 1: Composite Crash-Risk Index */}
               <div className="glass-card" style={{ padding: '24px', position: 'relative', overflow: 'hidden' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -4350,13 +4428,13 @@ export default function Home() {
                     <div style={{ position: 'relative', width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <svg width="160" height="160" viewBox="0 0 160 160">
                         <circle cx="80" cy="80" r="70" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="12" />
-                        <circle cx="80" cy="80" r="70" fill="none" 
+                        <circle cx="80" cy="80" r="70" fill="none"
                           stroke={
                             crashData.risk_band === 'Calm' ? '#10B981' :
                             crashData.risk_band === 'Elevated' ? '#3B82F6' :
                             crashData.risk_band === 'High' ? '#F59E0B' : '#EF4444'
-                          } 
-                          strokeWidth="12" 
+                          }
+                          strokeWidth="12"
                           strokeDasharray={`${2 * Math.PI * 70}`}
                           strokeDashoffset={`${2 * Math.PI * 70 * (1 - crashData.composite_index / 100)}`}
                           strokeLinecap="round"
@@ -4367,7 +4445,7 @@ export default function Home() {
                         <span style={{ fontSize: '32px', fontWeight: 800, color: 'var(--text-primary)' }}>
                           {(crashData?.composite_index ?? 0).toFixed(1)}
                         </span>
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: 
+                        <span style={{ fontSize: '12px', fontWeight: 600, color:
                           crashData.risk_band === 'Calm' ? '#10B981' :
                           crashData.risk_band === 'Elevated' ? '#3B82F6' :
                           crashData.risk_band === 'High' ? '#F59E0B' : '#EF4444'
@@ -4376,7 +4454,7 @@ export default function Home() {
                         </span>
                       </div>
                     </div>
-                    
+
                     <div style={{ display: 'flex', gap: '16px', marginTop: '18px', width: '100%', justifyContent: 'space-around' }}>
                       <div style={{ textAlign: 'center' }}>
                         <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>POSTURE</div>
@@ -4389,7 +4467,7 @@ export default function Home() {
                         </div>
                       </div>
                     </div>
-                    
+
                     {/* Trigger Reasons */}
                     <div style={{ marginTop: '20px', width: '100%', borderTop: '1px solid var(--border-glass)', paddingTop: '16px' }}>
                       <h4 style={{ margin: '0 0 10px', fontSize: '13px', color: 'var(--text-primary)' }}>System Triggers</h4>
@@ -4408,7 +4486,7 @@ export default function Home() {
                   <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading composite index...</div>
                 )}
               </div>
-              
+
               {/* Card 2: Glide Path Knobs */}
               <div className="glass-card" style={{ padding: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
@@ -4418,10 +4496,10 @@ export default function Home() {
                 <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 20px', lineHeight: '1.4' }}>
                   Adjust de-risking sensitivity thresholds. Choose a preset or customize parameters dynamically.
                 </p>
-                
+
                 <div style={{ display: 'flex', gap: '10px', marginBottom: '22px' }}>
                   {(['conservative', 'balanced', 'aggressive'] as const).map(p => (
-                    <button key={p} 
+                    <button key={p}
                       onClick={() => applyPreset(p)}
                       className={`toggle-btn ${preset === p ? 'active' : ''}`}
                       style={{ flex: 1, textTransform: 'capitalize' }}
@@ -4430,7 +4508,7 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
-                
+
                 <div style={{ display: 'grid', gap: '18px' }}>
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
@@ -4440,7 +4518,7 @@ export default function Home() {
                     <input type="range" min="0.4" max="1.4" step="0.05" value={theta} onChange={(e) => { setTheta(parseFloat(e.target.value)); setPreset('custom'); }} style={{ width: '100%' }} />
                     <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Standardized score above which de-allocating equities begins.</span>
                   </div>
-                  
+
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
                       <span>Curve Steepness (k)</span>
@@ -4449,7 +4527,7 @@ export default function Home() {
                     <input type="range" min="1.0" max="5.0" step="0.1" value={k} onChange={(e) => { setK(parseFloat(e.target.value)); setPreset('custom'); }} style={{ width: '100%' }} />
                     <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>Determines how rapidly the de-risking blends cash as risk increases.</span>
                   </div>
-                  
+
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
                       <span>Trend Gate Strength (γ)</span>
@@ -4548,7 +4626,7 @@ export default function Home() {
                   )}
                 </div>
               </div>
-              
+
               {/* Card 3: Experimental Drawdown Odds */}
               <div className="glass-card" style={{ padding: '24px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -4565,7 +4643,7 @@ export default function Home() {
                 <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
                   Forward probability odds of an SPY drawdown, from penalized L2 logistic regressions. Odds are calibrated to historical base rates and projected onto a logically-coherent grid (deeper drawdowns are never more likely than shallower ones; longer horizons never less likely than shorter ones). <strong>Reliability</strong> reflects purged-embargo cross-validated AUC &mdash; values near 0.5 mean the model has little skill beyond the base rate.
                 </p>
-                
+
                 {crashData?.experimental_forecast_odds && crashData.experimental_forecast_odds.length > 0 ? (
                   <table className="trade-table" style={{ marginBottom: '16px' }}>
                     <thead>
@@ -4610,9 +4688,9 @@ export default function Home() {
                     No odds forecast calculations cached in snapshot.
                   </div>
                 )}
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <button 
+                  <button
                     disabled={!!forecastJobId}
                     onClick={async () => {
                       setForecastStatus('Queued...');
@@ -4625,7 +4703,7 @@ export default function Home() {
                       } catch (err) {
                         setForecastStatus('Trigger failed.');
                       }
-                    }} 
+                    }}
                     className="toggle-btn"
                   >
                     {forecastJobId ? 'Retraining models...' : 'Run Purged CV Forecast'}
@@ -4636,10 +4714,10 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            
+
             {/* COLUMN 2: STRATEGIC PLAYBOOK & WARGAMING */}
             <div style={{ display: 'grid', gap: '20px', alignContent: 'start' }}>
-              
+
               {/* Card 4: Defensive Stance Playbook */}
               <div className="glass-card" style={{ padding: '24px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -4648,10 +4726,10 @@ export default function Home() {
                     <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600 }}>Defensive Stance Playbook</h3>
                   </div>
                 </div>
-                
+
                 {playbook ? (
                   <div style={{ display: 'grid', gap: '16px' }}>
-                    
+
                     {/* Stance Card: Buffett Cash Stance */}
                     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
@@ -4669,7 +4747,7 @@ export default function Home() {
                         ))}
                       </div>
                     </div>
-                    
+
                     {/* Stance Card: Safe Asset Branch */}
                     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
                       <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
@@ -4686,7 +4764,7 @@ export default function Home() {
                         ))}
                       </div>
                     </div>
-                    
+
                     {/* Stance Card: Dalio All-Weather & Taleb Barbell */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                       <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px' }}>
@@ -4706,7 +4784,7 @@ export default function Home() {
                         </ul>
                       </div>
                     </div>
-                    
+
                     {/* Stance Card: Minsky/Dalio Debt Cycle */}
                     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
@@ -4724,7 +4802,7 @@ export default function Home() {
                         </strong></div>
                       </div>
                     </div>
-                    
+
                     {/* Execution Apply Section */}
                     <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', alignItems: 'center' }}>
@@ -4744,16 +4822,16 @@ export default function Home() {
                         glide-path curve above, then rebalances the <strong>paper account only</strong>. Preview the
                         exact orders before anything runs.
                       </p>
-                      
-                      <button 
+
+                      <button
                         disabled={applyingRebalance}
                         onClick={openPreview}
-                        className="toggle-btn" 
+                        className="toggle-btn"
                         style={{ background: 'var(--color-gold)', color: 'black', fontWeight: 700, border: 'none' }}
                       >
                         {applyingRebalance ? 'Applying rebalancing...' : 'Preview Rebalancing (Paper)'}
                       </button>
-                      
+
                       {applyResult && (
                         <div style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: '6px', padding: '10px', fontSize: '12px', color: 'var(--text-primary)' }}>
                           <div style={{ fontWeight: 600, color: '#10B981', marginBottom: '4px' }}>✓ Stance Applied Successfully</div>
@@ -4766,13 +4844,13 @@ export default function Home() {
                         </div>
                       )}
                     </div>
-                    
+
                   </div>
                 ) : (
                   <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading defensive playbook...</div>
                 )}
               </div>
-              
+
               {/* Card 5: Scenario Wargame — policy comparison across crashes */}
               <div className="glass-card" style={{ padding: '24px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -4973,7 +5051,7 @@ export default function Home() {
                   );
                 })()}
               </div>
-              
+
               {/* Card 6: Severity Contingency Checklist */}
               <div className="glass-card" style={{ padding: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
@@ -5005,10 +5083,684 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            
+
+          </section>
+        )}
+
+        {activeTab === 'external' && (
+          <section style={{ gridColumn: '1 / -1', display: 'grid', gap: '20px' }}>
+
+            {/* Account Selector & Settings Panel */}
+            <div className="glass-card" style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)' }}>External Portfolio Manager</h2>
+                  <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Track, manage, and manually execute strategy-driven MPT/Swing rebalances across your Robinhood and Vanguard accounts.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  {externalAccounts.map(acct => (
+                    <button
+                      key={acct.account_label}
+                      onClick={() => setSelectedAccount(acct.account_label)}
+                      className="toggle-btn"
+                      style={{
+                        borderColor: selectedAccount === acct.account_label ? 'var(--color-buy)' : 'var(--border-glass)',
+                        background: selectedAccount === acct.account_label ? 'rgba(0, 242, 254, 0.1)' : 'transparent',
+                        color: selectedAccount === acct.account_label ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        fontWeight: 600
+                      }}
+                    >
+                      {acct.account_label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Account summary cards */}
+              {(() => {
+                const currentAcct = externalAccounts.find(a => a.account_label === selectedAccount);
+                if (!currentAcct) return null;
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginTop: '20px' }}>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Cash Balance</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                        <DollarSign size={18} color="var(--color-buy)" />
+                        <input
+                          type="number"
+                          value={currentAcct.cash}
+                          onChange={async (e) => {
+                            const newCash = parseFloat(e.target.value) || 0.0;
+                            setExternalAccounts(prev => prev.map(a => a.account_label === selectedAccount ? { ...a, cash: newCash } : a));
+                            await fetch(apiUrl(`/api/external/accounts/${selectedAccount}/cash`), {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ cash: newCash })
+                            });
+                          }}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--text-primary)',
+                            fontSize: '18px',
+                            fontWeight: 700,
+                            width: '120px',
+                            borderBottom: '1px dashed var(--border-glass)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Holdings Value</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '4px' }}>
+                        {money(currentAcct.holdings_value)}
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Total Account Value</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--color-buy)', marginTop: '4px' }}>
+                        {money(currentAcct.total_value)}
+                      </div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Risk Profile</div>
+                      <select
+                        value={currentAcct.risk_profile}
+                        onChange={async (e) => {
+                          const newProfile = e.target.value;
+                          setExternalAccounts(prev => prev.map(a => a.account_label === selectedAccount ? { ...a, risk_profile: newProfile } : a));
+                          await fetch(apiUrl('/api/external/accounts'), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              account_label: selectedAccount,
+                              cash: currentAcct.cash,
+                              risk_profile: newProfile
+                            })
+                          });
+                          fetchExternalPositionsAndSuggestions(selectedAccount);
+                        }}
+                        style={{
+                          background: 'rgba(0,0,0,0.3)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-glass)',
+                          borderRadius: '6px',
+                          padding: '6px',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          marginTop: '6px',
+                          width: '100%',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="conservative">Conservative</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="aggressive">Aggressive</option>
+                      </select>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Split layout: Holdings/Lots vs suggestions */}
+            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '20px', alignItems: 'start' }}>
+
+              {/* Left Column: Consolidated Positions & Tax Lots */}
+              <div className="glass-card" style={{ padding: '24px', display: 'grid', gap: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Account Position Holdings</h3>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <label className="toggle-btn" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                      <Upload size={14} /> Import Statement PDF
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setReconcileStatus('Uploading and parsing statement...');
+                          const formData = new FormData();
+                          formData.append('file', file);
+                          formData.append('override_account', selectedAccount);
+                          try {
+                            const res = await fetch(apiUrl('/api/external/import'), {
+                              method: 'POST',
+                              body: formData
+                            });
+                            if (res.ok) {
+                              const r = await res.json();
+                              setReconcileStatus(`Success: Ingested ${r.parsed_count} positions. Cash updated to ${money(r.cash_updated || 0)}.`);
+                              fetchExternalAccounts();
+                              fetchExternalPositionsAndSuggestions(selectedAccount);
+                            } else {
+                              const err = await res.json();
+                              setReconcileStatus(`Import error: ${err.detail || 'Failed to parse Statement PDF.'}`);
+                            }
+                          } catch (err: any) {
+                            setReconcileStatus(`Import failed: ${err.message}`);
+                          }
+                        }}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                    {selectedAccount.startsWith('Robinhood') && (
+                      <button
+                        onClick={() => {
+                          setRobinhoodSyncError('');
+                          setRobinhoodMfaRequired(false);
+                          setRobinhoodMfaCode('');
+                          setShowRobinhoodSyncModal(true);
+                        }}
+                        className="toggle-btn"
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', background: 'rgba(0, 242, 254, 0.08)', borderColor: 'var(--color-buy)', cursor: 'pointer' }}
+                      >
+                        <RefreshCw size={14} /> Sync Robinhood API
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {reconcileStatus && (
+                  <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px 12px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                    {reconcileStatus}
+                  </div>
+                )}
+
+                {externalPositions.length === 0 ? (
+                  <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No positions logged for this account. Upload a PDF statement above to import your holdings automatically.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="trade-table" style={{ width: '100%' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '30px' }}></th>
+                          <th>Ticker</th>
+                          <th>Shares</th>
+                          <th>Avg Cost</th>
+                          <th>Price</th>
+                          <th>Market Value</th>
+                          <th>Gain/Loss</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {externalPositions.map((pos) => {
+                          const isExpanded = !!expandedPositions[pos.ticker];
+                          return (
+                            <React.Fragment key={pos.ticker}>
+                              <tr style={{ background: isExpanded ? 'rgba(255,255,255,0.02)' : 'none' }}>
+                                <td>
+                                  <button
+                                    onClick={() => setExpandedPositions(prev => ({ ...prev, [pos.ticker]: !prev[pos.ticker] }))}
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                  >
+                                    {isExpanded ? '▼' : '▶'}
+                                  </button>
+                                </td>
+                                <td><strong style={{ color: 'var(--text-primary)' }}>{pos.ticker}</strong></td>
+                                <td>{pos.total_shares.toFixed(4)}</td>
+                                <td>{sharePrice(pos.average_cost)}</td>
+                                <td>{sharePrice(pos.current_price)}</td>
+                                <td><strong>{money(pos.market_value)}</strong></td>
+                                <td style={{ color: pos.unrealized_gain >= 0 ? '#10B981' : '#EF4444', fontWeight: 600 }}>
+                                  {pos.unrealized_gain >= 0 ? '+' : ''}{money(pos.unrealized_gain)} ({pos.unrealized_gain_pct.toFixed(1)}%)
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr>
+                                  <td colSpan={7} style={{ padding: '0 0 10px 30px', background: 'rgba(255,255,255,0.015)' }}>
+                                    <div style={{ border: '1px solid var(--border-glass)', borderRadius: '6px', overflow: 'hidden', marginTop: '6px' }}>
+                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', textAlign: 'left' }}>
+                                        <thead>
+                                          <tr style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>
+                                            <th style={{ padding: '6px 8px' }}>Acquisition Date</th>
+                                            <th style={{ padding: '6px 8px' }}>Shares</th>
+                                            <th style={{ padding: '6px 8px' }}>Cost Basis</th>
+                                            <th style={{ padding: '6px 8px' }}>Notes</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {pos.lots.map((lot: any) => (
+                                            <tr key={lot.id} style={{ borderTop: '1px solid var(--border-glass)', color: 'var(--text-secondary)' }}>
+                                              <td style={{ padding: '6px 8px' }}>{lot.acquisition_date}</td>
+                                              <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500 }}>{lot.shares.toFixed(4)}</td>
+                                              <td style={{ padding: '6px 8px' }}>{sharePrice(lot.cost_basis_per_share)}</td>
+                                              <td style={{ padding: '6px 8px', fontStyle: 'italic', fontSize: '11px' }}>{lot.notes}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Suggested Trades & Reconciler */}
+              <div style={{ display: 'grid', gap: '20px' }}>
+
+                {/* Manual suggestions list */}
+                <div className="glass-card" style={{ padding: '24px', display: 'grid', gap: '14px' }}>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Manual Trade Suggestions</h3>
+
+                  {externalSuggestionsLoading ? (
+                    <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                      Evaluating MPT weights & Swing signals...
+                    </div>
+                  ) : externalSuggestions.length === 0 ? (
+                    <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                      No trades needed. Portfolio matches active targets within threshold limits.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                      {externalSuggestions.map((sug: any, i: number) => (
+                        <div
+                          key={i}
+                          style={{
+                            background: 'rgba(255,255,255,0.02)',
+                            border: '1px solid var(--border-glass)',
+                            borderRadius: '8px',
+                            padding: '12px 14px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span
+                                style={{
+                                  background: sug.side === 'BUY' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                                  color: sug.side === 'BUY' ? '#10B981' : '#EF4444',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: '4px'
+                                }}
+                              >
+                                {sug.side}
+                              </span>
+                              <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>{sug.ticker}</strong>
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', maxWidth: '240px' }}>
+                              {sug.qty.toFixed(4)} shares @ limit {sharePrice(sug.limit_price)} · {sug.reason}
+                            </div>
+                            <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              Suggested duration: <strong>{sug.time_in_force === 'DAY' ? 'Day order' : '90 Days GTC'}</strong>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              setExternalConfirmOrder(sug);
+                              setExternalExecutionPrice(String(sug.limit_price));
+                            }}
+                            className="toggle-btn"
+                            style={{ padding: '6px 12px', fontSize: '12px', background: 'rgba(255,255,255,0.05)', borderColor: 'var(--border-glass)' }}
+                          >
+                            Confirm Fill
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Monthly Reconciler PDF Dropbox */}
+                <div className="glass-card" style={{ padding: '24px', display: 'grid', gap: '14px' }}>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Monthly Statement Reconciler</h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.45 }}>
+                    Upload your monthly transaction history or trades list PDF. The consolidator matches executed trades against manual fills, de-duping matches, and logs any external/unrecorded trades.
+                  </p>
+
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    <label className="toggle-btn" style={{ cursor: 'pointer', textAlign: 'center', display: 'block', padding: '10px 0', fontSize: '13px' }}>
+                      <Upload size={14} style={{ marginRight: '6px' }} /> Upload Monthly Trades PDF
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setReconcileStatus('Uploading monthly transactions...');
+                          const formData = new FormData();
+                          formData.append('file', file);
+                          formData.append('override_account', selectedAccount);
+                          try {
+                            const res = await fetch(apiUrl('/api/external/import'), {
+                              method: 'POST',
+                              body: formData
+                            });
+                            if (res.ok) {
+                              const r = await res.json();
+                              setReconcileStatus(`Transactions imported: Added ${r.inserted_count} new entries, skipped ${r.skipped_count} duplicates.`);
+                            } else {
+                              const err = await res.json();
+                              setReconcileStatus(`Import error: ${err.detail || 'Failed to parse Transactions PDF.'}`);
+                            }
+                          } catch (err: any) {
+                            setReconcileStatus(`Upload failed: ${err.message}`);
+                          }
+                        }}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+
+                    <button
+                      onClick={async () => {
+                        setReconcileStatus('Running chronological reconciliation...');
+                        try {
+                          const res = await fetch(apiUrl(`/api/external/reconcile?account_label=${encodeURIComponent(selectedAccount)}`), {
+                            method: 'POST'
+                          });
+                          if (res.ok) {
+                            const data = await res.json();
+                            setReconcileStatus(`Reconciliation complete: matched & reconciled ${data.reconciled_orders} manual orders, imported ${data.new_trades_imported} external trades.`);
+                            fetchExternalAccounts();
+                            fetchExternalPositionsAndSuggestions(selectedAccount);
+                          }
+                        } catch (err: any) {
+                          setReconcileStatus(`Reconciliation error: ${err.message}`);
+                        }
+                      }}
+                      className="toggle-btn"
+                      style={{ background: 'transparent', borderColor: 'var(--border-glass)' }}
+                    >
+                      Verify & Reconcile Account
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
           </section>
         )}
       </main>
+
+      {/* Confirm Manual Order Fill Modal */}
+      {externalConfirmOrder && (
+        <div
+          onClick={() => setExternalConfirmOrder(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '400px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <h2 style={{ marginTop: 0, marginBottom: '4px' }}>Confirm Order Fill</h2>
+            <p style={{ margin: '0 0 16px', fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+              Confirm executing a trade manually in your external **{selectedAccount}** account. This adjusts cash and positions locally.
+            </p>
+
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', marginBottom: '16px', borderLeft: externalConfirmOrder.side === 'BUY' ? '4px solid #10B981' : '4px solid #EF4444' }}>
+              <div style={{ fontWeight: 600 }}>{externalConfirmOrder.side} {externalConfirmOrder.qty} shares of {externalConfirmOrder.ticker}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>{externalConfirmOrder.reason}</div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '12px' }}>
+              <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Execution Price ($ / share)
+                <input
+                  type="number"
+                  step="0.01"
+                  value={externalExecutionPrice}
+                  onChange={(e) => setExternalExecutionPrice(e.target.value)}
+                  style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}
+                />
+              </label>
+
+              <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Execution Date
+                <input
+                  type="date"
+                  value={externalExecutionDate}
+                  onChange={(e) => setExternalExecutionDate(e.target.value)}
+                  style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px' }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '22px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setExternalConfirmOrder(null)}
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const body = {
+                    ticker: externalConfirmOrder.ticker,
+                    side: externalConfirmOrder.side,
+                    qty: externalConfirmOrder.qty,
+                    filled_price: parseFloat(externalExecutionPrice) || 0.0,
+                    execution_date: externalExecutionDate,
+                    time_in_force: externalConfirmOrder.time_in_force
+                  };
+                  try {
+                    const res = await fetch(apiUrl(`/api/external/orders/confirm?account_label=${encodeURIComponent(selectedAccount)}`), {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(body)
+                    });
+                    if (res.ok) {
+                      setExternalConfirmOrder(null);
+                      fetchExternalAccounts();
+                      fetchExternalPositionsAndSuggestions(selectedAccount);
+                    }
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }}
+                className="toggle-btn"
+                style={{ background: externalConfirmOrder.side === 'BUY' ? 'var(--color-buy)' : 'var(--color-sell)', border: 'none', color: externalConfirmOrder.side === 'BUY' ? 'black' : 'white', fontWeight: 700 }}
+              >
+                Confirm Fill
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Robinhood API Sync Modal */}
+      {showRobinhoodSyncModal && (
+        <div
+          onClick={() => !robinhoodSyncLoading && setShowRobinhoodSyncModal(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'rgba(16, 20, 38, 0.98)',
+              border: '1px solid var(--border-glass)',
+              borderRadius: '14px',
+              padding: '24px',
+              width: '420px',
+              maxWidth: '92vw',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+              display: 'grid',
+              gap: '16px'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 700 }}>Robinhood API Sync</h2>
+              <button
+                onClick={() => setShowRobinhoodSyncModal(false)}
+                disabled={robinhoodSyncLoading}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '18px' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+              Enter your Robinhood credentials to sync holdings, sweep cash, and trade history directly into the platform.
+            </p>
+
+            {robinhoodSyncError && (
+              <div
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  color: '#F87171',
+                  padding: '10px 12px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  lineHeight: 1.4
+                }}
+              >
+                {robinhoodSyncError}
+              </div>
+            )}
+
+            {!robinhoodMfaRequired ? (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Robinhood Username / Email
+                  <input
+                    type="email"
+                    placeholder="name@example.com"
+                    value={robinhoodUsername}
+                    onChange={(e) => setRobinhoodUsername(e.target.value)}
+                    style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', fontSize: '13px' }}
+                  />
+                </label>
+
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Password
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={robinhoodPassword}
+                    onChange={(e) => setRobinhoodPassword(e.target.value)}
+                    style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', fontSize: '13px' }}
+                  />
+                </label>
+
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Authenticator Secret Key (TOTP) — Optional
+                  <input
+                    type="text"
+                    placeholder="16-character alphanumeric key"
+                    value={robinhoodMfaSecret}
+                    onChange={(e) => setRobinhoodMfaSecret(e.target.value)}
+                    style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', fontSize: '13px' }}
+                  />
+                  <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Provide your Authenticator App secret key to enable automated non-interactive syncing.
+                  </div>
+                </label>
+
+                {!robinhoodMfaSecret && (
+                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    One-Time 2FA Code (If MFA enabled)
+                    <input
+                      type="text"
+                      maxLength={6}
+                      placeholder="6-digit code"
+                      value={robinhoodMfaCode}
+                      onChange={(e) => setRobinhoodMfaCode(e.target.value)}
+                      style={{ width: '100%', marginTop: '4px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '8px', fontSize: '13px' }}
+                    />
+                  </label>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <label style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                  Enter Verification Code
+                  <input
+                    type="text"
+                    maxLength={6}
+                    placeholder="Enter 6-digit code"
+                    value={robinhoodMfaCode}
+                    onChange={(e) => setRobinhoodMfaCode(e.target.value)}
+                    style={{ width: '100%', marginTop: '6px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '6px', padding: '10px', fontSize: '16px', letterSpacing: '4px', textAlign: 'center' }}
+                  />
+                </label>
+                <button
+                  onClick={() => setRobinhoodMfaRequired(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--color-gold)', cursor: 'pointer', fontSize: '11px', textAlign: 'left', padding: 0 }}
+                >
+                  Back to credentials
+                </button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowRobinhoodSyncModal(false)}
+                disabled={robinhoodSyncLoading}
+                style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setRobinhoodSyncError('');
+                  setRobinhoodSyncLoading(true);
+                  try {
+                    const body = {
+                      username: robinhoodUsername,
+                      password: robinhoodPassword,
+                      mfa_secret: robinhoodMfaSecret || null,
+                      mfa_code: robinhoodMfaCode || null,
+                      account_label: selectedAccount
+                    };
+                    const res = await fetch(apiUrl('/api/external/sync/robinhood'), {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(body)
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      if (data.status === 'mfa_required') {
+                        setRobinhoodMfaRequired(true);
+                        setRobinhoodSyncError(data.message);
+                      } else {
+                        setShowRobinhoodSyncModal(false);
+                        setReconcileStatus(`Success: Synced ${data.positions_synced} positions and ${data.transactions_synced} transaction activities via Robinhood API. Cash updated to ${money(data.cash)}.`);
+                        fetchExternalAccounts();
+                        fetchExternalPositionsAndSuggestions(selectedAccount);
+                      }
+                    } else {
+                      const err = await res.json();
+                      setRobinhoodSyncError(err.detail || 'Authentication or sync failed.');
+                    }
+                  } catch (err: any) {
+                    setRobinhoodSyncError(`Sync error: ${err.message}`);
+                  } finally {
+                    setRobinhoodSyncLoading(false);
+                  }
+                }}
+                disabled={robinhoodSyncLoading || !robinhoodUsername || !robinhoodPassword}
+                className="toggle-btn"
+                style={{
+                  background: 'var(--color-buy)',
+                  border: 'none',
+                  color: 'black',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {robinhoodSyncLoading ? (
+                  <>Syncing...</>
+                ) : (
+                  <>Start Sync</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sell-from-lot modal */}
       {sellModal && (() => {

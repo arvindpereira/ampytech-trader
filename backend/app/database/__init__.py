@@ -5,5 +5,6 @@ from app.database.models import (
     SentimentSourceLog, CongressDisclosure, InsiderDisclosure, NewsLLMScore, AppSetting,
     LLMUsage, TickerFundamental, TickerClassification, EquityLot, EquityVestSchedule, EquityAutoTradeBlock,
     TaxProfile, AnalystForecast,
-    TradingBlock, CrashRiskSnapshot
+    TradingBlock, CrashRiskSnapshot,
+    ExternalAccount, ExternalOrder, ExternalTransaction
 )

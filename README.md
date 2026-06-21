@@ -236,7 +236,25 @@ The **Crash Radar** (Tab 5) serves as a risk management console that quantifies 
 
 ---
 
-### Workflow 7: Data Safety & Commit-Stamped Backups
+### Workflow 7: External Portfolio Manager (Manual Execution & Reconciliation)
+The **External Portfolio Manager** (Tab 6) allows you to track and balance your external Vanguard and Robinhood accounts manually, using the platform's MPT allocations and swing signals.
+
+#### 1. Ingesting Statement PDF Files
+- **Initial Positions Ingestion**: Drag and drop your cost-basis/held-assets PDF report from Vanguard or Robinhood. The system parses the document (regex with LLM fallback), seeds your tax lots, and sets the initial cash balance.
+- **Drawer Layout (Tax Lots)**: Your holdings are presented in a consolidated list. Click the arrow icon on any ticker to expand the drawer and inspect individual tax lots (cost basis, acquisition date, notes).
+
+#### 2. Risk Profiles & Suggested Trades
+- **Account-Specific Sensitivities**: Select the risk profile (`conservative`, `balanced`, or `aggressive`) for each account individually.
+- **Manual Recommendations**: The engine computes recommended buy/sell orders (Day limits for technical breakouts, 90-day GTC limit orders for long-term rebalancing) matching the account's specific risk posture and the active Glide Path.
+- **Manual Confirmations**: Execute the suggested order on your broker, then click **"Confirm Fill"** in the UI to manually log the transaction price and execution date. Local tax lots (FIFO deduction on sales) and cash are updated instantly.
+
+#### 3. Monthly PDF Reconciliation
+- **Deduplicating Trades**: Upload your monthly transaction history PDF. The system cross-references the imported entries against your manually confirmed fills to de-duplicate matching trades.
+- **Importing Unrecorded Trades**: Any external transaction found in the PDF that wasn't logged in the app is imported as a new transaction and used to adjust your local cash and holdings automatically.
+
+---
+
+### Workflow 8: Data Safety & Commit-Stamped Backups
 The large SQLite database lives outside Git; instead it (and the non-DB artifacts) are backed up to a Google Drive folder as **commit-stamped** snapshots, so a restore can always be matched to the code version that produced it.
 
 - `make backup` — uploads two artifacts: the **database** (`trading_system_<ts>__<sha>.db`) and a **files zip** (`trading_files_<ts>__<sha>.zip`). The files zip contains trained models (`ml_engine/saved_models/`), archived premium news, and **all cached JSON in `backend/data/`** — including the Crash Radar forecast state (`crash_forecast_state.json`), the cached scenario wargame + AI analyst (`wargame_cache.json`), IPO markers, LLM pricing, and premium-ingest state. The secret OAuth token (`gdrive_token.json`) is explicitly excluded.

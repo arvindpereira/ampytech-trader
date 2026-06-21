@@ -453,3 +453,45 @@ class CrashRiskSnapshot(Base):
     debt_cycle_read = Column(String, nullable=True)          # JSON string mapping cycle variables
     experimental_forecast_odds = Column(String, nullable=True) # JSON string of P(DD >= X% in N days)
     created_at = Column(String, nullable=True)
+
+
+class ExternalAccount(Base):
+    __tablename__ = "external_accounts"
+
+    account_label = Column(String, primary_key=True)
+    cash = Column(Float, nullable=False, default=0.0)
+    risk_profile = Column(String, nullable=False, default="balanced")  # 'conservative', 'balanced', 'aggressive'
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
+
+
+class ExternalOrder(Base):
+    __tablename__ = "external_orders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_label = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    side = Column(String, nullable=False)  # 'BUY' | 'SELL'
+    qty = Column(Float, nullable=False)
+    limit_price = Column(Float, nullable=False)
+    time_in_force = Column(String, nullable=False)  # 'DAY' | 'GTC_90'
+    status = Column(String, nullable=False, default="proposed")  # 'proposed', 'confirmed_filled', 'cancelled'
+    filled_price = Column(Float, nullable=True)
+    filled_qty = Column(Float, nullable=True)
+    execution_date = Column(String, nullable=True)  # YYYY-MM-DD
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
+
+
+class ExternalTransaction(Base):
+    __tablename__ = "external_transactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_label = Column(String, nullable=False)
+    ticker = Column(String, nullable=False)
+    side = Column(String, nullable=False)  # 'BUY' | 'SELL'
+    qty = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    execution_date = Column(String, nullable=False)  # YYYY-MM-DD
+    raw_details = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)

@@ -2283,6 +2283,701 @@ async def import_equity_lots_pdf(
     return {"status": "success", **result}
 
 
+# --- External Portfolio Manager (Tab 6) Endpoints ---
+from app.database import ExternalAccount, ExternalOrder, ExternalTransaction
+from pydantic import BaseModel
+
+class ExternalAccountRequest(BaseModel):
+    account_label: str
+    cash: float
+    risk_profile: str
+
+class UpdateCashRequest(BaseModel):
+    cash: float
+
+class ConfirmOrderRequest(BaseModel):
+    ticker: str
+    side: str  # 'BUY' | 'SELL'
+    qty: float
+    filled_price: float
+    execution_date: str  # YYYY-MM-DD
+    time_in_force: str  # 'DAY' | 'GTC_90'
+
+def _latest_external_price(db, symbol, fallback_price):
+    from app.database import RecentPrice, DailyPrice
+    r = db.query(RecentPrice).filter(RecentPrice.ticker == symbol).order_by(RecentPrice.date.desc()).first()
+    if r and r.close:
+        return float(r.close)
+    d = db.query(DailyPrice).filter(DailyPrice.ticker == symbol).order_by(DailyPrice.date.desc()).first()
+    if d and d.close:
+        return float(d.close)
+    return float(fallback_price)
+
+@app.get("/api/external/accounts")
+def get_external_accounts(db=Depends(get_db)):
+    accounts = db.query(ExternalAccount).all()
+    # If empty, seed default Robinhood and Vanguard accounts
+    if not accounts:
+        now_str = datetime.now().isoformat(timespec="seconds")
+        rh = ExternalAccount(account_label="Robinhood", cash=0.0, risk_profile="balanced", created_at=now_str, updated_at=now_str)
+        vg = ExternalAccount(account_label="Vanguard", cash=0.0, risk_profile="balanced", created_at=now_str, updated_at=now_str)
+        db.add(rh)
+        db.add(vg)
+        db.commit()
+        accounts = [rh, vg]
+
+    results = []
+    for acct in accounts:
+        # Calculate total equity
+        lots = db.query(EquityLot).filter(EquityLot.account_label == acct.account_label).all()
+        holdings_value = 0.0
+        for lot in lots:
+            price = _latest_external_price(db, lot.ticker, lot.cost_basis_per_share)
+            holdings_value += lot.shares * price
+
+        results.append({
+            "account_label": acct.account_label,
+            "cash": acct.cash,
+            "holdings_value": round(holdings_value, 2),
+            "total_value": round(acct.cash + holdings_value, 2),
+            "risk_profile": acct.risk_profile,
+            "created_at": acct.created_at,
+            "updated_at": acct.updated_at
+        })
+    return results
+
+@app.post("/api/external/accounts")
+def create_or_update_external_account(req: ExternalAccountRequest, db=Depends(get_db)):
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == req.account_label).first()
+    now_str = datetime.now().isoformat(timespec="seconds")
+    if not acct:
+        acct = ExternalAccount(
+            account_label=req.account_label,
+            cash=req.cash,
+            risk_profile=req.risk_profile,
+            created_at=now_str,
+            updated_at=now_str
+        )
+        db.add(acct)
+    else:
+        acct.cash = req.cash
+        acct.risk_profile = req.risk_profile
+        acct.updated_at = now_str
+    db.commit()
+    return {"status": "success", "account_label": acct.account_label}
+
+@app.post("/api/external/accounts/{account_label}/cash")
+def update_external_account_cash(account_label: str, req: UpdateCashRequest, db=Depends(get_db)):
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+    acct.cash = req.cash
+    acct.updated_at = datetime.now().isoformat(timespec="seconds")
+    db.commit()
+    return {"status": "success", "account_label": acct.account_label, "cash": acct.cash}
+
+@app.get("/api/external/positions")
+def get_external_positions(account_label: str, db=Depends(get_db)):
+    lots = db.query(EquityLot).filter(EquityLot.account_label == account_label).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
+
+    # Group by ticker
+    grouped = {}
+    for lot in lots:
+        ticker = lot.ticker.upper()
+        if ticker not in grouped:
+            grouped[ticker] = []
+        grouped[ticker].append(lot)
+
+    results = []
+    for ticker, ticker_lots in grouped.items():
+        total_shares = sum(l.shares for l in ticker_lots)
+        if total_shares <= 0:
+            continue
+        total_cost = sum(l.shares * l.cost_basis_per_share for l in ticker_lots)
+        avg_cost = total_cost / total_shares
+
+        price = _latest_external_price(db, ticker, avg_cost)
+        mkt_val = total_shares * price
+        gain = mkt_val - total_cost
+        gain_pct = (gain / total_cost * 100.0) if total_cost > 0 else 0.0
+
+        lots_list = [{
+            "id": l.id,
+            "acquisition_date": l.acquisition_date,
+            "shares": l.shares,
+            "cost_basis_per_share": l.cost_basis_per_share,
+            "notes": l.notes
+        } for l in ticker_lots]
+
+        results.append({
+            "ticker": ticker,
+            "total_shares": round(total_shares, 6),
+            "average_cost": round(avg_cost, 4),
+            "current_price": round(price, 2),
+            "market_value": round(mkt_val, 2),
+            "unrealized_gain": round(gain, 2),
+            "unrealized_gain_pct": round(gain_pct, 2),
+            "lots": lots_list
+        })
+    return results
+
+@app.post("/api/external/import")
+async def import_external_portfolio_pdf(
+    file: UploadFile = File(...),
+    force_llm: bool = Form(False),
+    override_account: Optional[str] = Form(None),
+    db=Depends(get_db)
+):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Upload a .pdf export")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="PDF too large (max 15 MB)")
+    try:
+        from data_ingestion.external_importer import import_external_pdf
+        result = import_external_pdf(
+            db, data, filename=file.filename,
+            force_llm=force_llm, override_account=override_account
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {e}")
+
+@app.get("/api/external/suggestions")
+def get_external_suggestions(account_label: str, db=Depends(get_db)):
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    cash = acct.cash
+    lots = db.query(EquityLot).filter(EquityLot.account_label == account_label).all()
+
+    current_values = {}
+    portfolio_value = cash
+    for lot in lots:
+        price = _latest_external_price(db, lot.ticker, lot.cost_basis_per_share)
+        current_values[lot.ticker] = current_values.get(lot.ticker, 0.0) + (lot.shares * price)
+        portfolio_value += (lot.shares * price)
+
+    if portfolio_value <= 0:
+        return {"orders": [], "portfolio_value": 0, "warnings": ["Portfolio value is zero or negative."]}
+
+    # Calculate MPT rebalancing weights based on the account's active risk profile
+    from ml_engine.defensive_strategist import build_defensive_playbook
+    preset = acct.risk_profile  # conservative / balanced / aggressive
+    pb = build_defensive_playbook(preset_name=preset)
+    d = float(pb.get("de_risk_coefficient", 0.0))
+
+    # Aggressive sleeve: current holdings proportions
+    has_positions = bool(current_values) and sum(current_values.values()) > 0
+    if has_positions:
+        total_pos_val = sum(current_values.values())
+        w_agg = {t: v / total_pos_val for t, v in current_values.items()}
+    else:
+        w_agg = {"SPY": 1.0}
+
+    # Defensive sleeve: target safe asset selection
+    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
+    w_def = {k: float(v) / 100.0 for k, v in safe_mix.items()}
+
+    all_tickers = set(w_agg) | set(w_def)
+    w_target = {t: (1.0 - d) * w_agg.get(t, 0.0) + d * w_def.get(t, 0.0) for t in all_tickers}
+
+    suggestions = []
+    # 1. Generate MPT safe asset rebalancing orders
+    for t in sorted(all_tickers):
+        target_val = portfolio_value * w_target[t]
+        curr_val = current_values.get(t, 0.0)
+        diff_val = target_val - curr_val
+        t_lots = [l for l in lots if l.ticker == t]
+        fallback_p = t_lots[0].cost_basis_per_share if t_lots else 100.0
+        price = _latest_external_price(db, t, fallback_p)
+
+        cur_w = (curr_val / portfolio_value * 100.0) if portfolio_value > 0 else 0.0
+        target_w = w_target[t] * 100.0
+
+        if abs(diff_val) > 50.0:
+            qty = abs(diff_val) / price
+            suggestions.append({
+                "ticker": t,
+                "side": "BUY" if diff_val > 0 else "SELL",
+                "qty": round(qty, 4),
+                "limit_price": round(price, 2),
+                "time_in_force": "GTC_90",
+                "reason": f"MPT defensive rebalancing (Target Weight: {target_w:.1f}%)"
+            })
+
+    # 2. Add Swing recommendations
+    try:
+        from app.main import get_suggestions
+        suggs = get_suggestions(db=db)
+        for sug in suggs.get("swing_suggestions", []):
+            if sug.get("verdict") == "BUY":
+                ticker = sug["ticker"]
+                price = sug["price"]
+                if cash > 1000.0 and preset != "conservative":
+                    swing_val = min(cash * 0.5, portfolio_value * 0.02)
+                    qty = swing_val / price
+                    if qty > 0.01:
+                        suggestions.append({
+                            "ticker": ticker,
+                            "side": "BUY",
+                            "qty": round(qty, 4),
+                            "limit_price": round(price, 2),
+                            "time_in_force": "DAY",
+                            "reason": f"Active Swing Buy signal (Conviction: {sug.get('probability', 0)*100:.0f}%)"
+                        })
+    except Exception:
+        pass
+
+    return {
+        "portfolio_value": round(portfolio_value, 2),
+        "de_risk_coefficient": d,
+        "suggestions": suggestions
+    }
+
+@app.post("/api/external/orders/confirm")
+def confirm_external_order(req: ConfirmOrderRequest, account_label: str, db=Depends(get_db)):
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    qty = req.qty
+    price = req.filled_price
+    trade_val = qty * price
+    now_str = datetime.now().isoformat(timespec="seconds")
+
+    if req.side.upper() == "BUY":
+        if acct.cash < trade_val - 1.0:
+            acct.cash = 0.0
+        else:
+            acct.cash = round(acct.cash - trade_val, 2)
+
+        lot = EquityLot(
+            ticker=req.ticker.upper(),
+            account_label=account_label,
+            lot_type="other",
+            shares=qty,
+            cost_basis_per_share=price,
+            acquisition_date=req.execution_date,
+            notes=f"Confirmed manual BUY order",
+            created_at=now_str
+        )
+        db.add(lot)
+    else:
+        lots = db.query(EquityLot).filter(
+            EquityLot.account_label == account_label,
+            EquityLot.ticker == req.ticker.upper()
+        ).order_by(EquityLot.acquisition_date.asc()).all()
+
+        total_held = sum(l.shares for l in lots)
+        if total_held < qty - 1e-6:
+            raise HTTPException(status_code=400, detail=f"Insufficient shares held to sell {qty}. Held: {total_held}")
+
+        acct.cash = round(acct.cash + trade_val, 2)
+
+        remaining_to_sell = qty
+        for lot in lots:
+            if remaining_to_sell <= 0:
+                break
+            if lot.shares <= remaining_to_sell + 1e-6:
+                remaining_to_sell -= lot.shares
+                db.delete(lot)
+            else:
+                lot.shares = round(lot.shares - remaining_to_sell, 6)
+                remaining_to_sell = 0.0
+
+    tx = ExternalTransaction(
+        account_label=account_label,
+        ticker=req.ticker.upper(),
+        side=req.side.upper(),
+        qty=qty,
+        price=price,
+        execution_date=req.execution_date,
+        raw_details=f"Confirmed manual trade. TIF: {req.time_in_force}",
+        created_at=now_str
+    )
+    db.add(tx)
+
+    # Also log in external_orders table as confirmed
+    db_order = ExternalOrder(
+        account_label=account_label,
+        ticker=req.ticker.upper(),
+        side=req.side.upper(),
+        qty=qty,
+        limit_price=price,
+        time_in_force=req.time_in_force,
+        status="confirmed_filled",
+        filled_price=price,
+        filled_qty=qty,
+        execution_date=req.execution_date,
+        created_at=now_str,
+        updated_at=now_str
+    )
+    db.add(db_order)
+
+    db.commit()
+    return {"status": "success", "account_label": account_label, "cash": acct.cash}
+
+@app.post("/api/external/reconcile")
+def reconcile_external_portfolio(account_label: str, db=Depends(get_db)):
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == account_label).first()
+    if not acct:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    txs = db.query(ExternalTransaction).filter(ExternalTransaction.account_label == account_label).all()
+    orders = db.query(ExternalOrder).filter(ExternalOrder.account_label == account_label).all()
+
+    matched_tx_ids = set()
+    reconciled_orders_count = 0
+    new_trades_imported = 0
+
+    for order in orders:
+        if order.status in ("reconciled", "cancelled"):
+            continue
+
+        match = None
+        for tx in txs:
+            if tx.id in matched_tx_ids:
+                continue
+            if tx.ticker.upper() != order.ticker.upper():
+                continue
+            if tx.side.upper() != order.side.upper():
+                continue
+            if abs(tx.qty - order.qty) > 0.1:
+                continue
+
+            price_diff = abs(tx.price - order.limit_price) / order.limit_price if order.limit_price > 0 else 0.0
+            if price_diff > 0.05:
+                continue
+
+            try:
+                o_dt = datetime.strptime(order.created_at[:10], "%Y-%m-%d")
+                tx_dt = datetime.strptime(tx.execution_date, "%Y-%m-%d")
+                if abs((tx_dt - o_dt).days) > 10:
+                    continue
+            except Exception:
+                pass
+
+            match = tx
+            break
+
+        if match:
+            matched_tx_ids.add(match.id)
+            if order.status == "proposed":
+                qty = match.qty
+                price = match.price
+                trade_val = qty * price
+                now_str = datetime.now().isoformat(timespec="seconds")
+
+                if order.side.upper() == "BUY":
+                    acct.cash = round(acct.cash - trade_val, 2)
+                    lot = EquityLot(
+                        ticker=order.ticker.upper(),
+                        account_label=account_label,
+                        lot_type="other",
+                        shares=qty,
+                        cost_basis_per_share=price,
+                        acquisition_date=match.execution_date,
+                        notes=f"Reconciled from Statement ({match.execution_date})",
+                        created_at=now_str
+                    )
+                    db.add(lot)
+                else:
+                    lots = db.query(EquityLot).filter(
+                        EquityLot.account_label == account_label,
+                        EquityLot.ticker == order.ticker.upper()
+                    ).order_by(EquityLot.acquisition_date.asc()).all()
+
+                    acct.cash = round(acct.cash + trade_val, 2)
+                    remaining = qty
+                    for lot in lots:
+                        if remaining <= 0:
+                            break
+                        if lot.shares <= remaining + 1e-6:
+                            remaining -= lot.shares
+                            db.delete(lot)
+                        else:
+                            lot.shares = round(lot.shares - remaining, 6)
+                            remaining = 0.0
+
+            order.status = "reconciled"
+            order.filled_price = match.price
+            order.filled_qty = match.qty
+            order.execution_date = match.execution_date
+            order.updated_at = datetime.now().isoformat(timespec="seconds")
+            reconciled_orders_count += 1
+
+    for tx in txs:
+        if tx.id in matched_tx_ids:
+            continue
+
+        qty = tx.qty
+        price = tx.price
+        trade_val = qty * price
+        now_str = datetime.now().isoformat(timespec="seconds")
+
+        if tx.side.upper() == "BUY":
+            acct.cash = round(acct.cash - trade_val, 2)
+            lot = EquityLot(
+                ticker=tx.ticker.upper(),
+                account_label=account_label,
+                lot_type="other",
+                shares=qty,
+                cost_basis_per_share=price,
+                acquisition_date=tx.execution_date,
+                notes=f"Unmatched trade imported from statement",
+                created_at=now_str
+            )
+            db.add(lot)
+        else:
+            lots = db.query(EquityLot).filter(
+                EquityLot.account_label == account_label,
+                EquityLot.ticker == tx.ticker.upper()
+            ).order_by(EquityLot.acquisition_date.asc()).all()
+
+            total_held = sum(l.shares for l in lots)
+            acct.cash = round(acct.cash + trade_val, 2)
+
+            sell_qty = min(qty, total_held)
+            remaining = sell_qty
+            for lot in lots:
+                if remaining <= 0:
+                    break
+                if lot.shares <= remaining + 1e-6:
+                    remaining -= lot.shares
+                    db.delete(lot)
+                else:
+                    lot.shares = round(lot.shares - remaining, 6)
+                    remaining = 0.0
+
+        new_ord = ExternalOrder(
+            account_label=account_label,
+            ticker=tx.ticker.upper(),
+            side=tx.side.upper(),
+            qty=qty,
+            limit_price=price,
+            time_in_force="DAY",
+            status="reconciled",
+            filled_price=price,
+            filled_qty=qty,
+            execution_date=tx.execution_date,
+            created_at=now_str,
+            updated_at=now_str
+        )
+        db.add(new_ord)
+        new_trades_imported += 1
+
+    db.commit()
+    return {
+        "status": "success",
+        "reconciled_orders": reconciled_orders_count,
+        "new_trades_imported": new_trades_imported
+    }
+
+
+class RobinhoodSyncRequest(BaseModel):
+    username: str
+    password: str
+    mfa_secret: Optional[str] = None
+    mfa_code: Optional[str] = None
+    account_label: str = "Robinhood"
+
+@app.post("/api/external/sync/robinhood")
+def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
+    import builtins
+    import pyotp
+    import robin_stocks.robinhood as r
+    from datetime import datetime
+
+    # Create account if it doesn't exist
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == req.account_label).first()
+    now_str = datetime.now().isoformat(timespec="seconds")
+    if not acct:
+        acct = ExternalAccount(
+            account_label=req.account_label,
+            cash=0.0,
+            risk_profile="balanced",
+            created_at=now_str,
+            updated_at=now_str
+        )
+        db.add(acct)
+        db.commit()
+
+    # Generate TOTP code if secret is provided
+    mfa = req.mfa_code
+    if req.mfa_secret and req.mfa_secret.strip():
+        try:
+            totp = pyotp.TOTP(req.mfa_secret.strip().replace(" ", ""))
+            mfa = totp.now()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to generate MFA code from secret: {e}")
+
+    # Temporarily override builtins.input to prevent uvicorn terminal hangs
+    original_input = builtins.input
+    def mock_input(prompt=""):
+        raise ValueError("MFA code required but stdin is blocked")
+    builtins.input = mock_input
+
+    try:
+        # Perform login
+        login_res = r.login(
+            username=req.username.strip(),
+            password=req.password,
+            mfa_code=mfa,
+            store_session=False
+        )
+    except Exception as e:
+        err_msg = str(e)
+        if "challenge" in err_msg.lower() or "mfa" in err_msg.lower() or "passcode" in err_msg.lower() or "input" in err_msg.lower():
+            return {
+                "status": "mfa_required",
+                "message": "Two-factor authentication code is required. Please provide mfa_code or mfa_secret."
+            }
+        raise HTTPException(status_code=400, detail=f"Robinhood login failed: {err_msg}")
+    finally:
+        # Restore standard input
+        builtins.input = original_input
+
+    try:
+        # 1. Fetch cash & sweep balances
+        phoenix = r.account.load_phoenix_account()
+        cash = 0.0
+        if phoenix:
+            crypto_cash = float(phoenix.get("crypto_buying_power", {}).get("amount", 0.0))
+            cash_avail = float(phoenix.get("cash_available_from_sweep", {}).get("amount", 0.0))
+            cash_held = float(phoenix.get("cash", {}).get("amount", 0.0))
+            cash = max(cash_avail, cash_held, crypto_cash)
+            if cash <= 0:
+                portfolio = r.profiles.load_portfolio_profile()
+                cash = float(portfolio.get("cash", 0.0)) if portfolio else 0.0
+        else:
+            portfolio = r.profiles.load_portfolio_profile()
+            cash = float(portfolio.get("cash", 0.0)) if portfolio else 0.0
+
+        acct.cash = round(cash, 2)
+        acct.updated_at = now_str
+
+        # 2. Fetch current holdings
+        holdings = r.build_holdings()
+        db.query(EquityLot).filter(EquityLot.account_label == req.account_label).delete()
+
+        inserted_lots = 0
+        for ticker, h_info in holdings.items():
+            qty = float(h_info.get("quantity", 0.0))
+            avg_price = float(h_info.get("average_buy_price", 0.0))
+            if qty <= 0:
+                continue
+
+            lot = EquityLot(
+                ticker=ticker.upper(),
+                account_label=req.account_label,
+                lot_type="other",
+                shares=qty,
+                cost_basis_per_share=avg_price,
+                acquisition_date=datetime.now().strftime("%Y-%m-%d"),
+                notes="Synced via Robinhood API Integration",
+                created_at=now_str
+            )
+            db.add(lot)
+            inserted_lots += 1
+
+        # 3. Fetch historical orders
+        orders = r.orders.get_all_stock_orders()
+        recent_orders = orders[:100] if orders else []
+
+        instrument_cache = {}
+        txs_inserted = 0
+
+        existing_txs = db.query(ExternalTransaction).filter(ExternalTransaction.account_label == req.account_label).all()
+        existing_fingerprints = {
+            (t.execution_date, t.ticker, t.side, round(t.qty, 4), round(t.price, 4))
+            for t in existing_txs
+        }
+
+        for order in recent_orders:
+            if order.get("state") != "filled":
+                continue
+            
+            qty = float(order.get("cumulative_quantity") or 0.0)
+            if qty <= 0:
+                continue
+            
+            price = float(order.get("average_price") or 0.0)
+            side = order.get("side", "").upper()
+            created_at_str = order.get("last_transaction_at") or order.get("created_at") or ""
+            if not created_at_str:
+                continue
+                
+            date_str = created_at_str[:10]
+            instrument = order.get("instrument")
+            if not instrument:
+                continue
+                
+            if instrument not in instrument_cache:
+                try:
+                    symbol = r.get_symbol_by_url(instrument)
+                    if symbol:
+                        instrument_cache[instrument] = symbol.upper()
+                except Exception:
+                    continue
+            
+            ticker = instrument_cache.get(instrument)
+            if not ticker:
+                continue
+
+            fingerprint = (date_str, ticker, side, round(qty, 4), round(price, 4))
+            if fingerprint in existing_fingerprints:
+                continue
+
+            db_tx = ExternalTransaction(
+                account_label=req.account_label,
+                ticker=ticker,
+                side=side,
+                qty=qty,
+                price=price,
+                execution_date=date_str,
+                raw_details=f"Synced via Robinhood API (Order ID: {order.get('id')})",
+                created_at=now_str
+            )
+            db.add(db_tx)
+
+            db_order = ExternalOrder(
+                account_label=req.account_label,
+                ticker=ticker,
+                side=side,
+                qty=qty,
+                limit_price=price,
+                time_in_force=order.get("time_in_force", "DAY").upper(),
+                status="reconciled",
+                filled_price=price,
+                filled_qty=qty,
+                execution_date=date_str,
+                created_at=now_str,
+                updated_at=now_str
+            )
+            db.add(db_order)
+            txs_inserted += 1
+
+        db.commit()
+        r.logout()
+
+        return {
+            "status": "success",
+            "account_label": req.account_label,
+            "cash": acct.cash,
+            "positions_synced": inserted_lots,
+            "transactions_synced": txs_inserted
+        }
+    except Exception as e:
+        db.rollback()
+        try:
+            r.logout()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to fetch Robinhood portfolio: {e}")
+
+
 @app.post("/api/equity/lots/{lot_id}/sell")
 def sell_equity_lot(lot_id: int, req: EquityLotSellRequest, db=Depends(get_db)):
     """Record selling some/all shares of a specific lot. Reduces the lot (deletes it if fully sold),
@@ -3155,7 +3850,7 @@ def _run_forecast_job(jid):
         from ml_engine.crash_model import train_and_evaluate_forecast
         _job_update(jid, progress=30, stage="Training drawdown models")
         results = train_and_evaluate_forecast()
-        
+
         # Save to database
         _job_update(jid, progress=85, stage="Saving to database")
         from ml_engine.crash_radar import get_latest_date
@@ -3168,7 +3863,7 @@ def _run_forecast_job(jid):
             db.add(snap)
             db.commit()
         db.close()
-        
+
         _FORECAST_RESULTS[jid] = results
         _job_update(jid, progress=100, stage="Complete", status="done")
     except Exception as e:
@@ -3222,10 +3917,10 @@ def get_crash_index():
             # reload
             db.expire_all()
             snap = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == latest_dt).first()
-            
+
         if not snap:
             raise HTTPException(status_code=404, detail="No crash risk snapshot available.")
-            
+
         # Parse fields
         trigger_reasons = []
         if snap.trigger_reasons:
@@ -3233,21 +3928,21 @@ def get_crash_index():
                 trigger_reasons = _json.loads(snap.trigger_reasons)
             except Exception:
                 trigger_reasons = [snap.trigger_reasons]
-                
+
         debt_cycle = {}
         if snap.debt_cycle_read:
             try:
                 debt_cycle = _json.loads(snap.debt_cycle_read)
             except Exception:
                 pass
-                
+
         forecast_odds = []
         if snap.experimental_forecast_odds:
             try:
                 forecast_odds = _json.loads(snap.experimental_forecast_odds)
             except Exception:
                 pass
-                
+
         return {
             "as_of_date": snap.as_of_date,
             "composite_index": snap.composite_index,
@@ -3685,24 +4380,24 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
     buy_orders = [o for o in orders_to_submit if o["side"] == "buy"]
 
     executed = []
-    
+
     # Execute Sells
     for o in sell_orders:
         ticker = o["ticker"]
         qty = o["qty"]
         price = o["price"]
-        
+
         pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "virtual").first()
         if pos:
             qty_sold = min(pos.quantity, qty)
             revenue = qty_sold * price
             account.cash += revenue
             account.buying_power = account.cash
-            
+
             pos.quantity -= qty_sold
             if pos.quantity <= 0.0001:
                 db.delete(pos)
-                
+
             order_id = _uuid.uuid4().hex[:8]
             v_order = VirtualOrder(
                 id=order_id,
@@ -3717,22 +4412,22 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
             )
             db.add(v_order)
             executed.append({"symbol": ticker, "side": "sell", "qty": qty_sold, "type": "market"})
-            
+
     # Execute Buys
     for o in buy_orders:
         ticker = o["ticker"]
         qty = o["qty"]
         price = o["price"]
-        
+
         cost = qty * price
         if cost > account.cash:
             cost = account.cash
             qty = cost / price
-            
+
         if qty > 0.0001:
             account.cash -= cost
             account.buying_power = account.cash
-            
+
             pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "virtual").first()
             if pos:
                 new_qty = pos.quantity + qty
@@ -3747,7 +4442,7 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
                     policy="rebalance"
                 )
                 db.add(pos)
-                
+
             order_id = _uuid.uuid4().hex[:8]
             v_order = VirtualOrder(
                 id=order_id,
@@ -3762,15 +4457,15 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
             )
             db.add(v_order)
             executed.append({"symbol": ticker, "side": "buy", "qty": qty, "type": "market"})
-            
+
     final_positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
     final_equity = float(account.cash)
     for pos in final_positions:
         final_equity += pos.quantity * get_latest_price(pos.ticker)
     account.equity = final_equity
-    
+
     db.commit()
-    
+
     return {
         "status": "executed",
         "posture_applied": req.target_posture,

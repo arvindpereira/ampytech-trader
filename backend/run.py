@@ -37,14 +37,14 @@ def fetch():
     from app.core.config import ALT_DATA_ENABLED
     if ALT_DATA_ENABLED:
         scripts.append([sys.executable, "data_ingestion/alternative_fetcher.py"])  # real Form 4
-        
+
     total_steps = len(scripts)
     for idx, script in enumerate(scripts, 1):
         script_name = os.path.basename(script[1])
         percent = int((idx - 1) / total_steps * 100)
         print(f"\n[Ingestion Progress: {percent}%] Starting Step {idx}/{total_steps} - {script_name}...", flush=True)
         run_command(script, f"Data Ingestion ({script_name})")
-        
+
     print(f"\n[Ingestion Progress: 100%] All data ingestion steps completed successfully!", flush=True)
 
 def train(epochs=None):

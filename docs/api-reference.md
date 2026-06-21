@@ -67,7 +67,20 @@ registry and polled for progress.
 | `GET /api/crash/wargame/cache` | Last cached scenario comparison + analyst (so they render by default) with `*_generated_at` timestamps and `*_stale` flags (true when new data has arrived since). |
 | `GET /api/crash/status` | Timing metadata for the Crash Radar artifacts (index, forecast, wargame, analyst): `last_run/last_refresh`, `next_scheduled` (weekday 9:30 ET data-gated job), and `stale` flags. Drives the "Last updated / Next auto-update" badges. |
 | `GET /api/crash/apply/preview?target_posture&preset&theta&k&gamma` | **Read-only** rebalance plan: diffs current paper holdings vs target stance weights and returns the summary, validation, and exact orders (symbol, side, shares, real price) — without executing. |
-| `POST /api/crash/apply` `{confirm_execution, target_posture, preset, theta?, k?, gamma?}` | Executes the previewed rebalancing transactions to align the paper portfolio with the active defensive stance (gated on `confirm_execution`). |
+| POST /api/crash/apply {confirm_execution, target_posture, preset, theta?, k?, gamma?} | Executes the previewed rebalancing transactions to align the paper portfolio with the active defensive stance (gated on confirm_execution). |
+
+## External Portfolio Manager (Tab 6)
+
+| Method · Path | Returns |
+| :-- | :-- |
+| `GET /api/external/accounts` | `[{account_label, cash, holdings_value, total_value, risk_profile}]`. Returns list of active external brokerage accounts. |
+| `POST /api/external/accounts` | Creates or updates an external account (risk profile and cash). |
+| `POST /api/external/accounts/{account_label}/cash` | Updates cash balance manually. |
+| `GET /api/external/positions?account_label` | Grouped position holdings and list of all individual tax lots with acquisition dates. |
+| `GET /api/external/suggestions?account_label` | Rebalancing target trade recommendations using active Glide Path preset & swing signals. |
+| `POST /api/external/import` | Uploads and parses statement PDF (Robinhood/Vanguard) positions or transaction history. |
+| `POST /api/external/orders/confirm` | Manually confirms a proposed order execution, adjusting position/lots (FIFO) and cash. |
+| `POST /api/external/reconcile?account_label` | Cross-references monthly transaction logs, de-duping matches, and updates holdings. |
 
 ## Virtual broker (Alpaca-shaped, SQLite-backed)
 

@@ -76,7 +76,7 @@ def fetch_fred_series(series_id):
             return pd.DataFrame(data)
         except Exception as e:
             print(f"  ⚠ Failed to fetch FRED series via API {series_id}: {e}. Falling back to CSV...")
-            
+
     # Keyless CSV fallback
     url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
     try:
@@ -97,23 +97,23 @@ def fetch_excess_bond_premium():
     try:
         res = requests.get(url, headers=headers, timeout=15)
         res.raise_for_status()
-        
+
         # Load CSV
         lines = res.text.strip().split("\n")
         # Check if first line is headers
         df = pd.read_csv(requests.compat.StringIO(res.text))
-        
+
         # Identify columns dynamically
         date_col = next((c for c in df.columns if "date" in c.lower()), None)
         ebp_col = next((c for c in df.columns if "ebp" in c.lower()), None)
         prob_col = next((c for c in df.columns if "prob" in c.lower() or "est" in c.lower()), None)
-        
+
         if not date_col or not ebp_col:
             raise ValueError(f"Could not identify EBP or Date columns. Headers: {df.columns.tolist()}")
-            
+
         ebp_data = []
         prob_data = []
-        
+
         for _, row in df.iterrows():
             try:
                 ref_date_str = str(row[date_col]).strip()
@@ -124,16 +124,16 @@ def fetch_excess_bond_premium():
                 # Let's align ref_date to month end, then add 5 days.
                 month_end = ref_date + pd.offsets.MonthEnd(0)
                 pub_date = (month_end + timedelta(days=5)).strftime("%Y-%m-%d")
-                
+
                 ebp_val = float(row[ebp_col])
                 ebp_data.append({"date": pub_date, "value": ebp_val})
-                
+
                 if prob_col:
                     prob_val = float(row[prob_col])
                     prob_data.append({"date": pub_date, "value": prob_val})
             except Exception:
                 continue
-                
+
         return pd.DataFrame(ebp_data), pd.DataFrame(prob_data)
     except Exception as e:
         print(f"  ⚠ Failed to fetch Excess Bond Premium: {e}")
@@ -142,7 +142,7 @@ def fetch_excess_bond_premium():
 def run_market_stress_fetcher():
     init_db()
     db = SessionLocal()
-    
+
     # 1. Fetch FRED stress indicators
     for indicator_name, series_id in FRED_SERIES_MAP.items():
         print(f"Fetching FRED series {series_id} ({indicator_name})...")
@@ -165,7 +165,7 @@ def run_market_stress_fetcher():
                     added += 1
             db.commit()
             print(f"✓ FRED series {series_id}: added {added}, updated {updated} records.")
-        
+
     # 2. Fetch Excess Bond Premium (EBP) CSV
     ebp_df, prob_df = fetch_excess_bond_premium()
     if not ebp_df.empty:
@@ -185,7 +185,7 @@ def run_market_stress_fetcher():
                 added += 1
         db.commit()
         print(f"✓ Excess Bond Premium: added {added}, updated {updated} records.")
-        
+
     if not prob_df.empty:
         existing_records = db.query(MacroIndicator).filter(MacroIndicator.indicator_name == "ebp_recession_prob").all()
         existing_map = {r.date: r for r in existing_records}
@@ -203,7 +203,7 @@ def run_market_stress_fetcher():
                 added += 1
         db.commit()
         print(f"✓ EBP Recession Probability: added {added}, updated {updated} records.")
-        
+
     db.close()
 
 if __name__ == "__main__":

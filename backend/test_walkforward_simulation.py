@@ -86,7 +86,7 @@ class TestWalkforwardSimulation(unittest.TestCase):
             signals_df, self.prices_df, initial_capital=100000.0, max_allocation=0.10, fee_pct=0.0005, horizon=5,
             max_signals_per_bar=1, max_open_positions=10, use_kelly=False
         )
-        
+
         # Verify that only one signal is traded (100k - position_size + fees = remaining cash)
         # Position size = 10% of 100k = 10k
         cash_left = curve_throttled[0]["cash"]

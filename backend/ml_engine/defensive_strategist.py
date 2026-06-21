@@ -59,11 +59,11 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
     snap = load_latest_snapshot()
     if not snap:
         return {"error": "No CrashRiskSnapshot found. Ingest macro data first."}
-        
+
     comp_idx = snap.composite_index
     risk_band = snap.risk_band
     posture = snap.current_posture
-    
+
     # Load glide path settings (custom knobs override the named preset)
     if custom_knobs:
         knobs = dict(PRESETS["balanced"])
@@ -73,15 +73,15 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         knobs = PRESETS.get(preset_name, PRESETS["balanced"])
     z = get_standardized_score(comp_idx)
     trend = get_spy_trend_score()
-    
+
     d_coeff = compute_defensive_coefficient(
         z, trend,
         knobs["theta"], knobs["k"], knobs["L"], knobs["U"], knobs["gamma"]
     )
-    
+
     # 1. Buffett Staged Cash Dry-Powder Stance
     target_cash_pct = min(50.0, comp_idx * 0.6)
-    
+
     # Calculate fractional Kelly for cash deployment tranche
     # Sizing for a -20% market dip where payoff is 3:1 (e.g. buy deep value moat companies)
     # Win probability of recovery is high (e.g. 75%)
@@ -90,13 +90,13 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         payoff_ratio=3.0,
         fraction=0.25
     )
-    
+
     cash_ladders = [
         {"drawdown": "-10%", "pct_of_reserve_to_deploy": 25.0, "sizing_rule": "25% tranche"},
         {"drawdown": "-20%", "pct_of_reserve_to_deploy": 35.0, "sizing_rule": f"Kelly scaled tranche ({kelly_fraction*100:.1f}%)"},
         {"drawdown": "-35%", "pct_of_reserve_to_deploy": 40.0, "sizing_rule": "40% tranche"}
     ]
-    
+
     # 2. Dalio All-Weather Risk-Parity Stance
     # Allocation: 30% Equities, 40% TLT, 15% IEF, 7.5% GLD, 7.5% GSG
     dalio_allocation = {
@@ -106,7 +106,7 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         "Gold (GLD)": 7.5,
         "Commodities (GSG)": 7.5
     }
-    
+
     # HMM crisis constraints
     if snap.hmm_regime_subscore >= 70.0:
         # Enforce max 10% individual equity exposure
@@ -114,7 +114,7 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         dalio_allocation["Long-Term US Treasuries (TLT)"] = 50.0
         dalio_allocation["Gold (GLD)"] = 12.5
         dalio_allocation["Commodities (GSG)"] = 12.5
-        
+
     # 3. Taleb Barbell & Tail-Hedge Stance
     # Barbell: 90% safe assets (T-bills/BIL), 10% active swing candidates
     taleb_barbell = {
@@ -123,7 +123,7 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
     }
     tail_hedge_budget = 0.005 # 0.5% quarterly budget
     # Sized to protect a $100k portfolio: approx 15% OTM puts on SPY
-    
+
     # 4. AQR Trend Crisis Alpha Sleeve
     # Simple Long/Flat/Short trend follower on SPY 12-month return
     aqr_trend_sleeve = {
@@ -131,11 +131,11 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         "active_direction": "Long" if trend > 0 else "Flat",
         "description": "Volatility-scaled time-series momentum on daily prices."
     }
-    
+
     # 5. Inflation-vs-Deflation Safe Asset Branch
     breakeven = get_breakeven_inflation()
     is_inflationary = breakeven > 2.5
-    
+
     if is_inflationary:
         safe_asset_mix = {
             "GLD": 35.0,
@@ -183,7 +183,7 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
             "regret_if_no_crash": 25.0
         }
     }
-    
+
     # Calculate minimax regret to identify the 'mathematically robust' choice
     # Regret is calculated as optimal_return - actual_return for that state.
     # Minimax regret chooses the action that minimizes the maximum regret.
@@ -230,7 +230,7 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         "minimax_choice": minimax_choice,
         "minimax_value": minimax_val
     }
-    
+
     return playbook
 
 if __name__ == "__main__":

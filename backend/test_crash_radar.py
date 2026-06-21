@@ -34,7 +34,7 @@ class TestCrashRadar(unittest.TestCase):
         # Test basic linear mapping
         self.assertEqual(normalize_value(50, 0, 100), 50.0)
         self.assertEqual(normalize_value(75, 50, 100), 50.0)
-        
+
         # Test clipping
         self.assertEqual(normalize_value(120, 0, 100), 100.0)
         self.assertEqual(normalize_value(-20, 0, 100), 0.0)
@@ -71,7 +71,7 @@ class TestCrashRadar(unittest.TestCase):
                       "excess_bond_premium", "ebp_recession_prob", "hy_spread", "ig_spread",
                       "nfci", "nfci_leverage", "sloos_tightening", "building_permits",
                       "initial_claims_4w", "sahm_indicator", "margin_debt_quarterly"]
-        
+
         # Insert 110 records per indicator to meet minimum rolling percentile requirement
         base_date = pd.to_datetime("2026-01-01")
         for ind in indicators:
