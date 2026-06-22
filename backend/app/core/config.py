@@ -172,14 +172,15 @@ PREMIUM_REL_MIN = float(os.getenv("PREMIUM_REL_MIN", "0.3"))         # drop low-
 PREMIUM_ABS_MIN = float(os.getenv("PREMIUM_ABS_MIN", "0.15"))        # drop near-neutral (no direction) mentions
 PREMIUM_MAX_MENTIONS = int(os.getenv("PREMIUM_MAX_MENTIONS", "3"))   # cap tickers per article (top by rel*|s|)
 
-# A more powerful model writes the plain-English "expert interpretation" of evaluation runs (Model
-# Evaluation tab). Configurable so you can point it at whatever strong model you have access to.
-OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-4o")
+# Model for eval/wargame "expert interpretation" (Model Evaluation + Crash tab). gpt-5.4 gives a
+# strong read without the gpt-5.5 price spike.
+OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-5.4")
 EXPERT_INTERP_ENABLED = os.getenv("EXPERT_INTERP_ENABLED", "true").lower() == "true"
 
-# Research Analyst: standard = cheap default; premium = explicit user opt-in only (no auto-escalation).
-RESEARCH_STANDARD_MODEL = os.getenv("RESEARCH_STANDARD_MODEL", OPENAI_MODEL)  # gpt-4o-mini
-RESEARCH_PREMIUM_MODEL = os.getenv("RESEARCH_PREMIUM_MODEL", OPENAI_EXPERT_MODEL)  # gpt-4o
+# Research Analyst: standard = cheap default (gpt-5.4-nano); premium = explicit user opt-in only.
+# Note: OPENAI_MODEL stays as gpt-4o-mini for news scoring (different use-case, high volume).
+RESEARCH_STANDARD_MODEL = os.getenv("RESEARCH_STANDARD_MODEL", "gpt-5.4-nano")
+RESEARCH_PREMIUM_MODEL = os.getenv("RESEARCH_PREMIUM_MODEL", OPENAI_EXPERT_MODEL)  # gpt-5.4
 # Back-compat alias
 RESEARCH_EXPERT_MODEL = os.getenv("RESEARCH_EXPERT_MODEL", RESEARCH_PREMIUM_MODEL)
 RESEARCH_LOCAL_MODEL = os.getenv("RESEARCH_LOCAL_MODEL", LLM_MODEL)

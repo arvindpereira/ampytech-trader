@@ -371,53 +371,25 @@ def get_research_models(query: str = ""):
         except Exception:
             return None
 
-    standard_model = OPENAI_MODEL or "gpt-4o-mini"
-    premium_model = OPENAI_EXPERT_MODEL or "gpt-4o"
-
+    # Fixed gpt-5.4 family lineup, cheapest to most capable.
+    _SELECTOR_MODELS = [
+        ("gpt-5.4-nano", "Standard",  "standard", "Fast and cheap. Good for most lookups and single-stock analysis."),
+        ("gpt-5.4-mini", "Plus",      "premium",  "Better reasoning. Good for earnings summaries and theme analysis."),
+        ("gpt-5.4",      "Advanced",  "premium",  "Full gpt-5.4. Best for complex multi-ticker or cross-theme queries."),
+        ("gpt-5.5",      "Expert",    "expert",   "Flagship model. Highest quality — use when Advanced isn't enough."),
+    ]
     models = [
         {
-            "id": standard_model,
-            "label": "Standard",
-            "display_name": standard_model,
-            "description": "Fast, cheap. Good for most lookups and single-stock analysis.",
-            "tier": "standard",
-            "est_cost_usd": _cost(standard_model),
+            "id": mid,
+            "label": label,
+            "display_name": mid,
+            "description": desc,
+            "tier": tier,
+            "est_cost_usd": _cost(mid),
             "available": openai_ok,
-        },
-        {
-            "id": premium_model,
-            "label": "Premium",
-            "display_name": premium_model,
-            "description": "Deeper analysis. Recommended for earnings, cross-theme, and complex multi-stock queries.",
-            "tier": "premium",
-            "est_cost_usd": _cost(premium_model),
-            "available": openai_ok,
-        },
+        }
+        for mid, label, tier, desc in _SELECTOR_MODELS
     ]
-    # gpt-5.4: sits between gpt-4o and gpt-5.5 in cost ($2.50/$15 per 1M).
-    advanced_model = "gpt-5.4"
-    if advanced_model != premium_model:
-        models.append({
-            "id": advanced_model,
-            "label": "Advanced",
-            "display_name": advanced_model,
-            "description": "Latest mid-tier model. Higher output quality than gpt-4o at a similar input cost.",
-            "tier": "premium",
-            "est_cost_usd": _cost(advanced_model),
-            "available": openai_ok,
-        })
-    # gpt-5.5: flagship, most expensive ($5/$30 per 1M).
-    expert_model = "gpt-5.5"
-    if expert_model != premium_model:
-        models.append({
-            "id": expert_model,
-            "label": "Expert",
-            "display_name": expert_model,
-            "description": "Flagship model. Best quality for complex cross-theme or multi-ticker research.",
-            "tier": "expert",
-            "est_cost_usd": _cost(expert_model),
-            "available": openai_ok,
-        })
 
     return {
         "models": models,
