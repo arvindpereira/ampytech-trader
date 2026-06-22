@@ -372,8 +372,11 @@ def is_valid_snapshot(snap):
 
 def persist_crash_snapshot(snapshot):
     """Saves or updates a CrashRiskSnapshot in SQLite."""
+    as_of = snapshot.as_of_date
+    composite = snapshot.composite_index
+    posture = snapshot.current_posture
     db = SessionLocal()
-    existing = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == snapshot.as_of_date).first()
+    existing = db.query(CrashRiskSnapshot).filter(CrashRiskSnapshot.as_of_date == as_of).first()
     if existing:
         existing.composite_index = snapshot.composite_index
         existing.risk_band = snapshot.risk_band
@@ -396,7 +399,7 @@ def persist_crash_snapshot(snapshot):
         db.add(snapshot)
     db.commit()
     db.close()
-    print(f"✓ Saved CrashRiskSnapshot for {snapshot.as_of_date} (Index: {snapshot.composite_index:.1f} | Stance: {snapshot.current_posture})")
+    print(f"✓ Saved CrashRiskSnapshot for {as_of} (Index: {composite:.1f} | Stance: {posture})")
 
 def get_crash_index_timeline():
     """

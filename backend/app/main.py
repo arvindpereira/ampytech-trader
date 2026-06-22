@@ -80,6 +80,8 @@ import uuid as _uuid
 import time as _time
 _JOBS = {}
 _JOBS_LOCK = threading.Lock()
+_AUTO_HEAL_LAST_ATTEMPT: dict[str, float] = {}
+AUTO_HEAL_COOLDOWN_SEC = 3600
 
 def _job_new(jtype, label):
     jid = _uuid.uuid4().hex[:8]
@@ -118,9 +120,9 @@ def _start_backfill(ticker):
     """Spawn a backfill job+thread for `ticker`, but only if one isn't already running.
     Returns the (existing or new) job id. Single entry point so we never spawn duplicate
     threads/progress bars for the same ticker (e.g. suggestions auto-heal firing on every poll)."""
-    from data_ingestion.price_fetcher import FICTIONAL_TICKERS
-    if ticker in FICTIONAL_TICKERS:
-        return None  # synthetic ticker (e.g. SPACE) — nothing to fetch, don't create a job
+    from data_ingestion.price_fetcher import skip_hourly_backfill
+    if skip_hourly_backfill(ticker):
+        return None
     label = f"Backfilling {ticker}"
     with _JOBS_LOCK:
         for job in _JOBS.values():
@@ -358,15 +360,22 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
 
     # Auto-heal: Check if any active universe tickers are missing price data
     if not date:
-        from data_ingestion.price_fetcher import FICTIONAL_TICKERS
+        from data_ingestion.price_fetcher import skip_hourly_backfill
+        now = _time.time()
         for ticker in active_universe:
-            if ticker in FICTIONAL_TICKERS:
-                continue  # synthetic ticker (e.g. SPACE) has no real data to fetch — don't loop backfills
-            has_data = db.query(RecentPrice).filter(RecentPrice.ticker == ticker).first() is not None
-            if not has_data:
-                # _start_backfill is a no-op if one is already in flight, so polling is safe.
-                print(f"Suggestions Auto-Heal: Ticker {ticker} is missing price records. Ensuring backfill...")
-                _start_backfill(ticker)
+            if skip_hourly_backfill(ticker):
+                continue
+            has_data = (
+                db.query(RecentPrice).filter(RecentPrice.ticker == ticker).first() is not None
+                or db.query(DailyPrice).filter(DailyPrice.ticker == ticker).first() is not None
+            )
+            if has_data:
+                continue
+            if now - _AUTO_HEAL_LAST_ATTEMPT.get(ticker, 0) < AUTO_HEAL_COOLDOWN_SEC:
+                continue
+            print(f"Suggestions Auto-Heal: Ticker {ticker} is missing price records. Ensuring backfill...")
+            _start_backfill(ticker)
+            _AUTO_HEAL_LAST_ATTEMPT[ticker] = now
 
     # Establish latest dates/states as part of cache key
     latest_price = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()

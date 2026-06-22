@@ -23,6 +23,18 @@ MASSIVE_SYMBOL_OVERRIDES = {"BRK-B": "BRK.B"}
 # Fictional tickers (e.g. SpaceX SPACE) that should be generated synthetically.
 FICTIONAL_TICKERS = {"SPACE"}
 
+# Vanguard mutual fund share classes — portfolio holdings only; no Massive hourly bars.
+MUTUAL_FUND_TICKERS = frozenset({"VASGX", "VFIAX", "VSMGX", "VTSAX", "VMFXX"})
+
+
+def skip_hourly_backfill(ticker: str) -> bool:
+    """Tickers that intentionally have no intraday Massive bars (synthetic or mutual funds)."""
+    t = (ticker or "").upper().strip()
+    if t in FICTIONAL_TICKERS or t in MUTUAL_FUND_TICKERS:
+        return True
+    # Vanguard mutual fund pattern: 5-letter symbols starting with V (e.g. VFIAX).
+    return len(t) == 5 and t.startswith("V") and t.endswith("X")
+
 # Safe-asset ETFs used by the Crash Radar defensive playbook. They are NOT part of the tradeable
 # universe (so they stay out of the screener/sentiment pipeline), but the paper rebalancer needs
 # realistic prices for them. They are stored only in daily_prices, which is never purged by
