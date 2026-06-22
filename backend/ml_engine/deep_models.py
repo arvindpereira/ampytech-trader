@@ -191,7 +191,7 @@ def _train_model(X_train, y_train, w_train, input_dim, epochs, batch_size=128,
 # ─── Walk-forward OOS frame ───────────────────────────────────────────────────
 
 def deep_swing_oos_frame(horizon=5, seq_len=20, n_splits=4, warmup_frac=0.4,
-                          oos_start=None, progress_cb=None, fold_epochs=15):
+                          oos_start=None, progress_cb=None, fold_epochs=40):
     """Walk-forward, look-ahead-free OOS prediction frame for the deep swing model.
 
     Returns (oos_df, prices_df, equities) — same contract as swing_oos_frame().
@@ -219,7 +219,7 @@ def deep_swing_oos_frame(horizon=5, seq_len=20, n_splits=4, warmup_frac=0.4,
     edges = pd.date_range(first_edge, df["dt"].max(), periods=n_splits + 1)
 
     frames = []
-    print(f"{'fold':>4} {'train':>7} {'test':>6} {'period':>23} | {'threshold':>9} {'val-AUC':>8}")
+    print(f"{'fold':>4} {'train':>7} {'test':>6} {'period':>23} | thr    auc   p̄±σ           buys/total")
     for i in range(n_splits):
         lo, hi = edges[i], edges[i + 1]
         tr = df[df["dt"] < lo]
@@ -243,9 +243,13 @@ def deep_swing_oos_frame(horizon=5, seq_len=20, n_splits=4, warmup_frac=0.4,
                                      epochs=fold_epochs, hidden_dim=64)
         fold_thr = _calibrate_threshold(model, X_val, y_val, device)
 
-        # Apply scaler from training to test split (no look-ahead)
+        # Apply scaler from training to test split (no look-ahead).
+        # IMPORTANT: prepare_sequences iterates df.dropna(feature_cols)["ticker"].unique()
+        # in insertion order.  The reconstruction frame below must use the same order
+        # so probs[k] maps to the correct row.
+        te_clean = te.dropna(subset=feat_all).copy()
         X_te, y_te, _, _ = prepare_sequences(
-            te, feat_all, seq_len=seq_len, fit_scaler=False, scaler_metadata=fold_scaler)
+            te_clean, feat_all, seq_len=seq_len, fit_scaler=False, scaler_metadata=fold_scaler)
         if len(X_te) == 0:
             continue
 
@@ -260,29 +264,31 @@ def deep_swing_oos_frame(horizon=5, seq_len=20, n_splits=4, warmup_frac=0.4,
         except ImportError:
             auc = float("nan")
 
-        # Reconstruct the test frame (seq_len-1 rows lost per ticker at window start)
-        te_sorted = te.sort_values("dt").copy()
-        # Rebuild to align OOS rows with the sequence predictions
+        # Reconstruct the OOS frame in the SAME ticker-major order as prepare_sequences
+        # so probs[k] aligns with the correct date/ticker row.
         out_rows = []
-        for ticker in te_sorted["ticker"].unique():
-            tdf = te_sorted[te_sorted["ticker"] == ticker].sort_values("date")
+        for ticker in te_clean["ticker"].unique():        # same order as prepare_sequences
+            tdf = te_clean[te_clean["ticker"] == ticker].sort_values("date")
             if len(tdf) < seq_len:
                 continue
-            slice_df = tdf.iloc[seq_len - 1:]
-            out_rows.append(slice_df[["date", "ticker", "close", "atr_14", "target_win", "trade_ret"]])
+            slice_df = tdf.iloc[seq_len - 1:][
+                ["date", "ticker", "close", "atr_14", "target_win", "trade_ret"]].copy()
+            out_rows.append(slice_df)
         if not out_rows:
             continue
-        f = pd.concat(out_rows).sort_values("date").reset_index(drop=True)
+
+        f = pd.concat(out_rows).reset_index(drop=True)   # ticker-major, matches probs
         if len(f) != len(probs):
-            min_len = min(len(f), len(probs))
-            f    = f.iloc[:min_len].copy()
-            probs = probs[:min_len]
+            print(f"  WARNING fold {i}: frame rows {len(f)} != probs {len(probs)} — skipping")
+            continue
         f["prob"] = probs
         f["selected_threshold"] = fold_thr
-        frames.append(f)
+        frames.append(f.sort_values("date"))   # sort by date only after alignment
 
+        above_thr = int((probs >= fold_thr).sum())
         print(f"{i:>4} {len(tr):>7} {len(te):>6} {str(lo.date())+'..'+str(hi.date()):>23} | "
-              f"{fold_thr:>9.3f} {auc:>8.3f}")
+              f"thr={fold_thr:.3f} auc={auc:.3f} "
+              f"p̄={probs.mean():.3f}±{probs.std():.3f} buys={above_thr}/{len(probs)}")
         if progress_cb:
             progress_cb((i + 1) / n_splits)
 
@@ -296,7 +302,7 @@ def deep_swing_oos_frame(horizon=5, seq_len=20, n_splits=4, warmup_frac=0.4,
 # ─── Walk-forward backtest curve ──────────────────────────────────────────────
 
 def backtest_deep_swing_curve(horizon=5, n_splits=4, warmup_frac=0.4,
-                               oos_start=None, progress_cb=None, fold_epochs=15):
+                               oos_start=None, progress_cb=None, fold_epochs=40):
     """Walk-forward backtest → (equity_curve list, metrics dict, prices_df).
     Same return shape as backtest_swing_curve() so run_evaluation() can treat both identically."""
     from ml_engine.swing_alpha import SWING_STOP_MAX, SWING_STOP_MIN, SWING_ATR_STOP_MULT, SWING_TP_MULT
