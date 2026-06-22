@@ -394,14 +394,26 @@ def get_research_models(query: str = ""):
             "available": openai_ok,
         },
     ]
-    # Always offer gpt-5.5 as an explicit Expert option (distinct from premium when premium != gpt-5.5).
+    # gpt-5.4: sits between gpt-4o and gpt-5.5 in cost ($2.50/$15 per 1M).
+    advanced_model = "gpt-5.4"
+    if advanced_model != premium_model:
+        models.append({
+            "id": advanced_model,
+            "label": "Advanced",
+            "display_name": advanced_model,
+            "description": "Latest mid-tier model. Higher output quality than gpt-4o at a similar input cost.",
+            "tier": "premium",
+            "est_cost_usd": _cost(advanced_model),
+            "available": openai_ok,
+        })
+    # gpt-5.5: flagship, most expensive ($5/$30 per 1M).
     expert_model = "gpt-5.5"
     if expert_model != premium_model:
         models.append({
             "id": expert_model,
             "label": "Expert",
             "display_name": expert_model,
-            "description": "Most powerful. Use for cross-theme analysis or when Premium results are insufficient.",
+            "description": "Flagship model. Best quality for complex cross-theme or multi-ticker research.",
             "tier": "expert",
             "est_cost_usd": _cost(expert_model),
             "available": openai_ok,
