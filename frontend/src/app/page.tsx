@@ -2176,6 +2176,11 @@ export default function Home() {
                       <input type="checkbox" checked={evalStrategies.deep_swing} onChange={(e) => setEvalStrategies({ ...evalStrategies, deep_swing: e.target.checked })} /> Deep Swing (GRU+Attn)
                     </label>
                   </div>
+                  {evalStrategies.deep_swing && (
+                    <div style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', fontSize: '11px', color: '#fbbf24' }}>
+                      ⏱ Deep Swing trains the GRU from scratch on each fold — expect <strong>{evalSplits} × ~5–10 min on CPU</strong>. Use 3 folds to save time.
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Walk-forward folds</label>

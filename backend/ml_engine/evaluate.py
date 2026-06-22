@@ -96,11 +96,17 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
             f"keeps it look-ahead-free. Swing's LLM-scored news covers {earliest_news or 'recent dates'} onward.")
 
     if "deep_swing" in strategies and not windowed:
-        report(48, "Deep swing (GRU+Attention) walk-forward…")
+        # Deep swing takes the second major progress block (5–50 if swing already ran, else 5–50).
+        # Swing occupies 5→50 when also selected; deep_swing takes its own 5→50 when alone,
+        # or 50→90 when swing has already run.
+        ds_lo = 50 if "swing" in raw else 5
+        ds_hi = 90
+        report(ds_lo, f"Deep swing (GRU+Attention) walk-forward — {splits} folds × 40 epochs each…")
         from ml_engine.deep_models import backtest_deep_swing_curve
         curve, _ = backtest_deep_swing_curve(
             horizon=horizon, n_splits=splits, oos_start=oos_start,
-            progress_cb=lambda f: report(48 + int(f * 2), "Deep swing walk-forward…"))
+            progress_cb=lambda f: report(ds_lo + int(f * (ds_hi - ds_lo)),
+                                         f"Deep swing fold {int(f * splits) + 1}/{splits} (GRU training)…"))
         if curve:
             raw["deep_swing"] = _curve_to_daily(curve)
     elif "deep_swing" in strategies and windowed:
