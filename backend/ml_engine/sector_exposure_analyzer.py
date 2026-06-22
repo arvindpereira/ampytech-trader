@@ -90,12 +90,12 @@ def _metadata_for(db, ticker: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[dict]:
-    from app.database import CompanySnapshot, TickerClassification, TickerMetadata, UniverseTicker
+    from app.database import CompanySnapshot, DailyPrice, TickerClassification, TickerMetadata, UniverseTicker
     from sqlalchemy import func
 
     universe_tickers = {r.ticker for r in db.query(UniverseTicker.ticker).all()}
 
-    # 1. Latest company snapshots (RKB)
+    # 1. Latest company snapshots (RKB) — these are always fetchable (we have their data)
     latest_date_row = db.query(func.max(CompanySnapshot.as_of_date)).first()
     latest_date = latest_date_row[0] if latest_date_row else None
 
@@ -120,10 +120,11 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                 "held": s.ticker in current_holdings,
                 "in_universe": s.ticker in universe_tickers,
                 "current_price": round(float(s.price), 2) if s.price else None,
+                "fetchable": True,
             })
             seen_tickers.add(s.ticker)
 
-    # 2. TickerClassification + TickerMetadata fallback
+    # 2. TickerClassification + TickerMetadata fallback — also always fetchable
     if len(recs) < 6:
         rows = (
             db.query(TickerMetadata.ticker, TickerClassification.tier, TickerClassification.quality)
@@ -144,39 +145,57 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                     "held": r.ticker in current_holdings,
                     "in_universe": r.ticker in universe_tickers,
                     "current_price": round(price, 2) if price else None,
+                    "fetchable": True,
                 })
                 seen_tickers.add(r.ticker)
                 if len(recs) >= 6:
                     break
 
-    # 3. Catalog seed tickers — discovery path for sectors with no RKB/classification data
+    # 3. Catalog seed tickers — only include those already in daily_prices (proven fetchable).
+    #    Seeds with no price history are unverified and likely to fail when added.
     if len(recs) < 6:
         try:
             catalog_path = os.path.join(_DATA_DIR, "research_sectors.json")
             if os.path.exists(catalog_path):
                 with open(catalog_path) as f:
                     catalog = json.load(f)
+                # Gather all candidate seeds first, then bulk-check daily_prices in one query.
+                candidate_seeds = []
                 for entry in catalog.get("sectors", []):
                     if entry.get("sector") != sector:
                         continue
                     for seed in entry.get("seed_tickers", []):
                         t = seed if isinstance(seed, str) else seed.get("ticker", "")
                         if t and t not in seen_tickers:
-                            price = _latest_price(db, t)
-                            recs.append({
-                                "ticker": t,
-                                "tier": None,
-                                "quality": None,
-                                "upside_pct": None,
-                                "recommendation_key": None,
-                                "held": t in current_holdings,
-                                "in_universe": t in universe_tickers,
-                                "current_price": round(price, 2) if price else None,
-                                "source": "catalog",
-                            })
-                            seen_tickers.add(t)
-                            if len(recs) >= 6:
-                                break
+                            candidate_seeds.append(t)
+
+                if candidate_seeds:
+                    priced = {
+                        r.ticker for r in
+                        db.query(DailyPrice.ticker)
+                        .filter(DailyPrice.ticker.in_(candidate_seeds))
+                        .distinct()
+                        .all()
+                    }
+                    for t in candidate_seeds:
+                        if t not in priced:
+                            continue  # skip unverified seeds — no price history = likely to fail
+                        price = _latest_price(db, t)
+                        recs.append({
+                            "ticker": t,
+                            "tier": None,
+                            "quality": None,
+                            "upside_pct": None,
+                            "recommendation_key": None,
+                            "held": t in current_holdings,
+                            "in_universe": t in universe_tickers,
+                            "current_price": round(price, 2) if price else None,
+                            "fetchable": True,
+                            "source": "catalog",
+                        })
+                        seen_tickers.add(t)
+                        if len(recs) >= 6:
+                            break
         except Exception:
             pass
 

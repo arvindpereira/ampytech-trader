@@ -23,6 +23,7 @@ type RecommendationRow = {
   held: boolean;
   in_universe: boolean;
   current_price: number | null;
+  fetchable: boolean;
   source?: string;
 };
 
@@ -179,7 +180,7 @@ export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }
       .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }, [data]);
 
-  const TickerActionButton = ({ ticker }: { ticker: string }) => {
+  const TickerActionButton = ({ ticker, fetchable = true }: { ticker: string; fetchable?: boolean }) => {
     const status = tickerStatus[ticker] ?? 'idle';
     const inUniverse = universeSet.has(ticker);
     const busy = status === 'adding' || status === 'removing';
@@ -193,6 +194,11 @@ export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }
       >
         <Minus size={11} /> Universe
       </button>
+    );
+    if (!fetchable) return (
+      <span title="No price history — add manually via the Universe editor" style={{ fontSize: '10px', color: 'var(--text-secondary)', opacity: 0.6, fontStyle: 'italic' }}>
+        not in feed
+      </span>
     );
     return (
       <button
@@ -369,7 +375,7 @@ export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }
                                 <strong style={{ color: 'var(--text-primary)' }}>{r.ticker}</strong>
                                 {r.upside_pct != null && <span style={{ color: '#10B981' }}>+{(r.upside_pct * 100).toFixed(1)}%</span>}
                                 {r.held && <span style={{ color: 'var(--text-secondary)' }}>held</span>}
-                                <TickerActionButton ticker={r.ticker} />
+                                <TickerActionButton ticker={r.ticker} fetchable={r.fetchable !== false} />
                               </span>
                             ))}
                           </div>
@@ -529,7 +535,7 @@ export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }
                                     {inUni && <CheckCircle2 size={11} color="#a78bfa" />}
                                   </div>
                                 </div>
-                                <TickerActionButton ticker={r.ticker} />
+                                <TickerActionButton ticker={r.ticker} fetchable={r.fetchable !== false} />
                               </div>
                             );})}
                           </div>
