@@ -170,25 +170,7 @@ def decide(
             "local", c, "OPENAI_API_KEY unset — Ollama fallback", False, model_for_tier("local")
         )
 
-    from app.core.config import RESEARCH_PREMIUM_COMPLEXITY
-
-    auto_premium = (
-        c >= RESEARCH_PREMIUM_COMPLEXITY
-        or routed.deep_research
-        or routed.intent in ("cross_theme", "crowding_risk", "earnings_report")
-    )
-    if auto_premium:
-        use_search = routed.deep_research and bool(coverage_by_ticker) and min(
-            coverage_by_ticker.values(), default=1
-        ) < 0.6
-        return RouteDecision(
-            "premium",
-            c,
-            "complex research — premium model",
-            use_search,
-            model_for_tier("premium"),
-        )
-
+    # Premium requires explicit user opt-in (use_premium=True). No auto-escalation by intent or complexity.
     return RouteDecision(
         "standard",
         c,

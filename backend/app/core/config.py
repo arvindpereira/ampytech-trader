@@ -174,16 +174,16 @@ PREMIUM_MAX_MENTIONS = int(os.getenv("PREMIUM_MAX_MENTIONS", "3"))   # cap ticke
 
 # A more powerful model writes the plain-English "expert interpretation" of evaluation runs (Model
 # Evaluation tab). Configurable so you can point it at whatever strong model you have access to.
-OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-5.5")
+OPENAI_EXPERT_MODEL = os.getenv("OPENAI_EXPERT_MODEL", "gpt-4o")
 EXPERT_INTERP_ENABLED = os.getenv("EXPERT_INTERP_ENABLED", "true").lower() == "true"
 
-# Research Analyst (Tab 7): standard = cheap default; premium = complex / user opt-in.
+# Research Analyst: standard = cheap default; premium = explicit user opt-in only (no auto-escalation).
 RESEARCH_STANDARD_MODEL = os.getenv("RESEARCH_STANDARD_MODEL", OPENAI_MODEL)  # gpt-4o-mini
-RESEARCH_PREMIUM_MODEL = os.getenv("RESEARCH_PREMIUM_MODEL", OPENAI_EXPERT_MODEL)  # gpt-5.5
+RESEARCH_PREMIUM_MODEL = os.getenv("RESEARCH_PREMIUM_MODEL", OPENAI_EXPERT_MODEL)  # gpt-4o
 # Back-compat alias
 RESEARCH_EXPERT_MODEL = os.getenv("RESEARCH_EXPERT_MODEL", RESEARCH_PREMIUM_MODEL)
 RESEARCH_LOCAL_MODEL = os.getenv("RESEARCH_LOCAL_MODEL", LLM_MODEL)
-# Auto-select premium when complexity score >= this (0–1).
+# Complexity threshold kept for reference but auto-escalation is disabled — premium requires explicit user opt-in.
 RESEARCH_PREMIUM_COMPLEXITY = float(os.getenv("RESEARCH_PREMIUM_COMPLEXITY", "0.75"))
 RESEARCH_MAX_TICKERS = int(os.getenv("RESEARCH_MAX_TICKERS", "12"))
 RESEARCH_KB_FINNHUB_SLEEP = float(os.getenv("RESEARCH_KB_FINNHUB_SLEEP", "1.1"))  # stay under 60 RPM
