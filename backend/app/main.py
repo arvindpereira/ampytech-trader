@@ -4159,47 +4159,88 @@ def get_tickers_info(tickers: str, db=Depends(get_db)):
     return {"tickers": result}
 
 
+# Short-term chart cache: {f"{ticker}:{range}": {"series": [...], "expires": datetime}}
+_chart_cache: dict = {}
+_CHART_TTL = {
+    "1D": 5 * 60,    # 5-minute bars change every 5 min; cache for 5 min
+    "3D": 10 * 60,   # cache for 10 min
+    "1W": 15 * 60,   # cache for 15 min
+}
+
+
+def _fetch_intraday_5min(ticker: str, days: int) -> list:
+    """Fetch 5-minute bars from yfinance for short-range charts."""
+    try:
+        import yfinance as yf
+        from data_ingestion.price_fetcher import map_ticker_to_yahoo
+        yf_sym = map_ticker_to_yahoo(ticker)
+        period = f"{days}d"
+        hist = yf.Ticker(yf_sym).history(period=period, interval="5m", auto_adjust=True)
+        if hist.empty:
+            return []
+        series = []
+        for ts, row in hist.iterrows():
+            if row["Close"] and not (row["Close"] != row["Close"]):  # NaN check
+                series.append({
+                    "date": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                    "close": round(float(row["Close"]), 2),
+                })
+        return series
+    except Exception:
+        return []
+
+
 @app.get("/api/prices/chart")
 def get_price_chart(ticker: str, range: str = "1M", db=Depends(get_db)):
-    """Price series for a single ticker over a time range, served from the local DB.
+    """Price series for a single ticker.
+    1D/3D/1W → 5-minute bars from yfinance (cached 5–15 min).
+    1M–5Y    → daily bars from local daily_prices DB table.
     range: 1D | 3D | 1W | 1M | 6M | YTD | 1Y | 5Y"""
-    from app.database import DailyPrice, RecentPrice
+    from app.database import DailyPrice
     from datetime import date as _date
 
     tk = ticker.upper().strip()
     today = _date.today()
-    use_hourly = range in ("1D", "3D")
 
-    if use_hourly:
-        days_back = 1 if range == "1D" else 3
-        cutoff = (today - timedelta(days=days_back)).isoformat()
-        rows = (db.query(RecentPrice.date, RecentPrice.close)
-                .filter(RecentPrice.ticker == tk, RecentPrice.date >= cutoff, RecentPrice.close != None)
-                .order_by(RecentPrice.date.asc()).all())
-        series = [{"date": r.date, "close": round(float(r.close), 2)} for r in rows]
-    else:
-        if range == "1W":
-            cutoff = (today - timedelta(days=7)).isoformat()
-        elif range == "1M":
-            cutoff = (today - timedelta(days=30)).isoformat()
-        elif range == "6M":
-            cutoff = (today - timedelta(days=182)).isoformat()
-        elif range == "YTD":
-            cutoff = f"{today.year}-01-01"
-        elif range == "1Y":
-            cutoff = (today - timedelta(days=365)).isoformat()
-        elif range == "5Y":
-            cutoff = (today - timedelta(days=1825)).isoformat()
-        else:
-            cutoff = (today - timedelta(days=30)).isoformat()
+    # ── Short ranges: 5-minute bars from yfinance ──────────────────────────
+    if range in ("1D", "3D", "1W"):
+        cache_key = f"{tk}:{range}"
+        now = datetime.now()
+        cached = _chart_cache.get(cache_key)
+        if cached and cached["expires"] > now:
+            return {"ticker": tk, "range": range, "series": cached["series"]}
 
-        all_rows = (db.query(DailyPrice.date, DailyPrice.close)
-                    .filter(DailyPrice.ticker == tk, DailyPrice.date >= cutoff, DailyPrice.close != None)
-                    .order_by(DailyPrice.date.asc()).all())
-        # For 5Y, sample ~weekly to keep payload small
-        step = 5 if range == "5Y" else 1
-        series = [{"date": r.date, "close": round(float(r.close), 2)} for r in all_rows[::step]]
+        days = {"1D": 1, "3D": 3, "1W": 7}[range]
+        series = _fetch_intraday_5min(tk, days)
+        # Fall back to hourly DB data if yfinance returns nothing
+        if not series:
+            from app.database import RecentPrice
+            cutoff = (today - timedelta(days=days)).isoformat()
+            rows = (db.query(RecentPrice.date, RecentPrice.close)
+                    .filter(RecentPrice.ticker == tk, RecentPrice.date >= cutoff,
+                            RecentPrice.close != None)
+                    .order_by(RecentPrice.date.asc()).all())
+            series = [{"date": r.date, "close": round(float(r.close), 2)} for r in rows]
 
+        ttl = _CHART_TTL.get(range, 300)
+        _chart_cache[cache_key] = {"series": series, "expires": now + timedelta(seconds=ttl)}
+        return {"ticker": tk, "range": range, "series": series}
+
+    # ── Longer ranges: daily bars from local DB ────────────────────────────
+    cutoff_map = {
+        "1M":  today - timedelta(days=30),
+        "6M":  today - timedelta(days=182),
+        "YTD": today.replace(month=1, day=1),
+        "1Y":  today - timedelta(days=365),
+        "5Y":  today - timedelta(days=1825),
+    }
+    cutoff = cutoff_map.get(range, today - timedelta(days=30)).isoformat()
+    all_rows = (db.query(DailyPrice.date, DailyPrice.close)
+                .filter(DailyPrice.ticker == tk, DailyPrice.date >= cutoff,
+                        DailyPrice.close != None)
+                .order_by(DailyPrice.date.asc()).all())
+    step = 5 if range == "5Y" else 1
+    series = [{"date": r.date, "close": round(float(r.close), 2)} for r in all_rows[::step]]
     return {"ticker": tk, "range": range, "series": series}
 
 

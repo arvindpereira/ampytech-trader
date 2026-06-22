@@ -50,9 +50,14 @@ export default function PriceChart({ ticker, height = 180 }: { ticker: string; h
 
   const tickFmt = (date: string) => {
     if (!date) return '';
-    if (activeRange === '1D' || activeRange === '3D') {
-      const d = new Date(date);
+    // 5-min bars: "2026-06-22 14:35:00" → show time (or date+time for 3D/1W)
+    if (activeRange === '1D') {
+      const d = new Date(date.replace(' ', 'T'));
       return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+    if (activeRange === '3D' || activeRange === '1W') {
+      const d = new Date(date.replace(' ', 'T'));
+      return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
     const [, m, d] = date.split('-');
     return `${m}/${d}`;
