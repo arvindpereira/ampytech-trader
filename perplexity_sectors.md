@@ -83,8 +83,8 @@ Key subsectors: semiconductors, hardware, software, IT services.
 
 ### Sector ETFs / Indexes
 
-- XLK – Technology Select Sector SPDR Fund  
-- VGT – Vanguard Information Technology ETF  
+- XLK – Technology Select Sector SPDR Fund
+- VGT – Vanguard Information Technology ETF
 - S&P 500 Information Technology Index
 
 ---
@@ -105,8 +105,8 @@ Key subsectors: interactive media, telecom, entertainment.
 
 ### Sector ETFs / Indexes
 
-- XLC – Communication Services Select Sector SPDR Fund  
-- S&P 500 Communication Services Index  
+- XLC – Communication Services Select Sector SPDR Fund
+- S&P 500 Communication Services Index
 
 ---
 
@@ -126,8 +126,8 @@ Key subsectors: retail (non‑essential), autos, hotels, entertainment.
 
 ### Sector ETFs / Indexes
 
-- XLY – Consumer Discretionary Select Sector SPDR Fund  
-- S&P 500 Consumer Discretionary Index  
+- XLY – Consumer Discretionary Select Sector SPDR Fund
+- S&P 500 Consumer Discretionary Index
 
 ---
 
@@ -147,8 +147,8 @@ Key subsectors: food, beverages, household products, staple retail.
 
 ### Sector ETFs / Indexes
 
-- XLP – Consumer Staples Select Sector SPDR Fund  
-- S&P 500 Consumer Staples Index  
+- XLP – Consumer Staples Select Sector SPDR Fund
+- S&P 500 Consumer Staples Index
 
 ---
 
@@ -168,8 +168,8 @@ Key subsectors: pharma, biotech, health‑care equipment and services.
 
 ### Sector ETFs / Indexes
 
-- XLV – Health Care Select Sector SPDR Fund  
-- S&P 500 Health Care Index  
+- XLV – Health Care Select Sector SPDR Fund
+- S&P 500 Health Care Index
 
 ---
 
@@ -189,8 +189,8 @@ Key subsectors: banks, insurance, diversified financials, asset managers.
 
 ### Sector ETFs / Indexes
 
-- XLF – Financial Select Sector SPDR Fund  
-- S&P 500 Financials Index  
+- XLF – Financial Select Sector SPDR Fund
+- S&P 500 Financials Index
 
 ---
 
@@ -210,8 +210,8 @@ Key subsectors: capital goods, aerospace & defense, transportation.
 
 ### Sector ETFs / Indexes
 
-- XLI – Industrial Select Sector SPDR Fund  
-- S&P 500 Industrials Index  
+- XLI – Industrial Select Sector SPDR Fund
+- S&P 500 Industrials Index
 
 ---
 
@@ -231,8 +231,8 @@ Key subsectors: chemicals, metals & mining, construction materials.
 
 ### Sector ETFs / Indexes
 
-- XLB – Materials Select Sector SPDR Fund  
-- S&P 500 Materials Index  
+- XLB – Materials Select Sector SPDR Fund
+- S&P 500 Materials Index
 
 ---
 
@@ -252,8 +252,8 @@ Key subsectors: integrated oil & gas, exploration & production, oilfield service
 
 ### Sector ETFs / Indexes
 
-- XLE – Energy Select Sector SPDR Fund  
-- S&P 500 Energy Index  
+- XLE – Energy Select Sector SPDR Fund
+- S&P 500 Energy Index
 
 ---
 
@@ -273,8 +273,8 @@ Key subsectors: regulated electric, multi‑utilities, independent power.
 
 ### Sector ETFs / Indexes
 
-- XLU – Utilities Select Sector SPDR Fund  
-- S&P 500 Utilities Index  
+- XLU – Utilities Select Sector SPDR Fund
+- S&P 500 Utilities Index
 
 ---
 
@@ -294,8 +294,8 @@ Key subsectors: REITs (office, industrial, residential, specialized).
 
 ### Sector ETFs / Indexes
 
-- XLRE – Real Estate Select Sector SPDR Fund  
-- S&P 500 Real Estate Index  
+- XLRE – Real Estate Select Sector SPDR Fund
+- S&P 500 Real Estate Index
 
 ---
 
@@ -303,15 +303,15 @@ Key subsectors: REITs (office, industrial, residential, specialized).
 
 For each row, a research-oriented file typically includes:[web:6][web:9]
 
-- Ticker, exchange  
-- Stock price (latest close)  
-- Market cap (float‑adjusted, in USD)  
-- P/E (trailing and/or forward)  
-- EV/EBITDA, P/B, dividend yield  
-- Revenue, EPS growth, margin summary  
-- Sector/industry classification and brief qualitative notes  
+- Ticker, exchange
+- Stock price (latest close)
+- Market cap (float‑adjusted, in USD)
+- P/E (trailing and/or forward)
+- EV/EBITDA, P/B, dividend yield
+- Revenue, EPS growth, margin summary
+- Sector/industry classification and brief qualitative notes
 
-These are normally sourced via an API or terminal rather than maintained manually because they change daily.[web:6][web:9] 
+These are normally sourced via an API or terminal rather than maintained manually because they change daily.[web:6][web:9]
 How you could generate and maintain this
 In your shoes, a realistic research‑grade approach for sectors_companies.md would be:
 

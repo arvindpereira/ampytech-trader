@@ -65,6 +65,10 @@ def canonical_sector(sector_raw: Optional[str]) -> Optional[str]:
         "utilities": "Utilities",
         "industrials": "Industrials",
         "energy": "Energy",
+        "pharmaceuticals": "Healthcare",
+        "pharmaceutical": "Healthcare",
+        "consumer products": "Consumer Defensive",
+        "consumer product": "Consumer Defensive",
     }
     return aliases.get(s.lower(), s)
 

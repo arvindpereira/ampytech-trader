@@ -398,9 +398,9 @@ def parse_vanguard_statement_pdf(text: str) -> dict:
     lots = []
     transactions = []
     cash = None
-    
+
     cleaned_text = re.sub(r"(\d{4})([A-Z]{3,7})", r"\1 \2", text)
-    
+
     # 1. Parse positions
     pos_matches = _VG_POS_BLOCK_RE.findall(cleaned_text)
     for raw_ticker, gain_loss, cost_basis, qty, block in pos_matches:
@@ -420,7 +420,7 @@ def parse_vanguard_statement_pdf(text: str) -> dict:
             })
         except Exception as e:
             pass
-            
+
     # 2. Parse Cash sweep
     cash_match = re.search(
         r"Total Sweep Balance\s*\$?([\d,]+\.\d{2})\s*\$?([\d,]+\.\d{2})",
@@ -428,7 +428,7 @@ def parse_vanguard_statement_pdf(text: str) -> dict:
     )
     if cash_match:
         cash = float(cash_match.group(2).replace(",", ""))
-        
+
     # 3. Completed transactions
     tx_matches = _VG_TX_STATEMENT_RE.findall(cleaned_text)
     stmt_date = _extract_statement_date(cleaned_text)
@@ -454,7 +454,7 @@ def parse_vanguard_statement_pdf(text: str) -> dict:
                     })
             except Exception as e:
                 pass
-                
+
     return {
         "lots": lots,
         "cash": cash,

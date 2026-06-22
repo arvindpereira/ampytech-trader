@@ -97,6 +97,9 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
     latest_date_row = db.query(func.max(CompanySnapshot.as_of_date)).first()
     latest_date = latest_date_row[0] if latest_date_row else None
 
+    recs = []
+    seen_tickers = set()
+
     if latest_date:
         snaps = (
             db.query(CompanySnapshot)
@@ -105,38 +108,39 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
             .limit(5)
             .all()
         )
-        if snaps:
-            recs = []
-            for s in snaps:
-                recs.append({
-                    "ticker": s.ticker,
-                    "tier": s.tier,
-                    "quality": round(s.quality, 2) if s.quality else None,
-                    "upside_pct": round(s.upside_pct, 4) if s.upside_pct else None,
-                    "recommendation_key": s.recommendation_key,
-                    "held": s.ticker in current_holdings
-                })
-            return recs
+        for s in snaps:
+            recs.append({
+                "ticker": s.ticker,
+                "tier": s.tier,
+                "quality": round(s.quality, 2) if s.quality else None,
+                "upside_pct": round(s.upside_pct, 4) if s.upside_pct else None,
+                "recommendation_key": s.recommendation_key,
+                "held": s.ticker in current_holdings
+            })
+            seen_tickers.add(s.ticker)
 
-    # 2. Fall back to TickerClassification join TickerMetadata if snapshot is not found or empty
-    rows = (
-        db.query(TickerMetadata.ticker, TickerClassification.tier, TickerClassification.quality)
-        .join(TickerClassification, TickerMetadata.ticker == TickerClassification.ticker)
-        .filter(TickerMetadata.sector == sector)
-        .order_by(TickerClassification.quality.desc())
-        .limit(5)
-        .all()
-    )
-    recs = []
-    for r in rows:
-        recs.append({
-            "ticker": r.ticker,
-            "tier": r.tier,
-            "quality": round(r.quality, 2) if r.quality else None,
-            "upside_pct": None,
-            "recommendation_key": None,
-            "held": r.ticker in current_holdings
-        })
+    if len(recs) < 5:
+        # 2. Merge with TickerClassification join TickerMetadata if snapshot results are less than 5
+        rows = (
+            db.query(TickerMetadata.ticker, TickerClassification.tier, TickerClassification.quality)
+            .join(TickerClassification, TickerMetadata.ticker == TickerClassification.ticker)
+            .filter(TickerMetadata.sector == sector)
+            .order_by(TickerClassification.quality.desc())
+            .all()
+        )
+        for r in rows:
+            if r.ticker not in seen_tickers:
+                recs.append({
+                    "ticker": r.ticker,
+                    "tier": r.tier,
+                    "quality": round(r.quality, 2) if r.quality else None,
+                    "upside_pct": None,
+                    "recommendation_key": None,
+                    "held": r.ticker in current_holdings
+                })
+                seen_tickers.add(r.ticker)
+                if len(recs) >= 5:
+                    break
     return recs
 
 

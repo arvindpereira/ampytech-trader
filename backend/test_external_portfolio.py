@@ -380,7 +380,7 @@ Completed transactionsSettlementdateTradedateSymbolNameTransaction typeAccount t
         self.assertEqual(res["lots"][0]["ticker"], "VASGX")
         self.assertEqual(res["lots"][0]["shares"], 230.0220)
         self.assertAlmostEqual(res["lots"][0]["cost_basis_per_share"], 7509.71 / 230.0220, places=4)
-        
+
         self.assertEqual(len(res["transactions"]), 1)
         self.assertEqual(res["transactions"][0]["ticker"], "AAPL")
         self.assertEqual(res["transactions"][0]["side"], "BUY")
@@ -394,32 +394,32 @@ Completed transactionsSettlementdateTradedateSymbolNameTransaction typeAccount t
         label = "Robinhood Delete Me"
         acct = ExternalAccount(account_label=label, cash=1000.0, risk_profile="balanced", created_at="2026-06-21", updated_at="2026-06-21")
         self.db.add(acct)
-        
+
         lot = EquityLot(ticker="AAPL", account_label=label, lot_type="other", shares=10, cost_basis_per_share=150.0, acquisition_date="2026-06-21", created_at="2026-06-21")
         self.db.add(lot)
-        
+
         holding = ExternalStatementHolding(account_label=label, ticker="AAPL", shares=10, avg_cost=150.0, statement_date="2026-06-21", source="manual", created_at="2026-06-21")
         self.db.add(holding)
-        
+
         order = ExternalOrder(account_label=label, ticker="AAPL", side="BUY", qty=5, limit_price=150.0, time_in_force="DAY", status="proposed", created_at="2026-06-21", updated_at="2026-06-21")
         self.db.add(order)
-        
+
         tx = ExternalTransaction(account_label=label, ticker="AAPL", side="BUY", qty=5, price=150.0, execution_date="2026-06-21", created_at="2026-06-21")
         self.db.add(tx)
-        
+
         block = TradingBlock(ticker="AAPL", block_type="permanent", active=True, reason="test", account_label=label, created_at="2026-06-21")
         self.db.add(block)
-        
+
         self.db.commit()
-        
+
         # Verify get_pending_external_orders returns our proposed order
         pending = get_pending_external_orders(db=self.db)
         self.assertTrue(any(p["account_label"] == label and p["ticker"] == "AAPL" for p in pending))
-        
+
         # Now delete the account
         res = delete_external_account(account_label=label, db=self.db)
         self.assertEqual(res["status"], "success")
-        
+
         # Check database: everything should be deleted
         self.assertIsNone(self.db.query(ExternalAccount).filter(ExternalAccount.account_label == label).first())
         self.assertEqual(self.db.query(EquityLot).filter(EquityLot.account_label == label).count(), 0)

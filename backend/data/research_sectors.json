@@ -3,10 +3,10 @@
   "source_doc": "perplexity_sectors.md",
   "taxonomy": "GICS",
   "description": "GICS sector handbook seed \u2014 representative large-cap US names, ETF proxies, and query aliases. Live metrics come from company_snapshots; ranks here are structural priors.",
-  "last_refreshed_at": "2026-06-22 06:26:51",
+  "last_refreshed_at": "2026-06-22 14:04:30",
   "seeds_top_n": 5,
-  "metadata_universe_size": 118,
-  "classified_equity_count": 65,
+  "metadata_universe_size": 82,
+  "classified_equity_count": 93,
   "portfolio_classification": [
     {
       "ticker": "AAPL",
@@ -556,6 +556,19 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "LLY",
+      "sector": "Healthcare",
+      "industry": "Pharmaceuticals",
+      "market_cap": 1034568792672.0001,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
         "real"
       ],
       "is_equity": true
@@ -2022,6 +2035,16 @@
         ]
       },
       {
+        "ticker": "LLY",
+        "industry": "Pharmaceuticals",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
         "ticker": "MRNA",
         "industry": "Biotechnology",
         "sources": [
@@ -2438,7 +2461,7 @@
           ]
         }
       ],
-      "classified_ticker_count": 28
+      "classified_ticker_count": 29
     },
     {
       "id": "communication_services",
@@ -2482,6 +2505,15 @@
         },
         {
           "rank": 3,
+          "ticker": "CSCO",
+          "company": "CSCO",
+          "exchange": null,
+          "subsector": "Communications",
+          "notes": "cap-ranked seed",
+          "market_cap": 471159121328.0
+        },
+        {
+          "rank": 4,
           "ticker": "NFLX",
           "company": "NFLX",
           "exchange": null,
@@ -2490,22 +2522,13 @@
           "market_cap": 325831563972.0
         },
         {
-          "rank": 4,
+          "rank": 5,
           "ticker": "NOK",
           "company": "NOK",
           "exchange": null,
           "subsector": "Communications",
           "notes": "portfolio holding",
           "market_cap": 65778143526.0
-        },
-        {
-          "rank": 5,
-          "ticker": "ROKU",
-          "company": "ROKU",
-          "exchange": null,
-          "subsector": "Media",
-          "notes": "portfolio holding",
-          "market_cap": 20481604189.0
         }
       ],
       "portfolio_holdings": [
@@ -2594,7 +2617,7 @@
           ]
         }
       ],
-      "classified_ticker_count": 6
+      "classified_ticker_count": 7
     },
     {
       "id": "consumer_discretionary",
@@ -2826,6 +2849,33 @@
       "seed_tickers": [
         {
           "rank": 1,
+          "ticker": "PG",
+          "company": "PG",
+          "exchange": null,
+          "subsector": "Consumer products",
+          "notes": "cap-ranked seed",
+          "market_cap": 350174747199.99994
+        },
+        {
+          "rank": 2,
+          "ticker": "KO",
+          "company": "KO",
+          "exchange": null,
+          "subsector": "Beverages",
+          "notes": "cap-ranked seed",
+          "market_cap": 341574076846.99994
+        },
+        {
+          "rank": 3,
+          "ticker": "PEP",
+          "company": "PEP",
+          "exchange": null,
+          "subsector": "Beverages",
+          "notes": "cap-ranked seed",
+          "market_cap": 194108458640.00003
+        },
+        {
+          "rank": 4,
           "ticker": "BYND",
           "company": "BYND",
           "exchange": null,
@@ -2834,36 +2884,12 @@
           "market_cap": 366356921.99999994
         },
         {
-          "rank": 2,
+          "rank": 5,
           "ticker": "WMT",
           "company": "Walmart",
           "exchange": "NYSE",
           "subsector": "Hypermarkets",
-          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
-        },
-        {
-          "rank": 3,
-          "ticker": "PG",
-          "company": "Procter & Gamble",
-          "exchange": "NYSE",
-          "subsector": "Household Products",
-          "notes": "Consumer brands (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
-        },
-        {
-          "rank": 4,
-          "ticker": "KO",
-          "company": "Coca-Cola",
-          "exchange": "NYSE",
-          "subsector": "Beverages",
-          "notes": "Soft drinks (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
-        },
-        {
-          "rank": 5,
-          "ticker": "PEP",
-          "company": "PepsiCo",
-          "exchange": "NASDAQ",
-          "subsector": "Beverages",
-          "notes": "Drinks & snacks (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
         }
       ],
       "portfolio_holdings": [
@@ -2881,7 +2907,7 @@
           ]
         }
       ],
-      "classified_ticker_count": 1
+      "classified_ticker_count": 4
     },
     {
       "id": "health_care",
@@ -2907,6 +2933,33 @@
       "seed_tickers": [
         {
           "rank": 1,
+          "ticker": "LLY",
+          "company": "LLY",
+          "exchange": null,
+          "subsector": "Pharmaceuticals",
+          "notes": "portfolio holding",
+          "market_cap": 1034568792672.0001
+        },
+        {
+          "rank": 2,
+          "ticker": "JNJ",
+          "company": "JNJ",
+          "exchange": null,
+          "subsector": "Pharmaceuticals",
+          "notes": "cap-ranked seed",
+          "market_cap": 549784298528.0
+        },
+        {
+          "rank": 3,
+          "ticker": "UNH",
+          "company": "UNH",
+          "exchange": null,
+          "subsector": "Health Care",
+          "notes": "cap-ranked seed",
+          "market_cap": 370205070000.0
+        },
+        {
+          "rank": 4,
           "ticker": "ISRG",
           "company": "ISRG",
           "exchange": null,
@@ -2915,37 +2968,13 @@
           "market_cap": 144066360354.00003
         },
         {
-          "rank": 2,
+          "rank": 5,
           "ticker": "MRNA",
           "company": "MRNA",
           "exchange": null,
           "subsector": "Biotechnology",
           "notes": "portfolio holding",
           "market_cap": 25378448498.999996
-        },
-        {
-          "rank": 3,
-          "ticker": "LLY",
-          "company": "Eli Lilly",
-          "exchange": "NYSE",
-          "subsector": "Pharmaceuticals",
-          "notes": "Obesity/diabetes (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
-        },
-        {
-          "rank": 4,
-          "ticker": "JNJ",
-          "company": "Johnson & Johnson",
-          "exchange": "NYSE",
-          "subsector": "Pharma & Devices",
-          "notes": "Diversified HC (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
-        },
-        {
-          "rank": 5,
-          "ticker": "UNH",
-          "company": "UnitedHealth Group",
-          "exchange": "NYSE",
-          "subsector": "Managed Care",
-          "notes": "Insurance, services (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
         }
       ],
       "portfolio_holdings": [
@@ -2963,6 +2992,16 @@
           ]
         },
         {
+          "ticker": "LLY",
+          "industry": "Pharmaceuticals",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
           "ticker": "MRNA",
           "industry": "Biotechnology",
           "sources": [
@@ -2973,7 +3012,7 @@
           ]
         }
       ],
-      "classified_ticker_count": 2
+      "classified_ticker_count": 5
     },
     {
       "id": "financials",
@@ -3344,46 +3383,51 @@
         {
           "rank": 1,
           "ticker": "SCCO",
-          "company": "Southern Copper",
-          "exchange": "NYSE",
-          "subsector": "Copper Mining",
-          "notes": "Copper producer (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "SCCO",
+          "exchange": null,
+          "subsector": "Metals & Mining",
+          "notes": "cap-ranked seed",
+          "market_cap": 160966989699.0
         },
         {
           "rank": 2,
-          "ticker": "DOW",
-          "company": "Dow Inc.",
-          "exchange": "NYSE",
-          "subsector": "Chemicals",
-          "notes": "Commodity chemicals (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "NEM",
+          "company": "NEM",
+          "exchange": null,
+          "subsector": "Metals & Mining",
+          "notes": "cap-ranked seed",
+          "market_cap": 110801299278.00002
         },
         {
           "rank": 3,
-          "ticker": "DD",
-          "company": "DuPont",
-          "exchange": "NYSE",
-          "subsector": "Specialty Chemicals",
-          "notes": "Specialty products (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "FCX",
+          "company": "FCX",
+          "exchange": null,
+          "subsector": "Metals & Mining",
+          "notes": "cap-ranked seed",
+          "market_cap": 98731608495.0
         },
         {
           "rank": 4,
-          "ticker": "NEM",
-          "company": "Newmont",
-          "exchange": "NYSE",
-          "subsector": "Gold Mining",
-          "notes": "Gold miner (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "DOW",
+          "company": "DOW",
+          "exchange": null,
+          "subsector": "Chemicals",
+          "notes": "cap-ranked seed",
+          "market_cap": 22869126039.999996
         },
         {
           "rank": 5,
-          "ticker": "FCX",
-          "company": "Freeport-McMoRan",
-          "exchange": "NYSE",
-          "subsector": "Metals & Mining",
-          "notes": "Copper, gold (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "DD",
+          "company": "DD",
+          "exchange": null,
+          "subsector": "Chemicals",
+          "notes": "cap-ranked seed",
+          "market_cap": 19557346073.0
         }
       ],
       "portfolio_holdings": [],
-      "classified_ticker_count": 0
+      "classified_ticker_count": 5
     },
     {
       "id": "energy",
@@ -3409,46 +3453,51 @@
         {
           "rank": 1,
           "ticker": "XOM",
-          "company": "Exxon Mobil",
-          "exchange": "NYSE",
-          "subsector": "Integrated Oil",
-          "notes": "Oil & gas (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "XOM",
+          "exchange": null,
+          "subsector": "Energy",
+          "notes": "cap-ranked seed",
+          "market_cap": 588002200000.0
         },
         {
           "rank": 2,
           "ticker": "CVX",
-          "company": "Chevron",
-          "exchange": "NYSE",
-          "subsector": "Integrated Oil",
-          "notes": "Oil & gas (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "CVX",
+          "exchange": null,
+          "subsector": "Energy",
+          "notes": "cap-ranked seed",
+          "market_cap": 345801131974.0
         },
         {
           "rank": 3,
           "ticker": "COP",
-          "company": "ConocoPhillips",
-          "exchange": "NYSE",
-          "subsector": "E&P",
-          "notes": "Upstream (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "COP",
+          "exchange": null,
+          "subsector": "Energy",
+          "notes": "cap-ranked seed",
+          "market_cap": 131258987065.0
         },
         {
           "rank": 4,
           "ticker": "SLB",
-          "company": "Schlumberger",
-          "exchange": "NYSE",
-          "subsector": "Oilfield Services",
-          "notes": "Services (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "SLB",
+          "exchange": null,
+          "subsector": "Energy",
+          "notes": "cap-ranked seed",
+          "market_cap": 71897321039.0
         },
         {
           "rank": 5,
           "ticker": "PSX",
-          "company": "Phillips 66",
-          "exchange": "NYSE",
-          "subsector": "Refining & Midstream",
-          "notes": "Downstream (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "PSX",
+          "exchange": null,
+          "subsector": "Energy",
+          "notes": "cap-ranked seed",
+          "market_cap": 66611345319.99999
         }
       ],
       "portfolio_holdings": [],
-      "classified_ticker_count": 0
+      "classified_ticker_count": 5
     },
     {
       "id": "utilities",
@@ -3473,46 +3522,51 @@
         {
           "rank": 1,
           "ticker": "NEE",
-          "company": "NextEra Energy",
-          "exchange": "NYSE",
-          "subsector": "Electric Utility",
-          "notes": "Renewables-heavy (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "NEE",
+          "exchange": null,
+          "subsector": "Utilities",
+          "notes": "cap-ranked seed",
+          "market_cap": 180903379699.99997
         },
         {
           "rank": 2,
-          "ticker": "DUK",
-          "company": "Duke Energy",
-          "exchange": "NYSE",
-          "subsector": "Electric Utility",
-          "notes": "Regulated (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "SO",
+          "company": "SO",
+          "exchange": null,
+          "subsector": "Utilities",
+          "notes": "cap-ranked seed",
+          "market_cap": 104940459689.00002
         },
         {
           "rank": 3,
-          "ticker": "SO",
-          "company": "Southern Company",
-          "exchange": "NYSE",
-          "subsector": "Electric Utility",
-          "notes": "Regulated (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "DUK",
+          "company": "DUK",
+          "exchange": null,
+          "subsector": "Utilities",
+          "notes": "cap-ranked seed",
+          "market_cap": 96560784742.99998
         },
         {
           "rank": 4,
-          "ticker": "D",
-          "company": "Dominion Energy",
-          "exchange": "NYSE",
-          "subsector": "Multi-utility",
-          "notes": "Gas & power (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "AEP",
+          "company": "AEP",
+          "exchange": null,
+          "subsector": "Utilities",
+          "notes": "cap-ranked seed",
+          "market_cap": 69476774078.00002
         },
         {
           "rank": 5,
-          "ticker": "AEP",
-          "company": "American Electric Power",
-          "exchange": "NASDAQ",
-          "subsector": "Electric Utility",
-          "notes": "Regulated (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "D",
+          "company": "D",
+          "exchange": null,
+          "subsector": "Utilities",
+          "notes": "cap-ranked seed",
+          "market_cap": 60167454181.0
         }
       ],
       "portfolio_holdings": [],
-      "classified_ticker_count": 0
+      "classified_ticker_count": 5
     },
     {
       "id": "real_estate",
@@ -3538,47 +3592,52 @@
       "seed_tickers": [
         {
           "rank": 1,
-          "ticker": "PLD",
-          "company": "Prologis",
-          "exchange": "NYSE",
-          "subsector": "Industrial REIT",
-          "notes": "Logistics (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "WELL",
+          "company": "WELL",
+          "exchange": null,
+          "subsector": "Real Estate",
+          "notes": "cap-ranked seed",
+          "market_cap": 150712740000.0
         },
         {
           "rank": 2,
-          "ticker": "AMT",
-          "company": "American Tower",
-          "exchange": "NYSE",
-          "subsector": "Tower REIT",
-          "notes": "Towers (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "PLD",
+          "company": "PLD",
+          "exchange": null,
+          "subsector": "Real Estate",
+          "notes": "cap-ranked seed",
+          "market_cap": 133798432131.99995
         },
         {
           "rank": 3,
-          "ticker": "WELL",
-          "company": "Welltower",
-          "exchange": "NYSE",
-          "subsector": "Healthcare REIT",
-          "notes": "Senior housing (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "ticker": "AMT",
+          "company": "AMT",
+          "exchange": null,
+          "subsector": "Real Estate",
+          "notes": "cap-ranked seed",
+          "market_cap": 82020475763.0
         },
         {
           "rank": 4,
           "ticker": "SPG",
-          "company": "Simon Property",
-          "exchange": "NYSE",
-          "subsector": "Mall REIT",
-          "notes": "Retail (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "SPG",
+          "exchange": null,
+          "subsector": "Real Estate",
+          "notes": "cap-ranked seed",
+          "market_cap": 68530499039.99999
         },
         {
           "rank": 5,
           "ticker": "PSA",
-          "company": "Public Storage",
-          "exchange": "NYSE",
-          "subsector": "Storage REIT",
-          "notes": "Self-storage (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "company": "PSA",
+          "exchange": null,
+          "subsector": "Real Estate",
+          "notes": "cap-ranked seed",
+          "market_cap": 55855397680.0
         }
       ],
       "portfolio_holdings": [],
-      "classified_ticker_count": 0
+      "classified_ticker_count": 5
     }
   ]
 }

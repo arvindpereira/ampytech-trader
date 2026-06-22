@@ -710,7 +710,7 @@ export default function Home() {
 
   const getMergedHoldings = () => {
     const merged: Record<string, { ticker: string, internalShares: number, internalValue: number, externalShares: number, externalValue: number, totalShares: number, totalValue: number }> = {};
-    
+
     // Add internal holdings (from portfolio?.holdings)
     if (portfolio && portfolio.holdings) {
       portfolio.holdings.forEach((h: any) => {
@@ -724,7 +724,7 @@ export default function Home() {
         merged[ticker].totalValue += h.market_value || 0;
       });
     }
-    
+
     // Add external holdings (from externalPositions)
     if (externalPositions) {
       externalPositions.forEach((pos: any) => {
@@ -738,7 +738,7 @@ export default function Home() {
         merged[ticker].totalValue += pos.market_value || 0;
       });
     }
-    
+
     return Object.values(merged).sort((a, b) => b.totalValue - a.totalValue);
   };
 
@@ -756,7 +756,7 @@ export default function Home() {
 
   const getHoldingsByAccount = () => {
     const grouped: Record<string, { accountLabel: string, holdings: any[], totalValue: number }> = {};
-    
+
     // 1. Add internal holdings under "Internal Account"
     if (portfolio && portfolio.holdings && portfolio.holdings.length > 0) {
       const internalLabel = "Internal Account";
@@ -772,19 +772,19 @@ export default function Home() {
         totalValue: portfolio.totals?.market_value || 0
       };
     }
-    
+
     // 2. Add external holdings from externalPositions
     if (externalPositions) {
       externalPositions.forEach((pos: any) => {
         const ticker = pos.ticker.toUpperCase();
         const price = pos.current_price || 0;
-        
+
         pos.lots.forEach((lot: any) => {
           const label = lot.account_label || 'External Account';
           if (!grouped[label]) {
             grouped[label] = { accountLabel: label, holdings: [], totalValue: 0 };
           }
-          
+
           let existing = grouped[label].holdings.find(h => h.ticker === ticker);
           if (!existing) {
             existing = { ticker, shares: 0, value: 0, cost_basis: 0 };
@@ -798,7 +798,7 @@ export default function Home() {
         });
       });
     }
-    
+
     // Calculate average costs and sort by value
     Object.values(grouped).forEach((group) => {
       group.holdings.forEach((h: any) => {
@@ -808,7 +808,7 @@ export default function Home() {
       });
       group.holdings.sort((a, b) => b.value - a.value);
     });
-    
+
     return Object.values(grouped).sort((a, b) => b.totalValue - a.totalValue);
   };
 
@@ -5469,7 +5469,7 @@ export default function Home() {
                   const totalHoldings = externalAccounts.reduce((sum, a) => sum + (a.holdings_value || 0), 0);
                   const totalVal = totalCash + totalHoldings;
                   const totalPendingVal = pendingOrders.reduce((sum, o) => sum + (o.qty * o.limit_price || 0), 0);
-                  
+
                   return (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginTop: '20px' }}>
                       <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', borderRadius: '10px', padding: '16px' }}>
@@ -6197,7 +6197,7 @@ export default function Home() {
               <p style={{ margin: '4px 0 20px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                 Summary of holdings grouped into visual bubbles for each of your internal and external portfolios.
               </p>
-              
+
               <div style={{ display: 'grid', gap: '20px' }}>
                 {(() => {
                   const groups = getHoldingsByAccount();
@@ -6208,7 +6208,7 @@ export default function Home() {
                       </div>
                     );
                   }
-                  
+
                   return groups.map((g) => {
                     const theme = getAccountTheme(g.accountLabel);
                     return (
@@ -6287,7 +6287,7 @@ export default function Home() {
               <p style={{ margin: '4px 0 16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
                 Proposed trade orders across your external accounts waiting for execution confirmation.
               </p>
-              
+
               {pendingOrdersLoading ? (
                 <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
                   Loading pending orders...
@@ -6381,7 +6381,7 @@ export default function Home() {
               </div>
               <h2 style={{ marginTop: 0, marginBottom: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>Delete External Account</h2>
             </div>
-            
+
             <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
               Are you sure you want to delete the account <strong style={{ color: '#EF4444' }}>{accountToDelete}</strong>?
             </p>
