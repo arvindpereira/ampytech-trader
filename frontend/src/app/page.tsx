@@ -1386,6 +1386,7 @@ export default function Home() {
 
   const EVAL_SERIES: { key: string; name: string; color: string }[] = [
     { key: 'swing', name: 'Swing + News (core)', color: '#00F2FE' },
+    { key: 'deep_swing', name: 'Deep Swing (GRU+Attn)', color: '#C084FC' },
     { key: 'longterm', name: 'Long-term (MPT)', color: '#10B981' },
     { key: 'high_risk', name: 'High-risk (aggressive)', color: '#EF4444' },
     { key: 'blended', name: 'Blended (your allocation)', color: '#F59E0B' },
@@ -1409,7 +1410,7 @@ export default function Home() {
   };
 
   // Draw benchmarks first, blended in the middle, component strategies last so they aren't buried.
-  const EVAL_CHART_ORDER: Record<string, number> = { spy: 0, qqq: 1, brk: 2, blended: 3, longterm: 4, high_risk: 5, swing: 6 };
+  const EVAL_CHART_ORDER: Record<string, number> = { spy: 0, qqq: 1, brk: 2, blended: 3, longterm: 4, high_risk: 5, swing: 6, deep_swing: 7 };
 
   // Risk × fundamental-quality tiers, with at-a-glance names/icons/colors for the ticker badges.
   const TIER_META: Record<string, { label: string; icon: string; color: string; blurb: string }> = {
