@@ -37,7 +37,7 @@ const money = (n: number) =>
   : `$${n.toFixed(2)}`;
 
 const pct = (n: number | null | undefined, decimals = 1) =>
-  n == null ? '—' : `${n >= 0 ? '+' : ''}${(n * 100).toFixed(decimals)}%`;
+  n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(decimals)}%`;
 
 const TIER_COLOR: Record<string, string> = {
   quality_growth: '#10B981', core: '#00F2FE', speculative: '#F59E0B', value_trap: '#6B7280',
