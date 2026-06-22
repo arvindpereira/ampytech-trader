@@ -13,6 +13,8 @@ suggester, the regime overlay, and the honest out-of-sample evaluation harness.
 | **Swing + News** | ~5 trading days | XGBoost on daily technicals **+ LLM-scored news** | **Default tradeable**; real edge in bull regimes, amplifies bears | `ml_engine/swing_alpha.py` |
 | **Long-term MPT** | weeks–months | regime-aware max-Sharpe optimizer over the universe | Bear-resilient; absolute returns survivorship-inflated | `ml_engine/longterm_alpha.py`, `models.py:PortfolioOptimizer` |
 | **Regime HMM** | — | 3-state HMM on daily SPY vol + macro → growth/transition/crisis | Drives MPT scaling + the swing **regime overlay** | `ml_engine/models.py:train_models` |
+| **Research Analyst** | — | Intent router + Context expander + Pluggable LLM Synthesis | **Tab 7 (Inquiry & Wiki)**; generates structured reports with citations | `ml_engine/research_analyst.py`, `ml_engine/analyst_synthesizer.py` |
+| **Sector Simulator** | — | Consolidated portfolio weights vs S&P 500 GICS benchmarks | **Tab 8 (Exposure & Heatmap)**; identifies drifts and alerts | `ml_engine/sector_exposure_analyzer.py`, `ml_engine/sector_resolver.py` |
 | **Short-term (legacy)** | ~2 trading days (hourly) | XGBoost breakout | **Net-negative; not executed by default** | `ml_engine/models.py`, `deep_models.py` (PyTorch, opt-in) |
 
 The PyTorch temporal-attention model (`deep_models.py`) exists but `SERVED_MODEL=xgboost`, so it is not
@@ -149,6 +151,59 @@ With 2022 in the OOS test, **swing's risk-adjusted edge largely evaporates** (Sh
 backtest returns are **survivorship-inflated** (the universe is today's winners). The **blended** book
 is the most defensible. Earlier rosy swing Sharpes (1.1–1.75) came from OOS windows that excluded 2022.
 Full detail + tables: [strategy-evaluation-findings.md](./strategy-evaluation-findings.md).
+
+---
+
+## Research Analyst Subsystem
+
+The **Research Analyst** offers an interactive, AI-driven inquiry interface that routes user queries, aggregates structured context, synthesizes multi-perspective reports, resolves exact sources via citations, and exports findings to a static wiki database.
+
+### 1. Intent Routing & Context Expansion
+- **Intent Router** (`intent_router.py`): Performs tokenized/keyword matching against natural language queries to classify inquiries into one of seven structured intents:
+  - `ticker_outlook`: Evaluates consensus target forecasts and fundamental summaries.
+  - `earnings_report`: Ingests quarterly reported actuals, estimates, surprises, and transcript excerpts.
+  - `theme_rank`: Resolves investment themes (e.g. `quantum_computing`, `ai_infrastructure`) and ranks peers.
+  - `sector_screen`: Screen undervalued/overvalued sectors based on composite aggregates.
+  - `event_spillover`: Analyzes how a primary stock's earnings impacts peripheral portfolio holdings.
+  - `cross_theme`: Assesses macroeconomic linkages and interdependencies between multiple themes.
+  - `crowding_risk`: Evaluates concentration risk and overlapping portfolio holdings.
+- **Context Expander** (`context_expander.py`): Gathers active holdings and maps sector lists. Pulls news headlines, Benzinga forecasts, news sentiment aggregates, and Finnhub earnings/transcripts into a denormalized SQLite workspace. Falls back to search API web results if coverage falls below 50%.
+
+### 2. Synthesis & Pluggable LLM Tiers
+- **LLM Router** (`research_llm_router.py`): Routes synthesis to the appropriate provider based on query complexity and configuration:
+  - **Lookup**: Low complexity; queries local SQLite database tables directly without LLM API calls.
+  - **Standard**: Fast, cheap REST queries using `gpt-4o-mini` (or configured API).
+  - **Premium**: High-conviction reasoning model for complex cross-theme assessments.
+  - **Local**: Private, offline generation via local Ollama models.
+- **Analyst Synthesizer** (`analyst_synthesizer.py`): Assembles system instructions, templates (`research_templates.py`), and context packets into structured JSON outputs (Markdown text, TL;DR summaries, cataloged key developments, target upside analysis, catalysts, risks, and footnotes).
+
+### 3. Citation Anchors & Wiki Publishing
+- **Citation Resolver** (`citation_resolver.py`): Parses synthesized JSON report segments and inserts exact citation anchor tags pointing back to specific source documents (e.g., matching database transcripts, news articles, or statement holdings).
+- **Wiki Export** (`research_wiki_export.py`): Publishes completed research threads to `research-wiki/reports/` by rendering Markdown to static HTML pages. User critiques on rejected drafts are tracked in `feedback_analytics.py` for future routing improvements.
+
+---
+
+## Sector Exposure Simulator & Heatmap
+
+The **Sector Exposure Simulator** tracks active sector weights across all portfolio accounts and compares them to broad market indexes to visualize structural tilts.
+
+### 1. GICS Sector Normalization
+- **Sector Resolver** (`sector_resolver.py`): Resolves raw sector/industry names from Yahoo Finance, Finnhub, and Polygon into canonical GICS sector labels (e.g. `Technology`, `Healthcare`, `Consumer Cyclical`) using a local dictionary handbook mapping (`research_sectors.json`).
+
+### 2. Consolidated Position Aggregation
+- **Holdings Merger** (`sector_exposure_analyzer.py`): Combines positions from:
+  - **Trading Account**: Active holdings pulled dynamically from the Alpaca paper API (or local `VirtualPosition` DB tables).
+  - **External Brokerage**: Manually imported brokerage tax lot records stored in the `EquityLot` table.
+- Calculates current valuations using recent market close quotes and aggregates portfolio weights.
+
+### 3. Benchmark Comparison & Drift Alerts
+- Loads the S&P 500 GICS sector weight baseline from `sp500_sector_weights.json`.
+- Calculates active tilts:
+  \[ \Delta = \text{Portfolio Weight} - \text{Benchmark Weight} \]
+- **Heatmap Grid**: Displays active tilts on a color-coded grid in the UI.
+- **Drift Alerting**: Triggers a warning notification if any absolute sector delta exceeds 5 percentage points ($\Delta \ge 5\text{pp}$).
+
+---
 
 ## Key config (`app/core/config.py`)
 

@@ -18,6 +18,10 @@ in git/LFS — back it up with `make db-backup` (see [operations.md](./operation
 | `alternative_fetcher.py` | SEC EDGAR Form 4 | `insider_disclosures`, `congress_disclosures` | only when `ALT_DATA_ENABLED` |
 | `crisis_fetcher.py` | yfinance | `crisis_prices` | historic crash eras for stress display |
 | `popular_tickers.py` | yfinance scrape | `universe_tickers` | popular/trending helper |
+| `analyst_fetcher.py` | Benzinga analyst ratings via Massive | `analyst_forecasts` | Ingests consensus price targets and ratings. Caches price-only row if benzinga is unavailable. |
+| `earnings_content_fetcher.py` | Finnhub EPS and transcripts | `earnings_transcripts`, `earnings_estimate_snapshots`, `earnings_surprises` | Snaps consensus estimates, reported EPS surprises, and earnings call transcripts (requires Finnhub Professional+ for full transcript text). |
+| `sector_catalog_refresh.py` | Local GICS sector catalog & seed configuration | `research_sectors.json` catalog | Refreshes and maps GICS sector hierarchies, cap-ranked seed tickers, and matches portfolio allocations. |
+| `research_kb_refresh.py` | Materializer | `company_snapshots`, `sector_snapshots` | Runs daily to consolidate all stock-level facts, news sentiments, analyst metrics, and sector-level median aggregates. |
 
 `run.py fetch` runs the core fetchers sequentially; `make news-llm` runs the news scorer; both are also
 driven by the scheduler.
@@ -66,6 +70,21 @@ Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempo
 - `virtual_orders` — order log (mode, side, brackets, fill, sim_date).
 - `executed_trades` — historical executed-trade log.
 - `broker_performance_logs` — daily equity vs SPY/QQQ/BRK snapshots.
+
+**Research & Analyst Subsystem (Tab 7)**
+- `company_snapshots` — **`(ticker, as_of_date)` PK**, denormalized daily company state (price, momentum metrics, consensus forecasts, news scores, sector/industry details, facts JSON, coverage %). Used as RAG knowledge base.
+- `external_analyst_items` — **`id` PK**, third-party analyst ratings, excerpts, targets, and dates (fetched from Finnhub transcripts or news APIs).
+- `earnings_transcripts` — **`(ticker, finnhub_id)` PK**, earnings call transcript text, period (e.g. 2024Q1), call date, and excerpt.
+- `earnings_estimate_snapshots` — **`(ticker, period, freq, as_of_date)` PK**, quarterly EPS estimates from analysts.
+- `earnings_surprises` — **`(ticker, period)` PK**, reported vs estimated EPS surprise percentages.
+- `research_watchlist` — **`ticker` PK**, tickers added by user to watchlist.
+- `web_search_cache` — **`query_hash` PK**, cached web search results to bypass redundant API hits.
+- `sector_snapshots` — **`(sector_id, as_of_date)` PK**, sector median upside, momentum, quality, and news sentiment metrics.
+- `internal_price_targets` — **`(ticker, as_of_date, horizon_date)` PK**, proprietary blended/momentum-tilted 12-month target prices.
+- `research_news_embeddings` — **`doc_key` PK**, cached vector embeddings for news.
+- `research_threads` — **`id` PK**, research session logs, intent, summary, published wiki slugs, feedback notes, and status (draft, published, rejected).
+- `research_messages` — **`id` PK**, transcripts of chat queries and structured JSON assistant report payloads.
+
 
 `init_db()` creates tables, runs idempotent **auto-migrations** (e.g. the `strategy` column on
 `universe_tickers`, `mode`/`is_mock` columns), and seeds the universe + default accounts.

@@ -28,12 +28,13 @@ explorations are preserved at the bottom for history).
 
 | Doc | What it covers |
 | :-- | :-- |
-| [architecture.md](./architecture.md) | Components, processes (API / scheduler / servers), data flows, deployment, **Crash Radar components** |
-| [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider, **stress indicators**), the DB schema (ERD, **snapshots**) |
-| [ml-and-strategy.md](./ml-and-strategy.md) | Features, the strategies (swing+news, long-term MPT, regime HMM, **Composite Crash Index**, legacy short-term), the suggester, the evaluation harness |
-| [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca paper execution, capital buckets, regime overlay, intraday re-execution, liquidation, virtual broker, sim/replay, **defensive playbook stances** |
-| [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns (including **/api/crash/\***) |
-| [operations.md](./operations.md) | Setup, Makefile/CLI, the scheduler jobs, model retraining, Google-Drive DB backup runbook |
+| [architecture.md](./architecture.md) | Components, processes (API / scheduler / servers), data flows, deployment, **Crash Radar, Research Analyst, and Sector Simulator components** |
+| [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider, **stress indicators, estimates, transcripts**), DB schema (ERD, **snapshots, research schemas**) |
+| [ml-and-strategy.md](./ml-and-strategy.md) | Features, strategies (swing+news, long-term MPT, HMM, **Composite Crash Index, Research Analyst, Sector Simulator**), suggester, evaluation harness |
+| [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca paper execution, capital buckets, regime overlay, re-execution, virtual broker, **defensive playbook stances** |
+| [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns (including **/api/crash/\***, **/api/research/\***, and **/api/portfolio/sector-exposure**) |
+| [operations.md](./operations.md) | Setup, Makefile/CLI (with **Research KB & sector commands**), scheduler jobs, model retraining, DB backups |
+| [research-methodology.md](./research-methodology.md) | **RKB & GICS screens.** snapshot materialization, relative multi-factor ranks, earnings depth, internal 12m targets, structured RAG |
 | [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) | **Honest OOS results.** The 2022-bear test, swing-as-bull-amplifier, MPT survivorship, the blend |
 | [strategy-suggester-plan.md](./strategy-suggester-plan.md) | The per-ticker suggester design (v1 + self-validation + v2 regime overlay), all shipped |
 | [current-state-and-gaps.md](./current-state-and-gaps.md) | **Read this.** What's real vs. weak, known caveats, and the honest roadmap |
@@ -46,7 +47,7 @@ explorations are preserved at the bottom for history).
 
 ```mermaid
 flowchart LR
-    subgraph Ingest["1 · Ingestion (make fetch / fundamentals / premium-ingest)"]
+    subgraph Ingest["1 · Ingestion (make fetch / fundamentals / research-kb-refresh)"]
         P["price_fetcher<br/>hourly: Massive ~5y<br/>daily: Yahoo 1998+"]
         M[macro_fetcher<br/>treasury yields]
         S[sentiment_fetcher<br/>news/Reddit VADER]
@@ -54,8 +55,10 @@ flowchart LR
         FUND["fundamentals_fetcher<br/>Polygon financials API"]
         PREM["premium_ingest & premium_llm<br/>IMAP email newsletter scan"]
         STRESS["market_stress & valuation_fetchers<br/>credit, NFCI, Sahm, CAPE, Buffett"]
+        FINN["earnings_content_fetcher<br/>Finnhub EPS & transcripts"]
+        SECT["sector_catalog_refresh<br/>GICS seeds & mappings"]
     end
-    DB[(SQLite DB<br/>prices · macro · sentiments<br/>news_llm_scores · crash_snapshots)]
+    DB[(SQLite DB<br/>prices · sentiments · snapshots<br/>news_llm_scores · research_threads)]
     subgraph ML["2 · Models & Classify (make classify / swing-train)"]
         CLASS["classify.py<br/>quant ratios + LLM overlay"]
         F[features.py<br/>technicals + LLM-news + macro]
@@ -63,29 +66,34 @@ flowchart LR
         SW_AGG["Swing Aggressive XGBoost<br/>(Speculative names)"]
         H[HMM regime + MPT optimizer]
         CRASH["crash_radar.py & wargame.py<br/>Composite Index & parameter sweeps"]
+        RE_AN["research_analyst.py<br/>Intent Routing + Synthesizer"]
+        SE_EX["sector_exposure_analyzer.py<br/>GICS Tilt & Drift Comparison"]
     end
     subgraph Serve["3 · API (make serve)"]
-        API["FastAPI :8008<br/>/api/suggestions, /api/crash/*,<br/>/api/classification, /health"]
+        API["FastAPI :8008<br/>/api/suggestions, /api/crash/*,<br/>/api/research/*, /api/classification, /health"]
     end
     subgraph Exec["4 · Execution"]
         BUCK["Stance Rebalance (Paper)<br/>Defensive Playbook (Buffett/Dalio/Taleb)<br/>vol target scaling"]
         ALP[Alpaca paper API]
     end
-    UI["Next.js :3002<br/>Suggestions · Model Evaluation · Portfolio · Crash Radar"]
+    UI["Next.js :3002<br/>Suggestions · Model Evaluation · Portfolio · Crash Radar<br/>Research Analyst · Sector Heatmap"]
     SCH["scheduler.py<br/>daily + intraday + weekly retrain"]
     GD["Google Drive<br/>commit-stamped DB backups"]
+    WIKI["research-wiki/<br/>Static HTML wiki website"]
 
-    P & M & S & N & FUND & PREM & STRESS --> DB
+    P & M & S & N & FUND & PREM & STRESS & FINN & SECT --> DB
     DB --> CLASS
     DB --> F
     CLASS -.tier filtering.-> SW_CORE & SW_AGG
     F --> SW_CORE & SW_AGG
-    SW_CORE & SW_AGG & H & CRASH -.saved models & snapshots.-> API
+    SW_CORE & SW_AGG & H & CRASH & RE_AN & SE_EX -.saved models & snapshots.-> API
     DB --> API --> UI
     UI -->|edit universe/buckets/strategy<br/>run suggest/eval/wargame/apply| API
     API --> BUCK --> ALP
     SCH --> DB & API & BUCK
     DB -. make db-backup .-> GD
+    API -. publish report .-> WIKI
+    UI -. read wiki .-> WIKI
 ```
 
 ---
@@ -112,3 +120,8 @@ flowchart LR
 - **Regime** — `growth` / `transition` / `crisis`, from a 3-state HMM on daily SPY volatility + macro.
 - **Mode (`real` vs `simulated`/`replay`)** — Two isolated virtual accounts; `real` mirrors the Alpaca paper book.
 - **Look-ahead-free / OOS** — Walk-forward evaluation where models only see data before the test date; LLM-news features are shifted +1 day (point-in-time).
+- **Research Thread** — Conversation logs with the AI research analyst, capturing intent, query context, and generated reports.
+- **Sector Heatmap** — Visually color-coded dashboard grid detailing portfolio weight drift vs. the S&P 500 GICS sector weights.
+- **Drift Alert** — Automated notification when a sector allocation drifts by $\ge 5\text{pp}$ vs the S&P 500 benchmark.
+- **GICS Norm** — Standard GICS sector and industry classifications mapping via `research_sectors.json`.
+- **Consolidated Holdings** — Sum of trading account assets plus external brokerage tax lot statements.

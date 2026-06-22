@@ -46,9 +46,20 @@ wipes the stamps. The dependency graph is: `data → {train-core, classify(+fund
 - `make backfill-news` — backfill historical daily VADER news sentiment (~2021→now).
 - `make premium-ingest [DAYS=7]` — pull **premium newsletter emails** (e.g. The Information) via IMAP, LLM-extract per-ticker scores. Set `IMAP_USER`/`IMAP_PASSWORD` (an **app-password**), `IMAP_HOST`, `PREMIUM_SENDER` in `.env`. Test/manual: `make premium-ingest PREMIUM_FILE=path.eml`; preview: `DRY_RUN=1`. Only derived scores (not article text) are stored.
 - `make insider` — real SEC Form 4 (only when `ALT_DATA_ENABLED`). `make fetch-forecasts` — Equity Advisor forecasts. `make fetch-valuation` / `make fetch-market-stress` — fetch just that one source. `make popular-tickers` / `make add-ticker TICKER=SYM` — universe maintenance. `make llm-usage` — token usage/cost ledger.
+- **Research Analyst & Sector Simulator Ops:**
+  - `make research-kb-refresh` — daily materialization of company snapshot metrics and news sentiments.
+  - `make research-sectors-refresh` — refreshes GICS mappings and ranked seeds for portfolio tickers only.
+  - `make research-sectors-refresh-full` — full GICS catalog rebuild including static seeds and all universe tickers.
+  - `make research-sectors-refresh-fast` — updates GICS resolver mapping from current DB data without fetching.
+  - `make research-wiki-export` — processes draft threads and exports them to static markdown wiki pages.
+  - `make research-wiki-serve [WIKI_PORT=4000]` — starts a local server on port `:4000` to serve the static wiki files.
+  - `make research-wiki-serve-jekyll` — serves the wiki via Jekyll.
+  - `make research-calibrate-factors` / `make research-calibrate-factors-dry` — executes Spearman rank IC walk-forward weight calibration.
+  - `make import-equity-lots FILE=path.pdf [REPLACE=1] [FORCE_LLM=1]` — extracts external holdings from brokerage PDFs.
+
 
 **Backups (Google Drive)** — the DB and large artifacts are **not** in git/LFS; back them up here. Every backup is **commit-stamped** so a restore matches the code version that produced it.
-- `make backup [BACKUP_KEEP=10]` — upload BOTH a DB copy and a files zip. The files zip = trained models (`ml_engine/saved_models/`), archived premium news, and **all cached JSON in `backend/data/`** (Crash Radar `crash_forecast_state.json`, the cached scenario wargame + AI analyst `wargame_cache.json`, IPO markers, LLM pricing, premium-ingest state). The OAuth token `gdrive_token.json` is excluded.
+- `make backup [BACKUP_KEEP=10]` — upload BOTH a DB copy and a files zip. The files zip = trained models (`ml_engine/saved_models/`), archived premium news, and **all cached JSON in `backend/data/`** (Crash Radar `crash_forecast_state.json`, the cached scenario wargame + AI analyst `wargame_cache.json`, the GICS resolver database `research_sectors.json`, IPO markers, LLM pricing, premium-ingest state). The OAuth token `gdrive_token.json` is excluded.
 - `make db-backup` / `make files-backup` — upload just one side.
 - `make db-backup-list` / `make files-backup-list` — list backups (with their commit).
 - `make db-verify` / `make files-verify` — download + validate a backup WITHOUT touching the live data.
@@ -64,7 +75,9 @@ wipes the stamps. The dependency graph is: `data → {train-core, classify(+fund
 | :-- | :-- | :-- |
 | Daily data fetch | 09:00 | prices/macro/sentiment + LLM-score the last week's news |
 | Daily inference | 09:15 | log/refresh predictions |
+| Crash Radar refresh | Mon–Fri 09:30 | recomputes coherent drawdown odds and updates wargame cache when data fingerprint changes |
 | Daily execution | 09:45 | `run_execution` (bucket-aware swing + MPT on Alpaca) |
+| Research KB refresh | Mon–Fri 10:00 | materializes stock snapshot metrics and refreshes sector classifications |
 | Intraday news + re-exec | Mon–Fri 10:00–16:00 hourly | score recent news → re-run swing signals → re-execute (market-open guarded) |
 | Intraday price fetch | Mon–Fri 09:00–16:00 every 5 min | refresh recent prices + suggestions cache |
 | Weekly retrain | Sun 18:00 | `train_models()` + swing `train_and_save()` |

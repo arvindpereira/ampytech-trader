@@ -17,6 +17,8 @@ fixed. The honest concern now is subtler: the strategies *work*, but mostly in b
 - **Crash Radar & Defensive Strategist**: Real-time Composite Crash-Risk Index (OOS, Winsorized, percentile and z-score normalized), Posture State Machine stances (Normal, Froth, De-Risk, Protect, Deploy, Recover), defensive playbooks (Buffett, Dalio, Taleb, Stagflation/Deflation asset branches), coherent (monotone-projected) experimental drawdown odds, a **policy-comparison Scenario Wargame** (Buy & Hold → static → glide-path/custom across Dot-Com/GFC/COVID/2022 + synthetic crashes) with an **OpenAI wargame analyst**, and a **preview-then-confirm** gated paper rebalance (read-only plan with real tickers/prices before any order). Crash artifacts refresh on a **data-change fingerprint** (not blindly on a clock); the wargame comparison + analyst are cached to disk and surface "last run / next auto-update / stale" indicators in the UI.
 - **Capital buckets + soft caps**: execution never exceeds the user's per-strategy limits.
 - **Data safety**: commit-stamped Google-Drive backups (DB + a files zip of models and **all cached JSON** — wargame/forecast caches included; OAuth token excluded) with verified restore.
+- **Research Analyst (Tab 7)**: Interactive AI-research query interface utilizing token-based intent routing, SQLite structured context retrieval (snapshots, news, estimates), pluggable LLM tiers (standard `gpt-4o-mini`, premium reasoners, local Ollama, or SQLite lookup), auto-inserted source citation anchors, and static wiki publishing site.
+- **Sector Exposure Simulator & Heatmap (Tab 8)**: GICS-aligned sector/industry classifications (`research_sectors.json`), consolidated weight calculations merging trading account holdings (Alpaca paper API) and external broker records (`EquityLot`), comparison vs. S&P 500 GICS baseline (`sp500_sector_weights.json`), active tilt heatmap visualization, and automated allocation drift alerts exceeding 5 percentage points.
 
 ## The honest verdict on the strategies
 
@@ -38,6 +40,8 @@ See [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) for the
 - **Ollama dependency**: swing news scoring stalls if Ollama is down (degrades gracefully to stale news or falls back to OpenAI if key is present).
 - **GitHub LFS**: ~1.1 GB of historical DB snapshots remain (capped; would need repo recreation to reclaim). The DB is no longer tracked.
 - **Fictional `SPACE` ticker** is synthetic (GE-proxy) — not a tradeable signal.
+- **Finnhub Pro Transcript Dependency**: Loading earnings call transcripts requires a Finnhub Professional+ API token. If missing or returning 403, the research kb skips call texts and falls back to consensus estimates, reported EPS surprises, and headlines.
+- **Benzinga Ratings Dependency**: Fetching consensus analyst ratings via Massive depends on Benzinga API developer credentials. If benzinga is unavailable, the fetcher caches a local price-only row as a fallback.
 
 ## Roadmap (optional, evidence-led)
 

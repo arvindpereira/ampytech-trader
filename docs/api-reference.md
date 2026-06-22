@@ -75,12 +75,40 @@ registry and polled for progress.
 | :-- | :-- |
 | `GET /api/external/accounts` | `[{account_label, cash, holdings_value, total_value, risk_profile}]`. Returns list of active external brokerage accounts. |
 | `POST /api/external/accounts` | Creates or updates an external account (risk profile and cash). |
+| `DELETE /api/external/accounts/{account_label}` | Deletes the specified account and cascades to clear matching equity lots, statement holdings, orders, transactions, and trade blocks. |
 | `POST /api/external/accounts/{account_label}/cash` | Updates cash balance manually. |
-| `GET /api/external/positions?account_label` | Grouped position holdings and list of all individual tax lots with acquisition dates. |
+| `GET /api/external/positions?account_label` | Grouped position holdings and list of all individual tax lots with acquisition dates (filters out ESPP/RSU lots). |
 | `GET /api/external/suggestions?account_label` | Rebalancing target trade recommendations using active Glide Path preset & swing signals. |
 | `POST /api/external/import` | Uploads and parses statement PDF (Robinhood/Vanguard) positions or transaction history. |
+| `GET /api/external/orders/pending` | Lists all pending/proposed external orders (`status == "proposed"`). |
 | `POST /api/external/orders/confirm` | Manually confirms a proposed order execution, adjusting position/lots (FIFO) and cash. |
 | `POST /api/external/reconcile?account_label` | Cross-references monthly transaction logs, de-duping matches, and updates holdings. |
+
+## Research Analyst (Tab 7)
+
+| Method · Path | Returns |
+| :-- | :-- |
+| `POST /api/research/query` | Spawns a background research analyst query job (`research_query`) using intent routing (`ticker_outlook`\|`earnings_report`\|`theme_rank`\|`sector_screen`) to prepare custom research reports. |
+| `GET /api/research/query/result?job_id` | Status, progress, and synthesized JSON report result for a research query job. |
+| `GET /api/research/snapshot/{ticker}` | Returns GICS sectors, financials, price trends, and KB facts loaded for a specific ticker. |
+| `GET /api/research/kb/status` | Ticker coverage count and last refresh timestamp of the company snapshot knowledge base. |
+| `POST /api/research/kb/refresh` | Spawns a background thread (`research_kb`) to refresh snap data and analyst items across active tickers. |
+| `GET /api/research/methodology` | Factor weights, calibration metadata, and active GICS sector mappings. |
+| `GET /api/research/themes` | List of recognized investment themes and aliases. |
+| `GET /api/research/sectors` | Cap-ranked large-cap names and portfolio counts by GICS sector. |
+| `GET /api/research/portfolio/sectors` | Classified portfolio holdings grouped by sector. |
+| `GET /api/research/threads` | List of saved research threads and summaries. |
+| `GET /api/research/thread/{thread_id}` | Full thread metadata and all user/assistant message transcripts. |
+| `POST /api/research/thread/{thread_id}/publish` | Publishes a research thread, rendering and exporting it to the local markdown wiki. |
+| `POST /api/research/thread/{thread_id}/reject` | Marks a draft report as rejected and appends qualitative feedback critique notes. |
+| `GET /api/research/library` | Fetches published reports cataloged in the library. |
+| `GET /api/research/premium/estimate` | Cost/complexity estimates for re-synthesizing a query using premium LLM models. |
+
+## Sector Exposure Simulator (Tab 8)
+
+| Method · Path | Returns |
+| :-- | :-- |
+| `GET /api/portfolio/sector-exposure?mode` | Consolidated portfolio GICS sector weights, benchmark deltas (vs. S&P 500), drift alerts (exceeding 5pp), GICS industry breakdowns, and stock holdings. |
 
 ## Virtual broker (Alpaca-shaped, SQLite-backed)
 

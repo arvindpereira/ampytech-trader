@@ -19,7 +19,9 @@ All Python shares `backend/` (FastAPI app, `app/services/`, `ml_engine/`, `data_
 `dashboard` (signals + regime), `virtual_perf` (virtual broker performance), `editor` (strategy
 buckets / per-ticker assignment / universe), `advisor` (Equity Advisor — tax lots, sell planning,
 wash-sale guard), `crash` (Crash Radar / defensive playbook + war-game), `external` (External
-Portfolio Manager — Robinhood/Vanguard accounts, per-account strategy, suggestions).
+Portfolio Manager — Robinhood/Vanguard accounts, per-account strategy, suggestions, consolidated view),
+`research` (Research Analyst — AI inquiry, intent routing, citation resolvent),
+`sectors` (Sector Simulator — GICS benchmarks weight comparison delta heatmap).
 
 ## 3. Models & signal engine (shared, global)
 
@@ -98,3 +100,25 @@ account it proposes *SELL BRK-B, BUY BYND*). Root causes:
   training or per-portfolio decision trees**. Shared models stay shared.
 - The External Portfolio Manager needs **evaluation/visualization** (target vs current weights,
   per-name risk tier, why-this-order reason codes, and the per-account war-game) to surface bugs.
+
+## 9. Research Analyst (Interactive Inquiry & Wiki)
+
+- **Purpose**: Provides a dedicated interactive research assistant to perform targeted analysis on specific stocks, thematic sectors, and portfolio read-throughs.
+- **Components**:
+  - `intent_router.py`: Classifies queries into specific templates (`ticker_outlook`, `earnings_report`, `theme_rank`, `sector_screen`).
+  - `context_expander.py`: Resolves primary tickers, peer groupings, and references portfolio holdings for crowding and spillover analysis.
+  - `research_dossier.py` & `research_kb_refresh.py`: Manages the company snapshot database (`company_snapshots`), downloading key metrics, financials, and news logs into local tables.
+  - `news_retriever.py`: Fetches recent headlines and premium content, matching relevance against query parameters.
+  - `research_llm_router.py` & `research_analyst.py`: Decides LLM selection tier (standard/premium/local), synthesizes narratives, and applies structured JSON report templates.
+  - `citation_resolver.py`: Attaches precise local citations and links individual statement holdings, news headlines, and snapshots back to the source text.
+  - `research_wiki_export.py`: Handles publishing draft reports by rendering them as markdown files in the local wiki (`research-wiki/`).
+  - `feedback_analytics.py`: Records user critiques and feedback logs on rejected draft reports.
+
+## 10. Sector Exposure Simulator & Heatmap
+
+- **Purpose**: Tracks consolidated sector allocations across all accounts and compares them to broad benchmarks to highlight active bets and structural tilts.
+- **Components**:
+  - `sector_resolver.py`: Classifies individual tickers into canonical GICS sectors and industry classifications, storing the mappings in `research_sectors.json`.
+  - `sector_exposure_analyzer.py`: Pulls active positions from internal trading accounts (Alpaca) and external brokerage accounts (EquityLot), calculates real-time valuations, and matches them to GICS sectors.
+  - **S&P 500 GICS Benchmark**: Loads benchmark GICS sector weights from `sp500_sector_weights.json`.
+  - **Exposure Heatmap**: Calculates active sector tilts ($\Delta = \text{Portfolio Weight} - \text{Benchmark Weight}$) and fires warning alerts if a sector is overweight/underweight by more than 5 percentage points. Displays a visual color-coded heatmap grid (Red = overweight, Blue = underweight) and details industry breakdowns and stock holdings.
