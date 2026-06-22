@@ -1,0 +1,19 @@
+{
+  "as_of": "2026-01",
+  "benchmark": "S&P 500",
+  "source": "S&P Dow Jones Indices GICS sector weights (market-cap weighted, approximate)",
+  "note": "Benchmark weights are structural priors refreshed periodically; not intraday precise.",
+  "weights": {
+    "Technology": 0.315,
+    "Financial Services": 0.130,
+    "Healthcare": 0.115,
+    "Consumer Cyclical": 0.105,
+    "Communication Services": 0.090,
+    "Industrials": 0.085,
+    "Consumer Defensive": 0.060,
+    "Energy": 0.040,
+    "Utilities": 0.025,
+    "Real Estate": 0.020,
+    "Basic Materials": 0.015
+  }
+}

@@ -47,6 +47,7 @@ import {
 } from 'recharts';
 import GrantTimeline from './GrantTimeline';
 import ResearchAnalystPanel from './ResearchAnalystPanel';
+import SectorExposurePanel from './SectorExposurePanel';
 
 interface HedgePlan {
   mode: string;
@@ -6188,6 +6189,8 @@ export default function Home() {
           </>
         ) : (
           <div style={{ display: 'grid', gap: '20px' }}>
+            <SectorExposurePanel />
+
             {/* Consolidated Holdings by Account */}
             <div className="glass-card" style={{ padding: '24px' }}>
               <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Consolidated Holdings by Account</h3>

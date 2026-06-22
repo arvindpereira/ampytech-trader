@@ -2409,6 +2409,15 @@ def get_external_accounts(db=Depends(get_db)):
         })
     return results
 
+
+@app.get("/api/portfolio/sector-exposure")
+def portfolio_sector_exposure(mode: str = "real", refresh: bool = True, db=Depends(get_db)):
+    """Consolidated sector exposure vs S&P 500 GICS weights (trading + external accounts)."""
+    from ml_engine.sector_exposure_analyzer import analyze_sector_exposure
+
+    return analyze_sector_exposure(db, mode=mode, refresh_metadata=refresh)
+
+
 @app.post("/api/external/accounts/{account_label}/strategy")
 def update_external_account_strategy(account_label: str, req: ExternalStrategyRequest,
                                      db=Depends(get_db)):
