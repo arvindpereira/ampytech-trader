@@ -89,6 +89,57 @@ def _metadata_for(db, ticker: str) -> Tuple[Optional[str], Optional[str]]:
     return sector, industry
 
 
+def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[dict]:
+    from app.database import CompanySnapshot, TickerClassification, TickerMetadata
+    from sqlalchemy import func
+
+    # 1. Try querying the latest company snapshots
+    latest_date_row = db.query(func.max(CompanySnapshot.as_of_date)).first()
+    latest_date = latest_date_row[0] if latest_date_row else None
+
+    if latest_date:
+        snaps = (
+            db.query(CompanySnapshot)
+            .filter(CompanySnapshot.sector == sector, CompanySnapshot.as_of_date == latest_date)
+            .order_by(CompanySnapshot.quality.desc(), CompanySnapshot.upside_pct.desc())
+            .limit(5)
+            .all()
+        )
+        if snaps:
+            recs = []
+            for s in snaps:
+                recs.append({
+                    "ticker": s.ticker,
+                    "tier": s.tier,
+                    "quality": round(s.quality, 2) if s.quality else None,
+                    "upside_pct": round(s.upside_pct, 4) if s.upside_pct else None,
+                    "recommendation_key": s.recommendation_key,
+                    "held": s.ticker in current_holdings
+                })
+            return recs
+
+    # 2. Fall back to TickerClassification join TickerMetadata if snapshot is not found or empty
+    rows = (
+        db.query(TickerMetadata.ticker, TickerClassification.tier, TickerClassification.quality)
+        .join(TickerClassification, TickerMetadata.ticker == TickerClassification.ticker)
+        .filter(TickerMetadata.sector == sector)
+        .order_by(TickerClassification.quality.desc())
+        .limit(5)
+        .all()
+    )
+    recs = []
+    for r in rows:
+        recs.append({
+            "ticker": r.ticker,
+            "tier": r.tier,
+            "quality": round(r.quality, 2) if r.quality else None,
+            "upside_pct": None,
+            "recommendation_key": None,
+            "held": r.ticker in current_holdings
+        })
+    return recs
+
+
 def collect_consolidated_positions(db, mode: str = "real") -> List[dict]:
     """Internal trading account + external equity lots, merged by ticker."""
     from app.database import EquityLot, ExternalAccount, VirtualPosition
@@ -201,6 +252,7 @@ def analyze_sector_exposure(db, mode: str = "real", *, refresh_metadata: bool = 
     sector_rows = []
     alerts = []
     all_sectors = sorted(known_sectors)
+    current_holdings = {p["ticker"] for p in positions}
 
     for sec in all_sectors:
         holdings = sorted(by_sector.get(sec, []), key=lambda x: x["market_value"], reverse=True)
@@ -232,6 +284,8 @@ def analyze_sector_exposure(db, mode: str = "real", *, refresh_metadata: bool = 
             for h in holdings[:12]
         ]
 
+        recs = get_sector_recommendations(db, sec, current_holdings)
+
         entry = {
             "sector": sec,
             "portfolio_weight": round(port_wt, 4),
@@ -241,6 +295,7 @@ def analyze_sector_exposure(db, mode: str = "real", *, refresh_metadata: bool = 
             "market_value": round(sum(h["market_value"] for h in holdings), 2),
             "industries": industries,
             "holdings": drill,
+            "recommendations": recs,
         }
         sector_rows.append(entry)
         if alert:
@@ -260,6 +315,9 @@ def analyze_sector_exposure(db, mode: str = "real", *, refresh_metadata: bool = 
     sector_rows.sort(key=lambda r: r["portfolio_weight"], reverse=True)
     alerts.sort(key=lambda a: abs(a["delta_pct"]), reverse=True)
 
+    from ml_engine.sector_resolver import etf_map
+    etfs = etf_map()
+
     return {
         "as_of": _now(),
         "total_equity_value": round(total, 2),
@@ -278,4 +336,5 @@ def analyze_sector_exposure(db, mode: str = "real", *, refresh_metadata: bool = 
             for u in unclassified
         ],
         "positions": enriched,
+        "etfs": etfs,
     }
