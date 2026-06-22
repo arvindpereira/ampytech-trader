@@ -90,10 +90,12 @@ def _metadata_for(db, ticker: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[dict]:
-    from app.database import CompanySnapshot, TickerClassification, TickerMetadata
+    from app.database import CompanySnapshot, TickerClassification, TickerMetadata, UniverseTicker
     from sqlalchemy import func
 
-    # 1. Try querying the latest company snapshots
+    universe_tickers = {r.ticker for r in db.query(UniverseTicker.ticker).all()}
+
+    # 1. Latest company snapshots (RKB)
     latest_date_row = db.query(func.max(CompanySnapshot.as_of_date)).first()
     latest_date = latest_date_row[0] if latest_date_row else None
 
@@ -105,7 +107,7 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
             db.query(CompanySnapshot)
             .filter(CompanySnapshot.sector == sector, CompanySnapshot.as_of_date == latest_date)
             .order_by(CompanySnapshot.quality.desc(), CompanySnapshot.upside_pct.desc())
-            .limit(5)
+            .limit(6)
             .all()
         )
         for s in snaps:
@@ -115,12 +117,13 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                 "quality": round(s.quality, 2) if s.quality else None,
                 "upside_pct": round(s.upside_pct, 4) if s.upside_pct else None,
                 "recommendation_key": s.recommendation_key,
-                "held": s.ticker in current_holdings
+                "held": s.ticker in current_holdings,
+                "in_universe": s.ticker in universe_tickers,
             })
             seen_tickers.add(s.ticker)
 
-    if len(recs) < 5:
-        # 2. Merge with TickerClassification join TickerMetadata if snapshot results are less than 5
+    # 2. TickerClassification + TickerMetadata fallback
+    if len(recs) < 6:
         rows = (
             db.query(TickerMetadata.ticker, TickerClassification.tier, TickerClassification.quality)
             .join(TickerClassification, TickerMetadata.ticker == TickerClassification.ticker)
@@ -136,11 +139,42 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                     "quality": round(r.quality, 2) if r.quality else None,
                     "upside_pct": None,
                     "recommendation_key": None,
-                    "held": r.ticker in current_holdings
+                    "held": r.ticker in current_holdings,
+                    "in_universe": r.ticker in universe_tickers,
                 })
                 seen_tickers.add(r.ticker)
-                if len(recs) >= 5:
+                if len(recs) >= 6:
                     break
+
+    # 3. Catalog seed tickers — discovery path for sectors with no RKB/classification data
+    if len(recs) < 6:
+        try:
+            catalog_path = os.path.join(_DATA_DIR, "research_sectors.json")
+            if os.path.exists(catalog_path):
+                with open(catalog_path) as f:
+                    catalog = json.load(f)
+                for entry in catalog.get("sectors", []):
+                    if entry.get("sector") != sector:
+                        continue
+                    for seed in entry.get("seed_tickers", []):
+                        t = seed if isinstance(seed, str) else seed.get("ticker", "")
+                        if t and t not in seen_tickers:
+                            recs.append({
+                                "ticker": t,
+                                "tier": None,
+                                "quality": None,
+                                "upside_pct": None,
+                                "recommendation_key": None,
+                                "held": t in current_holdings,
+                                "in_universe": t in universe_tickers,
+                                "source": "catalog",
+                            })
+                            seen_tickers.add(t)
+                            if len(recs) >= 6:
+                                break
+        except Exception:
+            pass
+
     return recs
 
 

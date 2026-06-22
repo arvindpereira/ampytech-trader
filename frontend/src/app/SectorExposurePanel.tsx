@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Compass, ArrowRightLeft } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, RefreshCw, Compass, ArrowRightLeft, Plus, Minus, Loader2, CheckCircle2 } from 'lucide-react';
 import { apiUrl } from '../lib/api';
 
 type RecommendationRow = {
@@ -21,7 +21,11 @@ type RecommendationRow = {
   upside_pct: number | null;
   recommendation_key: string | null;
   held: boolean;
+  in_universe: boolean;
+  source?: string;
 };
+
+type TickerActionStatus = 'idle' | 'adding' | 'removing' | 'added' | 'removed' | 'error';
 
 type SectorRow = {
   sector: string;
@@ -68,12 +72,21 @@ export default function SectorExposurePanel() {
   const [data, setData] = useState<ExposureData | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [universeSet, setUniverseSet] = useState<Set<string>>(new Set());
+  const [tickerStatus, setTickerStatus] = useState<Record<string, TickerActionStatus>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/portfolio/sector-exposure?mode=real'));
-      if (res.ok) setData(await res.json());
+      const [expRes, uniRes] = await Promise.all([
+        fetch(apiUrl('/api/portfolio/sector-exposure?mode=real')),
+        fetch(apiUrl('/api/universe')),
+      ]);
+      if (expRes.ok) setData(await expRes.json());
+      if (uniRes.ok) {
+        const j = await uniRes.json();
+        setUniverseSet(new Set((j.tickers || []).map((t: { ticker: string }) => t.ticker)));
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -81,9 +94,45 @@ export default function SectorExposurePanel() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
+
+  const addTicker = useCallback(async (ticker: string) => {
+    setTickerStatus((s) => ({ ...s, [ticker]: 'adding' }));
+    try {
+      const res = await fetch(apiUrl('/api/universe/add'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker }),
+      });
+      if (res.ok) {
+        setUniverseSet((prev) => new Set(Array.from(prev).concat(ticker)));
+        setTickerStatus((s) => ({ ...s, [ticker]: 'added' }));
+      } else {
+        setTickerStatus((s) => ({ ...s, [ticker]: 'error' }));
+      }
+    } catch {
+      setTickerStatus((s) => ({ ...s, [ticker]: 'error' }));
+    }
+  }, []);
+
+  const removeTicker = useCallback(async (ticker: string) => {
+    setTickerStatus((s) => ({ ...s, [ticker]: 'removing' }));
+    try {
+      const res = await fetch(apiUrl('/api/universe/remove'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker }),
+      });
+      if (res.ok) {
+        setUniverseSet((prev) => { const n = new Set(Array.from(prev)); n.delete(ticker); return n; });
+        setTickerStatus((s) => ({ ...s, [ticker]: 'removed' }));
+      } else {
+        setTickerStatus((s) => ({ ...s, [ticker]: 'error' }));
+      }
+    } catch {
+      setTickerStatus((s) => ({ ...s, [ticker]: 'error' }));
+    }
+  }, []);
 
   const chartData = useMemo(() => {
     return (data?.sectors || [])
@@ -120,6 +169,32 @@ export default function SectorExposurePanel() {
       .filter((s) => Math.abs(s.delta) >= 0.03) // Drifts >= 3%
       .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }, [data]);
+
+  const TickerActionButton = ({ ticker }: { ticker: string }) => {
+    const status = tickerStatus[ticker] ?? 'idle';
+    const inUniverse = universeSet.has(ticker);
+    const busy = status === 'adding' || status === 'removing';
+    if (busy) return <Loader2 size={14} className="animate-spin" color="#a78bfa" style={{ flexShrink: 0 }} />;
+    if (status === 'error') return <span style={{ fontSize: '10px', color: '#EF4444' }}>error</span>;
+    if (inUniverse) return (
+      <button
+        onClick={(e) => { e.stopPropagation(); removeTicker(ticker); }}
+        title="Remove from universe"
+        style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: '#FCA5A5', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
+      >
+        <Minus size={11} /> Universe
+      </button>
+    );
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); addTicker(ticker); }}
+        title="Add to universe (starts data backfill)"
+        style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(16,185,129,0.35)', background: 'rgba(16,185,129,0.08)', color: '#6EE7B7', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
+      >
+        <Plus size={11} /> Add
+      </button>
+    );
+  };
 
   if (loading && !data) {
     return (
@@ -274,16 +349,22 @@ export default function SectorExposurePanel() {
                   <div style={{ color: 'var(--text-secondary)', lineHeight: 1.45 }}>
                     {isUnder ? (
                       <>
-                        To bridge the gap, consider acquiring sector ETF proxy <strong style={{ color: 'var(--text-primary)' }}>{s.etf}</strong> or adding exposure to high-quality candidates:{' '}
+                        <span>
+                          Underweight {absDelta}pp. Consider sector ETF <strong style={{ color: 'var(--text-primary)' }}>{s.etf}</strong> or these candidates:
+                        </span>
                         {s.recommendations.length > 0 ? (
-                          s.recommendations.map((r, i) => (
-                            <span key={r.ticker}>
-                              {i > 0 && ', '}
-                              <strong style={{ color: 'var(--text-primary)' }}>{r.ticker}</strong> (Quality: {r.quality || 'N/A'}{r.upside_pct ? `, Upside: +${(r.upside_pct * 100).toFixed(1)}%` : ''}{r.held ? ' · Held' : ''})
-                            </span>
-                          ))
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                            {s.recommendations.map((r) => (
+                              <span key={r.ticker} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '5px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)', fontSize: '11px' }}>
+                                <strong style={{ color: 'var(--text-primary)' }}>{r.ticker}</strong>
+                                {r.upside_pct != null && <span style={{ color: '#10B981' }}>+{(r.upside_pct * 100).toFixed(1)}%</span>}
+                                {r.held && <span style={{ color: 'var(--text-secondary)' }}>held</span>}
+                                <TickerActionButton ticker={r.ticker} />
+                              </span>
+                            ))}
+                          </div>
                         ) : (
-                          'No direct recommendations found in snapshot database.'
+                          <span style={{ color: 'var(--text-secondary)' }}> No candidates in snapshot DB yet — run <code>make research-kb-refresh</code>.</span>
                         )}
                       </>
                     ) : (
@@ -313,7 +394,7 @@ export default function SectorExposurePanel() {
         <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '12px' }}>Drill-down by sector</div>
         <div style={{ display: 'grid', gap: '10px' }}>
           {(data?.sectors || [])
-            .filter((s) => s.holdings.length > 0)
+            .filter((s) => s.holdings.length > 0 || (s.recommendations && s.recommendations.length > 0))
             .map((s) => {
               const open = expanded[s.sector];
               return (
@@ -340,6 +421,9 @@ export default function SectorExposurePanel() {
                       <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '12.5px' }}>
                         {pct(s.portfolio_weight)} · Δ {(s.delta * 100).toFixed(1)}pp
                       </span>
+                      {s.holdings.length === 0 && (
+                        <span style={{ fontSize: '9px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>NO EXPOSURE</span>
+                      )}
                       {s.alert && (
                         <span style={{ fontSize: '9px', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#FCA5A5', padding: '1px 5px', borderRadius: '4px', fontWeight: 600 }}>ALERT</span>
                       )}
@@ -393,38 +477,46 @@ export default function SectorExposurePanel() {
                             <span>Top Sector Candidates (RKB snapshots)</span>
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '8px' }}>
-                            {s.recommendations.map((r) => (
+                            {s.recommendations.map((r) => {
+                              const inUni = universeSet.has(r.ticker);
+                              return (
                               <div
                                 key={r.ticker}
                                 style={{
                                   padding: '8px 12px',
-                                  background: 'rgba(255,255,255,0.02)',
+                                  background: inUni ? 'rgba(139,92,246,0.06)' : 'rgba(255,255,255,0.02)',
                                   borderRadius: '6px',
-                                  border: '1px solid var(--border-glass)',
+                                  border: `1px solid ${inUni ? 'rgba(139,92,246,0.25)' : 'var(--border-glass)'}`,
                                   fontSize: '12px',
                                   display: 'flex',
                                   justifyContent: 'space-between',
                                   alignItems: 'center',
+                                  gap: '8px',
                                 }}
                               >
-                                <div>
-                                  <strong style={{ color: 'var(--text-primary)' }}>{r.ticker}</strong>
-                                  <span style={{ color: 'var(--text-secondary)', fontSize: '10px', marginLeft: '6px', textTransform: 'capitalize' }}>
-                                    {r.tier?.replace('_', ' ') || 'unrated'}
-                                  </span>
-                                </div>
-                                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-                                  {r.upside_pct !== null && (
-                                    <span style={{ color: '#10B981', fontWeight: 600, fontSize: '11px' }}>
-                                      +{(r.upside_pct * 100).toFixed(1)}% upside
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    <strong style={{ color: 'var(--text-primary)' }}>{r.ticker}</strong>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '10px', textTransform: 'capitalize' }}>
+                                      {r.tier?.replace('_', ' ') || (r.source === 'catalog' ? 'catalog' : 'unrated')}
                                     </span>
-                                  )}
-                                  <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>
-                                    Quality: {r.quality !== null ? r.quality : '—'} {r.held && '· Held'}
-                                  </span>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' }}>
+                                    {r.upside_pct != null && (
+                                      <span style={{ color: '#10B981', fontWeight: 600, fontSize: '11px' }}>
+                                        +{(r.upside_pct * 100).toFixed(1)}%
+                                      </span>
+                                    )}
+                                    {r.quality != null && (
+                                      <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Q:{r.quality}</span>
+                                    )}
+                                    {r.held && <span style={{ fontSize: '10px', color: '#a78bfa' }}>· held</span>}
+                                    {inUni && <CheckCircle2 size={11} color="#a78bfa" />}
+                                  </div>
                                 </div>
+                                <TickerActionButton ticker={r.ticker} />
                               </div>
-                            ))}
+                            );})}
                           </div>
                         </div>
                       )}
