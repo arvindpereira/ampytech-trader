@@ -76,6 +76,9 @@ def _run_query_job(jid, req_data):
         if expansion.get("error") == "no_primary_ticker":
             _job_update(jid, status="error", error="No ticker detected — mention a symbol (e.g. MU or Micron).")
             return
+        if expansion.get("error") == "no_holdings":
+            _job_update(jid, status="error", error="No portfolio holdings found for crowding analysis.")
+            return
         if not tickers and routed.intent == "ticker_outlook":
             _job_update(jid, status="error", error="No ticker detected in query.")
             return
@@ -274,6 +277,29 @@ def kb_refresh():
 
     threading.Thread(target=_run, args=(jid,), daemon=True).start()
     return {"status": "started", "job_id": jid}
+
+
+@router.get("/feedback/summary")
+def feedback_summary_route():
+    from app.database import SessionLocal
+    from ml_engine.feedback_analytics import feedback_summary
+
+    db = SessionLocal()
+    try:
+        return feedback_summary(db)
+    finally:
+        db.close()
+
+
+@router.get("/methodology")
+def methodology():
+    from ml_engine.research_framework import METHODOLOGY_VERSION, STOCK_FACTOR_WEIGHTS, GICS_SECTOR_ETF
+    return {
+        "version": METHODOLOGY_VERSION,
+        "doc": "docs/research-methodology.md",
+        "stock_factor_weights": STOCK_FACTOR_WEIGHTS,
+        "sector_etfs": GICS_SECTOR_ETF,
+    }
 
 
 @router.get("/premium/estimate")

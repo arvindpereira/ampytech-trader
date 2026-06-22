@@ -2,53 +2,7 @@
 from typing import Any, Dict, List
 
 from ml_engine.research_dossier import coverage_pct
-
-WEIGHTS = {
-    "quality": 0.30,
-    "upside": 0.25,
-    "news": 0.25,
-    "momentum": 0.20,
-}
-
-
-def _val(facts: Dict[str, Any], key: str, default=0.0) -> float:
-    f = facts.get(key) or {}
-    if not isinstance(f, dict):
-        return default
-    if f.get("coverage") == "missing":
-        return default
-    v = f.get("value")
-    try:
-        return float(v) if v is not None else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _tier_score(tier: str) -> float:
-    return {
-        "quality_growth": 0.9,
-        "core": 0.75,
-        "speculative": 0.35,
-        "value_trap": 0.15,
-    }.get(tier or "", 0.5)
-
-
-def _component_scores(facts: Dict[str, Any]) -> Dict[str, float]:
-    tier = _val(facts, "tier", 0.5)
-    tier_s = _tier_score(str(tier) if tier else "")
-    quality = _val(facts, "quality", tier_s)
-    upside = _val(facts, "upside_pct", 0.0)
-    upside_n = max(-0.5, min(1.0, upside))  # cap extreme upside
-    news = _val(facts, "news_score_30d", 0.0)
-    news_n = (news + 1) / 2  # [-1,1] -> [0,1]
-    mom = (_val(facts, "momentum_3m", 0.0) + 0.5) / 1.0
-    mom_n = max(0.0, min(1.0, mom))
-    return {
-        "quality": quality if quality else tier_s,
-        "upside": upside_n,
-        "news": news_n,
-        "momentum": mom_n,
-    }
+from ml_engine.research_framework import STOCK_FACTOR_WEIGHTS, composite_stock_score, stock_component_scores
 
 
 def rank_tickers(facts_by_ticker: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -56,8 +10,8 @@ def rank_tickers(facts_by_ticker: Dict[str, Dict[str, Any]]) -> List[Dict[str, A
         return []
     raw = {}
     for ticker, facts in facts_by_ticker.items():
-        comp = _component_scores(facts)
-        score = sum(WEIGHTS[k] * comp[k] for k in WEIGHTS)
+        comp = stock_component_scores(facts)
+        score = composite_stock_score(facts)
         cov = coverage_pct(facts)
         raw[ticker] = {"score": score, "breakdown": comp, "coverage_pct": cov}
 
@@ -72,6 +26,7 @@ def rank_tickers(facts_by_ticker: Dict[str, Dict[str, Any]]) -> List[Dict[str, A
             "ticker": ticker,
             "score": round(norm, 4),
             "score_breakdown": {k: round(v, 3) for k, v in meta["breakdown"].items()},
+            "factor_weights": dict(STOCK_FACTOR_WEIGHTS),
             "coverage_pct": meta["coverage_pct"],
         })
     ranked.sort(key=lambda x: (-x["score"], x["ticker"]))

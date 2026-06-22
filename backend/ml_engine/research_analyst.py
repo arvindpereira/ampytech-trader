@@ -3,12 +3,21 @@ from typing import Any, Callable, Dict, List, Optional
 
 ProgressCb = Optional[Callable[[int, str], None]]
 
-from ml_engine.analyst_synthesizer import synthesize_sector, synthesize_spillover, synthesize_theme, synthesize_ticker
+from ml_engine.analyst_synthesizer import (
+    synthesize_crowding,
+    synthesize_cross_theme,
+    synthesize_sector,
+    synthesize_spillover,
+    synthesize_theme,
+    synthesize_ticker,
+)
 from ml_engine.intent_router import RoutedQuery, is_stub_intent
 from ml_engine.rank_engine import rank_tickers
 from ml_engine.research_dossier import coverage_pct, get_many
 from ml_engine.research_llm_router import RouteDecision, decide
 from ml_engine.research_templates import (
+    crowding_shell,
+    cross_theme_shell,
     event_spillover_shell,
     lookup_template,
     sector_screen_shell,
@@ -49,10 +58,7 @@ def build_report(
 
     if is_stub_intent(routed.intent):
         progress(80, "Building placeholder report")
-        return stub_shell(
-            routed.intent,
-            f"{routed.intent} is planned for Phase 3. Partial snapshot data may be available for detected tickers.",
-        )
+        return stub_shell(routed.intent, f"Intent {routed.intent} is not implemented.")
 
     if route.tier == "lookup" and len(routed.tickers) == 1:
         t = routed.tickers[0]
@@ -81,6 +87,33 @@ def build_report(
             syn = {"caveats": syn.get("caveats", [])}
         progress(85, "Assembling sector report")
         return sector_screen_shell(sectors, sector_rankings, ranked, syn, expansion)
+
+    if routed.intent == "cross_theme":
+        labels = expansion.get("theme_labels") or {}
+        overlap = expansion.get("overlap_tickers") or []
+        tickers = list(facts_by_ticker.keys())
+        ranked = rank_tickers({t: facts_by_ticker.get(t, {}) for t in tickers})
+        progress(35, f"Synthesizing cross-theme linkage ({_tier_label(route.tier)})")
+        syn = synthesize_cross_theme(
+            labels, overlap, ranked, facts_by_ticker, items_by_ticker,
+            tier=route.tier, query=routed.raw_query, news_by_ticker=news_by_ticker,
+        )
+        if syn.get("error"):
+            syn = {"caveats": syn.get("caveats", [])}
+        progress(85, "Assembling cross-theme report")
+        return cross_theme_shell(labels, overlap, ranked, syn, expansion)
+
+    if routed.intent == "crowding_risk":
+        tickers = list(facts_by_ticker.keys())
+        progress(35, f"Synthesizing crowding assessment ({_tier_label(route.tier)})")
+        syn = synthesize_crowding(
+            expansion, facts_by_ticker, items_by_ticker,
+            tier=route.tier, query=routed.raw_query, news_by_ticker=news_by_ticker,
+        )
+        if syn.get("error"):
+            syn = {"caveats": syn.get("caveats", [])}
+        progress(85, "Assembling crowding report")
+        return crowding_shell(expansion, syn)
 
     if routed.intent == "theme_rank":
         theme_id = routed.theme or "custom"

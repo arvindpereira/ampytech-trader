@@ -348,6 +348,11 @@ export default function ResearchAnalystPanel() {
               {kbStatus?.last_refreshed ? ` · updated ${kbStatus.last_refreshed}` : ''}
               <br />
               <span style={{ opacity: 0.9 }}>First pass uses GPT-4o mini. Upgrade to Premium AI after if you want a deeper analysis.</span>
+              <br />
+              <a href={apiUrl('/api/research/methodology')} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: '11px', color: '#a78bfa' }}>
+                Scoring methodology (factors, sector aggregates, citations)
+              </a>
             </p>
             <textarea
               value={query}

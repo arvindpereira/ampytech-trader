@@ -200,29 +200,26 @@ def _horizon_12m(as_of: str) -> str:
 
 
 def _write_internal_target(db, ticker: str, as_of: str, price: Optional[float], forecast) -> None:
-    """Blend consensus target with momentum for an internal 12m view."""
+    from ml_engine.research_framework import compute_internal_target
+
     if not forecast or forecast.target_mean is None:
         return
-    target = float(forecast.target_mean)
-    method = "consensus_blend"
-    confidence = 0.55
-    if forecast.num_analysts and forecast.num_analysts >= 5:
-        confidence = 0.7
     mom = _momentum(db, ticker, 63)
-    if mom is not None and price:
-        # Light momentum tilt: +5% of 3m return applied to target
-        target = target * (1 + 0.05 * mom)
-        method = "momentum_adjusted"
-        confidence = min(0.85, confidence + 0.05)
+    blended = compute_internal_target(
+        float(forecast.target_mean),
+        forecast.num_analysts,
+        mom,
+        price,
+    )
     horizon = _horizon_12m(as_of)
     row = {
         "ticker": ticker,
         "as_of_date": as_of,
         "horizon_date": horizon,
-        "target_price": round(target, 2),
-        "method": method,
-        "confidence": round(confidence, 2),
-        "notes": f"Blended from consensus ({forecast.target_mean})",
+        "target_price": blended["target_price"],
+        "method": blended["method"],
+        "confidence": blended["confidence"],
+        "notes": blended["notes"],
         "refreshed_at": _now(),
     }
     stmt = sqlite_insert(InternalPriceTarget).values(row)

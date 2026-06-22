@@ -175,6 +175,25 @@ SECTOR_SCREEN_LLM_SCHEMA = {
     "caveats": ["..."],
 }
 
+CROSS_THEME_LLM_SCHEMA = {
+    "tldr": "2-3 sentence bottom line on cross-theme demand linkage",
+    "linkage_narrative": "how themes interact, shared enablers, demand read-through",
+    "overlap_analysis": "tickers bridging multiple themes and why they matter",
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}
+
+CROWDING_LLM_SCHEMA = {
+    "tldr": "2-3 sentence crowding / concentration assessment",
+    "crowding_narrative": "portfolio heat, speculative exposure, concentration",
+    "watch_list": [{"ticker": "NVDA", "concern": "why it adds crowding risk", "sources": ["snapshot:tier"]}],
+    "de_risk_ideas": ["..."],
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}
+
 
 def event_spillover_shell(
     primary: str,
@@ -246,4 +265,60 @@ def sector_screen_shell(
             "Web search snippets included when SEARCH_API_KEY is configured.",
         ],
         "screen_framing": exp.get("screen_framing"),
+        "methodology_version": exp.get("methodology_version"),
+    }
+
+
+def cross_theme_shell(
+    theme_labels: Dict[str, str],
+    overlap: List[str],
+    ranked: List[Dict[str, Any]],
+    synthesis: Optional[Dict] = None,
+    expansion: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    syn = synthesis or {}
+    exp = expansion or {}
+    return {
+        "template": "cross_theme",
+        "themes": list(theme_labels.values()),
+        "theme_ids": list(theme_labels.keys()),
+        "overlap_tickers": overlap,
+        "ranked_companies": ranked,
+        "tldr": syn.get("tldr") or "",
+        "linkage_narrative": syn.get("linkage_narrative") or "",
+        "overlap_analysis": syn.get("overlap_analysis") or "",
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": syn.get("caveats") or [
+            "Cross-theme linkage uses configured theme membership — not supply-chain IO tables.",
+        ],
+        "methodology_version": exp.get("methodology_version"),
+        "framework_note": exp.get("framework_note"),
+    }
+
+
+def crowding_shell(
+    meta: Dict[str, Any],
+    synthesis: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    syn = synthesis or {}
+    return {
+        "template": "crowding_risk",
+        "crowding_score": meta.get("crowding_score"),
+        "crowding_label": meta.get("crowding_label"),
+        "speculative_pct": meta.get("speculative_pct"),
+        "speculative_tickers": meta.get("speculative_tickers") or [],
+        "holdings": meta.get("holdings") or [],
+        "ranked_companies": meta.get("ranked_by_heat") or [],
+        "tldr": syn.get("tldr") or "",
+        "crowding_narrative": syn.get("crowding_narrative") or "",
+        "watch_list": syn.get("watch_list") or [],
+        "de_risk_ideas": syn.get("de_risk_ideas") or [],
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": syn.get("caveats") or [
+            "Crowding score is a heuristic — not a formal bubble indicator.",
+        ],
+        "methodology_version": meta.get("methodology_version"),
+        "framework_note": meta.get("framework_note"),
     }

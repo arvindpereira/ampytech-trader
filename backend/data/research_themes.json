@@ -2,11 +2,13 @@
   "quantum_computing": {
     "label": "Quantum Computing",
     "tickers": ["IONQ", "RGTI", "QBTS", "NVDA", "GOOGL", "MSFT", "IBM"],
+    "keywords": ["quantum", "qubit", "ionq"],
     "description": "Pure-play quantum names plus large-cap enablers (configurable)."
   },
   "ai_infrastructure": {
     "label": "AI Infrastructure",
     "tickers": ["NVDA", "AMD", "AVGO", "SMCI", "MU", "TSM", "ASML"],
+    "keywords": ["ai infrastructure", "semiconductor", "gpu", "hbm", "memory"],
     "description": "Semis and hardware powering AI workloads."
   }
 }

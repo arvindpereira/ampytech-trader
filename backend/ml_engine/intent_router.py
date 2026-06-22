@@ -10,7 +10,7 @@ _TICKER_RE = re.compile(r"\b([A-Z]{1,5}(?:-[A-Z])?)\b")
 # Common English / finance words falsely matched as tickers
 _TICKER_STOPWORDS = frozenset({
     "A", "I", "AM", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "IF", "IN", "IS", "IT",
-    "ME", "MY", "NO", "OF", "ON", "OR", "SO", "TO", "UP", "US", "WE", "AI", "EU", "UK",
+    "ME", "MY", "NO", "OF", "ON", "OR", "SO", "TO", "UP", "US", "WE", "AI", "EU", "UK", "AND",
     "PM", "VS", "H1", "H2", "Q1", "Q2", "Q3", "Q4", "YTD", "EPS", "PE", "ETF", "CEO",
     "CFO", "IPO", "GDP", "FED", "SEC", "ATH", "ATL", "YOY", "MOM", "TOP", "LOW", "HIGH",
     "END", "NEW", "OLD", "ALL", "ANY", "ARE", "CAN", "FOR", "HOW", "MAY", "NOT", "OUT",
@@ -66,7 +66,7 @@ _INTENT_KEYWORDS = {
     "crowding_risk": ["overinvested", "drawdown", "crowded", "bubble"],
 }
 
-_STUB_INTENTS = {"cross_theme", "crowding_risk"}
+_STUB_INTENTS: set = set()
 
 
 @dataclass
@@ -108,14 +108,14 @@ def _is_spillover_intent(low: str) -> bool:
 
 def _detect_intent(text: str) -> str:
     low = text.lower()
+    scores = {intent: sum(1 for k in kws if k in low) for intent, kws in _INTENT_KEYWORDS.items()}
+    best = max(scores, key=scores.get)
+    if scores[best] > 0:
+        return best
     if _is_spillover_intent(low) and _extract_tickers(text):
         return "event_spillover"
-    if any(k in low for k in ("quantum", "theme", "companies who")):
+    if any(k in low for k in ("quantum", "companies who")):
         return "theme_rank"
-    scores = {}
-    for intent, kws in _INTENT_KEYWORDS.items():
-        scores[intent] = sum(1 for k in kws if k in low)
-    best = max(scores, key=scores.get)
     if scores[best] == 0:
         return "ticker_outlook" if _extract_tickers(text) else "theme_rank"
     return best

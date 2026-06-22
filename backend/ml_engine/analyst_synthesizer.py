@@ -12,6 +12,8 @@ from app.core.llm_cost import record_usage
 from ml_engine.citation_validator import validate
 from ml_engine.research_llm_router import model_for_tier
 from ml_engine.research_templates import (
+    CROWDING_LLM_SCHEMA,
+    CROSS_THEME_LLM_SCHEMA,
     EVENT_SPILLOVER_LLM_SCHEMA,
     SECTOR_SCREEN_LLM_SCHEMA,
     THEME_RANK_LLM_SCHEMA,
@@ -266,3 +268,78 @@ def synthesize_sector(
         return validate(out, all_ids)
     except Exception as e:
         return {"error": str(e)[:200], "caveats": ["Sector synthesis failed — rank tables still valid."]}
+
+
+def synthesize_cross_theme(
+    theme_labels: dict,
+    overlap: list,
+    ranked: list,
+    facts_by_ticker: dict,
+    items_by_ticker: dict,
+    tier: str = "standard",
+    query: str = "",
+    news_by_ticker: dict = None,
+) -> dict:
+    schema = json.dumps(CROSS_THEME_LLM_SCHEMA, indent=2)
+    system = _editor_system(
+        "thematic strategist linking multiple investment themes. Explain demand interdependencies "
+        "and why overlap tickers matter. Ranks are fixed",
+        schema,
+    )
+    rank_lines = "\n".join(f"#{r['rank']} {r['ticker']} score={r['score']}" for r in (ranked or []))
+    blocks = []
+    news_by_ticker = news_by_ticker or {}
+    for t, facts in facts_by_ticker.items():
+        items = items_by_ticker.get(t, [])
+        blocks.append(
+            f"=== {t} ===\n{_snapshot_block(facts)}\n{_items_block(items)}\n"
+            f"RECENT NEWS:\n{_news_block(news_by_ticker.get(t, []))}"
+        )
+    prompt = (
+        f"Themes: {json.dumps(theme_labels)}\nOverlap tickers: {overlap}\nQuery: {query}\n\n"
+        f"RANKING:\n{rank_lines}\n\n" + "\n".join(blocks)
+    )
+    all_ids = [it.id for items in items_by_ticker.values() for it in items]
+    try:
+        out = _synthesize_llm(prompt, system, tier)
+        if "error" in out:
+            return out
+        return validate(out, all_ids)
+    except Exception as e:
+        return {"error": str(e)[:200], "caveats": ["Cross-theme synthesis failed — ranks still valid."]}
+
+
+def synthesize_crowding(
+    meta: dict,
+    facts_by_ticker: dict,
+    items_by_ticker: dict,
+    tier: str = "standard",
+    query: str = "",
+    news_by_ticker: dict = None,
+) -> dict:
+    schema = json.dumps(CROWDING_LLM_SCHEMA, indent=2)
+    system = _editor_system(
+        "portfolio risk analyst assessing crowding and concentration. Use crowding metrics provided; "
+        "do not invent portfolio positions",
+        schema,
+    )
+    news_by_ticker = news_by_ticker or {}
+    blocks = []
+    for t, facts in facts_by_ticker.items():
+        items = items_by_ticker.get(t, [])
+        blocks.append(
+            f"=== {t} ===\n{_snapshot_block(facts)}\n{_items_block(items)}\n"
+            f"RECENT NEWS:\n{_news_block(news_by_ticker.get(t, []))}"
+        )
+    prompt = (
+        f"Query: {query}\nCROWDING METRICS:\n{json.dumps(meta, indent=2)[:4000]}\n\n"
+        + "\n".join(blocks)
+    )
+    all_ids = [it.id for items in items_by_ticker.values() for it in items]
+    try:
+        out = _synthesize_llm(prompt, system, tier)
+        if "error" in out:
+            return out
+        return validate(out, all_ids)
+    except Exception as e:
+        return {"error": str(e)[:200], "caveats": ["Crowding synthesis failed — metrics table still valid."]}

@@ -155,6 +155,22 @@ def resolve_query_tickers(
                 _append_unique(tickers, t)
         return tickers[:RESEARCH_MAX_TICKERS], meta
 
+    if routed.intent == "cross_theme":
+        from ml_engine.theme_cross_analyzer import analyze_cross_theme
+
+        tickers, cross_meta = analyze_cross_theme(routed, db)
+        meta.update(cross_meta)
+        return tickers[:RESEARCH_MAX_TICKERS], meta
+
+    if routed.intent == "crowding_risk":
+        from ml_engine.crowding_analyzer import analyze_crowding
+
+        tickers, crowd_meta = analyze_crowding(routed, db)
+        meta.update(crowd_meta)
+        if crowd_meta.get("error"):
+            return [], crowd_meta
+        return tickers[:RESEARCH_MAX_TICKERS], meta
+
     tickers = list(routed.tickers or [])
     if extra_tickers:
         for t in extra_tickers:

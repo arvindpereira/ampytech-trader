@@ -1,15 +1,14 @@
-"""Sector screening and aggregation for Research Analyst Phase 2b."""
+"""Sector screening — GICS-aligned aggregates via research_framework."""
 from __future__ import annotations
 
-import json
-from statistics import mean
 from typing import Dict, List, Optional, Tuple
 
 from app.core.config import RESEARCH_MAX_TICKERS, TICKER_UNIVERSE
 from ml_engine.intent_router import RoutedQuery
 from ml_engine.rank_engine import rank_tickers
+from ml_engine.research_framework import GICS_SECTOR_ETF, METHODOLOGY_VERSION, aggregate_sector_metrics
 
-# Query phrases → canonical sector name (matches ticker_metadata.sector values)
+# Query phrases → GICS-style sector names (from ticker_metadata.sector)
 _SECTOR_ALIASES = {
     "technology": "Technology",
     "tech": "Technology",
@@ -39,15 +38,6 @@ _SECTOR_ALIASES = {
     "basic materials": "Basic Materials",
 }
 
-# Sector ETF proxies in our universe
-_SECTOR_ETF = {
-    "Technology": "XLK",
-    "Financial Services": "XLF",
-    "Energy": "XLE",
-    "Healthcare": "XLV",
-    "Consumer Defensive": "XLP",
-}
-
 
 def _norm_sector(name: str) -> str:
     return (name or "").strip()
@@ -66,24 +56,51 @@ def list_sectors(db) -> List[str]:
     from app.database import CompanySnapshot
 
     rows = db.query(CompanySnapshot.sector).filter(CompanySnapshot.sector.isnot(None)).distinct().all()
-    sectors = sorted({_norm_sector(r[0]) for r in rows if r[0]})
-    return sectors
+    return sorted({_norm_sector(r[0]) for r in rows if r[0]})
+
+
+def _latest_snaps_by_ticker(db, sector: str, as_of_date: Optional[str] = None) -> list:
+    from app.database import CompanySnapshot
+
+    q = db.query(CompanySnapshot).filter(CompanySnapshot.sector == _norm_sector(sector))
+    if as_of_date:
+        q = q.filter(CompanySnapshot.as_of_date == as_of_date)
+    rows = q.order_by(CompanySnapshot.as_of_date.desc()).all()
+    latest: Dict[str, object] = {}
+    for r in rows:
+        if r.ticker not in latest:
+            latest[r.ticker] = r
+    return list(latest.values())
+
+
+def _market_caps(db, tickers: List[str]) -> Dict[str, float]:
+    from app.database import TickerMetadata
+
+    caps = {}
+    for row in db.query(TickerMetadata).filter(TickerMetadata.ticker.in_(tickers)).all():
+        if row.market_cap:
+            caps[row.ticker] = float(row.market_cap)
+    return caps
+
+
+def _spy_momentum(db) -> Optional[float]:
+    from app.database import CompanySnapshot
+
+    row = (
+        db.query(CompanySnapshot)
+        .filter(CompanySnapshot.ticker == "SPY")
+        .order_by(CompanySnapshot.as_of_date.desc())
+        .first()
+    )
+    return row.momentum_3m if row else None
 
 
 def sector_constituents(db, sector: str, limit: int = RESEARCH_MAX_TICKERS) -> List[str]:
-    from app.database import CompanySnapshot
-
-    sector = _norm_sector(sector)
-    rows = (
-        db.query(CompanySnapshot.ticker)
-        .filter(CompanySnapshot.sector == sector)
-        .order_by(CompanySnapshot.as_of_date.desc())
-        .all()
-    )
-    seen: List[str] = []
+    snaps = _latest_snaps_by_ticker(db, sector)
     universe = {t.upper() for t in TICKER_UNIVERSE}
-    for (tk,) in rows:
-        t = (tk or "").upper().strip()
+    seen: List[str] = []
+    for s in snaps:
+        t = (s.ticker or "").upper().strip()
         if t and t not in seen and (t in universe or len(seen) < limit):
             seen.append(t)
         if len(seen) >= limit:
@@ -92,45 +109,18 @@ def sector_constituents(db, sector: str, limit: int = RESEARCH_MAX_TICKERS) -> L
 
 
 def aggregate_sector(db, sector: str, as_of_date: Optional[str] = None) -> Dict:
-    """Build sector-level facts from latest company snapshots."""
-    from app.database import CompanySnapshot
-
-    sector = _norm_sector(sector)
-    q = db.query(CompanySnapshot).filter(CompanySnapshot.sector == sector)
-    if as_of_date:
-        q = q.filter(CompanySnapshot.as_of_date == as_of_date)
-    rows = q.order_by(CompanySnapshot.as_of_date.desc()).all()
-    latest_by_ticker: Dict[str, CompanySnapshot] = {}
-    for r in rows:
-        if r.ticker not in latest_by_ticker:
-            latest_by_ticker[r.ticker] = r
-
-    snaps = list(latest_by_ticker.values())
+    snaps = _latest_snaps_by_ticker(db, sector, as_of_date)
     if not snaps:
-        return {"sector": sector, "ticker_count": 0}
-
-    def _vals(attr):
-        return [getattr(s, attr) for s in snaps if getattr(s, attr) is not None]
-
-    upside_vals = _vals("upside_pct")
-    mom_vals = _vals("momentum_3m")
-    news_vals = _vals("news_score_30d")
-    qual_vals = _vals("quality")
-
-    return {
-        "sector": sector,
-        "ticker_count": len(snaps),
-        "median_upside_pct": mean(upside_vals) if upside_vals else None,
-        "median_momentum_3m": mean(mom_vals) if mom_vals else None,
-        "median_news_score_30d": mean(news_vals) if news_vals else None,
-        "median_quality": mean(qual_vals) if qual_vals else None,
-        "etf_proxy": _SECTOR_ETF.get(sector),
-        "constituents": [s.ticker for s in snaps[:RESEARCH_MAX_TICKERS]],
-    }
+        return {"sector": sector, "ticker_count": 0, "methodology_version": METHODOLOGY_VERSION}
+    tickers = [s.ticker for s in snaps]
+    caps = _market_caps(db, tickers)
+    agg = aggregate_sector_metrics(snaps, market_caps=caps, spy_momentum_3m=_spy_momentum(db))
+    agg["etf_proxy"] = agg.get("etf_proxy") or GICS_SECTOR_ETF.get(_norm_sector(sector))
+    agg["constituents"] = tickers[:RESEARCH_MAX_TICKERS]
+    return agg
 
 
-def screen_sectors(db, sort_by: str = "upside") -> List[Dict]:
-    """Rank sectors by aggregate metrics."""
+def screen_sectors(db, sort_by: str = "upside", *, ascending: bool = False) -> List[Dict]:
     sectors = list_sectors(db)
     rows = []
     for sec in sectors:
@@ -142,33 +132,30 @@ def screen_sectors(db, sort_by: str = "upside") -> List[Dict]:
             "momentum": "median_momentum_3m",
             "news": "median_news_score_30d",
             "quality": "median_quality",
+            "rel_strength": "rel_strength_vs_spy",
         }.get(sort_by, "median_upside_pct")
         score = agg.get(score_key)
         if score is None:
             continue
         rows.append({**agg, "screen_score": score})
 
-    rows.sort(key=lambda r: r.get("screen_score") or 0, reverse=True)
+    rows.sort(key=lambda r: r.get("screen_score") or 0, reverse=not ascending)
     for i, r in enumerate(rows, 1):
         r["rank"] = i
     return rows
 
 
-def resolve_sector_screen(
-    routed: RoutedQuery,
-    db,
-) -> Tuple[List[str], Dict]:
-    """Resolve tickers and metadata for sector_screen queries."""
+def resolve_sector_screen(routed: RoutedQuery, db) -> Tuple[List[str], Dict]:
     low = routed.raw_query.lower()
+    ascending = any(k in low for k in ("overvalued", "over-valued", "expensive"))
     sort_by = "momentum" if "momentum" in low or "perform" in low else "upside"
-    if "overvalued" in low or "over-valued" in low or "expensive" in low:
-        sort_by = "upside"  # rank ascending later for overvalued framing
+    if "relative strength" in low or "vs market" in low:
+        sort_by = "rel_strength"
 
     sectors = detect_sectors_in_query(routed.raw_query)
-    sector_rankings = screen_sectors(db, sort_by=sort_by)
+    sector_rankings = screen_sectors(db, sort_by=sort_by, ascending=ascending)
 
     if not sectors and sector_rankings:
-        # Multi-sector screen — take top 2 sectors' constituents
         sectors = [r["sector"] for r in sector_rankings[:2]]
 
     tickers: List[str] = []
@@ -177,18 +164,12 @@ def resolve_sector_screen(
             if t not in tickers:
                 tickers.append(t)
 
-    if not tickers and sectors:
-        for sec in sectors:
-            tickers.extend(sector_constituents(db, sec, limit=8))
-
     if not tickers and sector_rankings:
-        # Default: constituents from top-ranked sector
         top = sector_rankings[0]
         tickers = list(top.get("constituents") or [])[:RESEARCH_MAX_TICKERS]
         sectors = [top["sector"]]
 
     if not tickers:
-        # Fallback: rank known universe by snapshot
         from ml_engine.research_dossier import get_many
 
         facts = get_many(list(TICKER_UNIVERSE)[:20], db=db)
@@ -199,21 +180,20 @@ def resolve_sector_screen(
         "sectors": sectors,
         "sector_rankings": sector_rankings[:8],
         "sort_by": sort_by,
-        "screen_framing": "overvalued" if "overvalued" in low else "undervalued" if "undervalued" in low else "neutral",
+        "methodology_version": METHODOLOGY_VERSION,
+        "screen_framing": "overvalued" if ascending else "undervalued" if "undervalued" in low else "neutral",
     }
     return tickers[:RESEARCH_MAX_TICKERS], meta
 
 
 def sector_facts_for_synthesis(db, sector: str) -> Dict:
-    """Sector aggregate block for LLM prompt."""
     agg = aggregate_sector(db, sector)
     constituents = sector_constituents(db, sector, limit=8)
     from ml_engine.research_dossier import get_many
 
     facts = get_many(constituents, db=db)
-    ranked = rank_tickers(facts)
     return {
         "aggregate": agg,
-        "ranked_constituents": ranked,
+        "ranked_constituents": rank_tickers(facts),
         "facts_by_ticker": facts,
     }
