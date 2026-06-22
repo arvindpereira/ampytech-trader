@@ -518,3 +518,124 @@ class ExternalTransaction(Base):
     execution_date = Column(String, nullable=False)  # YYYY-MM-DD
     raw_details = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
+
+
+# --- Research Analyst (Tab 7) -------------------------------------------------
+
+class TickerMetadata(Base):
+    """Sector/industry/market-cap metadata for research KB."""
+    __tablename__ = "ticker_metadata"
+
+    ticker = Column(String, primary_key=True)
+    sector = Column(String, nullable=True)
+    industry = Column(String, nullable=True)
+    market_cap = Column(Float, nullable=True)
+    source = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
+
+
+class CompanySnapshot(Base):
+    """Denormalized daily company state for the research knowledge base."""
+    __tablename__ = "company_snapshots"
+
+    ticker = Column(String, nullable=False)
+    as_of_date = Column(String, nullable=False)  # YYYY-MM-DD
+    price = Column(Float, nullable=True)
+    momentum_1w = Column(Float, nullable=True)
+    momentum_1m = Column(Float, nullable=True)
+    momentum_3m = Column(Float, nullable=True)
+    momentum_1y = Column(Float, nullable=True)
+    tier = Column(String, nullable=True)
+    quality = Column(Float, nullable=True)
+    volatility = Column(Float, nullable=True)
+    verdict = Column(String, nullable=True)
+    target_mean = Column(Float, nullable=True)
+    target_high = Column(Float, nullable=True)
+    target_low = Column(Float, nullable=True)
+    num_analysts = Column(Integer, nullable=True)
+    upside_pct = Column(Float, nullable=True)
+    recommendation_key = Column(String, nullable=True)
+    news_score_7d = Column(Float, nullable=True)
+    news_score_30d = Column(Float, nullable=True)
+    news_headline_count_30d = Column(Integer, nullable=True)
+    sector = Column(String, nullable=True)
+    industry = Column(String, nullable=True)
+    coverage_pct = Column(Float, nullable=True)
+    facts_json = Column(String, nullable=True)  # full bundle with per-field coverage
+    refreshed_at = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "as_of_date", name="pk_company_snapshots"),
+    )
+
+
+class ExternalAnalystItem(Base):
+    """Third-party analyst/news/newsletter/search items for synthesis."""
+    __tablename__ = "external_analyst_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=True)
+    sector_id = Column(String, nullable=True)
+    source = Column(String, nullable=False)
+    source_id = Column(String, nullable=True)
+    source_url = Column(String, nullable=True)
+    published_at = Column(String, nullable=True)
+    title = Column(String, nullable=True)
+    excerpt = Column(String, nullable=True)
+    analyst_firm = Column(String, nullable=True)
+    rating = Column(String, nullable=True)
+    target_price = Column(Float, nullable=True)
+    raw_json = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+
+
+class ResearchWatchlist(Base):
+    __tablename__ = "research_watchlist"
+
+    ticker = Column(String, primary_key=True)
+    added_at = Column(String, nullable=False)
+
+
+class WebSearchCache(Base):
+    __tablename__ = "web_search_cache"
+
+    query_hash = Column(String, primary_key=True)
+    query_text = Column(String, nullable=False)
+    results_json = Column(String, nullable=False)
+    fetched_at = Column(String, nullable=False)
+
+
+class ResearchThread(Base):
+    __tablename__ = "research_threads"
+
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=True)
+    intent = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="draft")  # draft | published | rejected
+    slug = Column(String, nullable=True)
+    summary = Column(String, nullable=True)
+    tickers_json = Column(String, nullable=True)
+    theme = Column(String, nullable=True)
+    coverage_pct = Column(Float, nullable=True)
+    feedback_notes = Column(String, nullable=True)
+    feedback_tags = Column(String, nullable=True)
+    llm_tier = Column(String, nullable=True)
+    published_at = Column(String, nullable=True)
+    rejected_at = Column(String, nullable=True)
+    wiki_exported_at = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
+
+
+class ResearchMessage(Base):
+    __tablename__ = "research_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(String, nullable=False)
+    role = Column(String, nullable=False)  # user | assistant
+    content = Column(String, nullable=True)
+    structured_json = Column(String, nullable=True)
+    snapshot_tickers_json = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    tokens = Column(Integer, nullable=True)
+    created_at = Column(String, nullable=False)

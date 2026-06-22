@@ -35,6 +35,7 @@ VENV_PY := venv/bin/python3
 FRONTEND_HOST ?= 0.0.0.0
 FRONTEND_PORT ?= 3002
 BACKEND_PORT  ?= 8008
+WIKI_PORT     ?= 4000
 
 # ----------------------------------------------------------------------------
 # Cache-aware pipeline: TTL stamp files (so `make data`/`make train`/`make up`
@@ -207,6 +208,29 @@ fetch-forecasts:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py fetch-forecasts --tickers $(if $(TICKERS),$(TICKERS),ADBE,PINS)
 	@echo "✅ Forecast refresh complete."
+
+research-kb-refresh:
+	cd backend && $(VENV_PY) data_ingestion/research_kb_refresh.py
+
+research-wiki-export:
+	cd backend && $(VENV_PY) -c "from ml_engine.research_wiki_export import rebuild_all; print(rebuild_all())"
+
+# Serves static HTML from research-wiki/site (no Ruby/Jekyll). Publish a report first.
+# Override port if busy: make research-wiki-serve WIKI_PORT=4001
+research-wiki-serve: research-wiki-export
+	@PORT=$(WIKI_PORT); \
+	if lsof -ti:$$PORT >/dev/null 2>&1; then \
+	  echo "Port $$PORT already in use (maybe a prior wiki server)."; \
+	  echo "  Stop it:  kill $$(lsof -ti:$$PORT)"; \
+	  echo "  Or use:   make research-wiki-serve WIKI_PORT=4001"; \
+	  exit 1; \
+	fi; \
+	echo "Serving at http://localhost:$$PORT (Ctrl+C to stop)"; \
+	cd research-wiki/site && $(CURDIR)/backend/$(VENV_PY) -m http.server $$PORT --bind 0.0.0.0
+
+# Optional: Jekyll build (requires Ruby 3+ and: cd research-wiki && bundle install)
+research-wiki-serve-jekyll: research-wiki-export
+	cd research-wiki && bundle exec jekyll serve --host 0.0.0.0 --port $(WIKI_PORT)
 
 import-equity-lots:
 	@test -n "$(FILE)" || (echo "Usage: make import-equity-lots FILE=path/to/export.pdf [REPLACE=1] [FORCE_LLM=1]" && exit 1)

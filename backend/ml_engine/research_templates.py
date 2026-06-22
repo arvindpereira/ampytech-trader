@@ -1,0 +1,154 @@
+"""Structured report templates for Research Analyst — ensures consistent, high-quality output.
+
+Templates define required sections and placeholder slots. Computed numbers are injected before any LLM
+narrative pass; the LLM only fills labeled prose slots and must not alter numeric fields.
+"""
+from typing import Any, Dict, List, Optional
+
+
+def _fmt_pct(x: Optional[float]) -> str:
+    if x is None:
+        return "n/a"
+    try:
+        return f"{float(x) * 100:+.1f}%"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _fmt_price(x: Optional[float]) -> str:
+    if x is None:
+        return "n/a"
+    try:
+        return f"${float(x):,.2f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _field_val(facts: Dict[str, Any], key: str):
+    f = facts.get(key) or {}
+    return f.get("value") if isinstance(f, dict) else None
+
+
+def lookup_template(ticker: str, facts: Dict[str, Any]) -> Dict[str, Any]:
+    """Template-only answer for trivial snapshot lookups (no LLM)."""
+    price = _field_val(facts, "price")
+    target = _field_val(facts, "target_mean")
+    upside = _field_val(facts, "upside_pct")
+    num = _field_val(facts, "num_analysts")
+    rec = _field_val(facts, "recommendation_key")
+    tier = _field_val(facts, "tier")
+    as_of = (facts.get("price") or {}).get("as_of", "n/a")
+
+    tldr = (
+        f"{ticker}: price {_fmt_price(price)}, consensus target {_fmt_price(target)} "
+        f"({num or '?'} analysts, {rec or 'n/a'}), implied upside {_fmt_pct(upside)}. "
+        f"Classification tier: {tier or 'unrated'}. Data as of {as_of}."
+    )
+    return {
+        "template": "lookup",
+        "tldr": tldr,
+        "snapshot_facts": {
+            "price": price,
+            "target_mean": target,
+            "upside_pct": upside,
+            "num_analysts": num,
+            "recommendation_key": rec,
+            "tier": tier,
+            "as_of": as_of,
+        },
+        "caveats": [
+            "Consensus target is a point-in-time snapshot, not a dated forecast.",
+            "Reply generated from local knowledge base without LLM.",
+        ],
+    }
+
+
+def ticker_outlook_shell(ticker: str, facts: Dict[str, Any], synthesis: Optional[Dict] = None) -> Dict[str, Any]:
+    """Pre-filled template structure for single-ticker outlook reports."""
+    syn = synthesis or {}
+    return {
+        "template": "ticker_outlook",
+        "ticker": ticker,
+        "tldr": syn.get("tldr") or "",
+        "snapshot_summary": {
+            "price": _field_val(facts, "price"),
+            "target_mean": _field_val(facts, "target_mean"),
+            "target_high": _field_val(facts, "target_high"),
+            "target_low": _field_val(facts, "target_low"),
+            "upside_pct": _field_val(facts, "upside_pct"),
+            "num_analysts": _field_val(facts, "num_analysts"),
+            "recommendation_key": _field_val(facts, "recommendation_key"),
+            "tier": _field_val(facts, "tier"),
+            "quality": _field_val(facts, "quality"),
+            "news_score_30d": _field_val(facts, "news_score_30d"),
+            "momentum_3m": _field_val(facts, "momentum_3m"),
+        },
+        "consensus_view": syn.get("consensus_view") or {"text": "", "sources": []},
+        "recent_actions": syn.get("recent_actions") or [],
+        "news_sentiment_summary": syn.get("news_sentiment_summary") or {"text": "", "sources": []},
+        "third_party_highlights": syn.get("third_party_highlights") or [],
+        "outlook_narrative": syn.get("outlook_narrative") or "",
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": syn.get("caveats") or [
+            "Not investment advice. Analyst data may be incomplete or delayed.",
+        ],
+    }
+
+
+def theme_rank_shell(
+    theme: str,
+    ranked: List[Dict[str, Any]],
+    synthesis: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """Pre-filled template for theme ranking reports."""
+    syn = synthesis or {}
+    winners = [r for r in ranked if r.get("rank", 99) <= max(1, len(ranked) // 3)]
+    losers = list(reversed(ranked[-max(1, len(ranked) // 3):])) if ranked else []
+    return {
+        "template": "theme_rank",
+        "theme": theme,
+        "tldr": syn.get("tldr") or "",
+        "ranked_companies": ranked,
+        "winners_summary": syn.get("winners_summary") or "",
+        "losers_summary": syn.get("losers_summary") or "",
+        "winners_tickers": [w["ticker"] for w in winners],
+        "losers_tickers": [l["ticker"] for l in losers],
+        "theme_narrative": syn.get("theme_narrative") or "",
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": syn.get("caveats") or [
+            "Rank order is computed from local snapshot scores — not a guarantee of future performance.",
+            "Theme membership is configurable and may omit relevant names.",
+        ],
+    }
+
+
+def stub_shell(intent: str, message: str) -> Dict[str, Any]:
+    return {
+        "template": "stub",
+        "intent": intent,
+        "tldr": message,
+        "caveats": ["This intent is planned for a future phase."],
+    }
+
+
+# LLM prompt scaffolding — JSON keys the model must return per template
+TICKER_OUTLOOK_LLM_SCHEMA = {
+    "tldr": "2-3 sentence bottom line",
+    "outlook_narrative": "1-2 paragraphs on 12m outlook using ONLY provided facts",
+    "consensus_view": {"text": "...", "sources": ["item:1", "snapshot:target_mean"]},
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}
+
+THEME_RANK_LLM_SCHEMA = {
+    "tldr": "2-3 sentence bottom line",
+    "theme_narrative": "paragraph on theme outlook",
+    "winners_summary": "why top-ranked names lead",
+    "losers_summary": "why bottom-ranked names lag",
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}

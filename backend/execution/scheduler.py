@@ -328,6 +328,22 @@ def main():
         name="Refresh crash radar odds when data changes"
     )
 
+    def research_kb_refresh_job():
+        print(f"\n[{datetime.now()}] Triggering Research KB refresh...")
+        try:
+            from data_ingestion.research_kb_refresh import run_refresh
+            res = run_refresh()
+            print(f"Research KB refresh done: {res}")
+        except Exception as e:
+            print(f"Research KB refresh failed: {e}")
+
+    scheduler.add_job(
+        research_kb_refresh_job,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=10, minute=0, timezone=market_tz),
+        id="research_kb_refresh",
+        name="Refresh research knowledge base snapshots"
+    )
+
     # 6. Intraday LLM news scoring — hourly during market hours so swing signals use same-day news
     if SWING_ENABLED:
         scheduler.add_job(

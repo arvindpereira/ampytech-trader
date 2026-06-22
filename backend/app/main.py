@@ -4815,3 +4815,12 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
         "cash_transferred_to_reserve": float(account.cash),
         "final_equity": float(account.equity),
     }
+
+
+# ---------------------------------------------------------------------------
+# Research Analyst (Tab 7)
+# ---------------------------------------------------------------------------
+from app.routes.research import router as research_router, register_jobs as register_research_jobs
+
+register_research_jobs(_job_new, _job_update)
+app.include_router(research_router)

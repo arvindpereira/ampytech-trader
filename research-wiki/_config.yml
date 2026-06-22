@@ -1,0 +1,6 @@
+title: Ampytech Research Wiki
+description: Published research reports from the Research Analyst tab
+baseurl: ""
+url: "http://localhost:4000"
+theme: null
+markdown: kramdown

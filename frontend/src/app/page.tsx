@@ -46,6 +46,7 @@ import {
   ReferenceLine
 } from 'recharts';
 import GrantTimeline from './GrantTimeline';
+import ResearchAnalystPanel from './ResearchAnalystPanel';
 
 interface HedgePlan {
   mode: string;
@@ -173,7 +174,7 @@ function TimingBadge({ lastRun, lastLabel = 'Updated', nextScheduled, schedule, 
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor' | 'crash' | 'external'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'virtual_perf' | 'editor' | 'advisor' | 'crash' | 'external' | 'research'>('dashboard');
 
   // Crash Radar States
   const [crashData, setCrashData] = useState<any>(null);
@@ -2116,6 +2117,12 @@ export default function Home() {
             onClick={() => setActiveTab('external')}
           >
             External Portfolio
+          </button>
+          <button
+            className={`toggle-btn ${activeTab === 'research' ? 'active' : ''}`}
+            onClick={() => setActiveTab('research')}
+          >
+            Research Analyst
           </button>
         </div>
       </div>
@@ -6354,6 +6361,8 @@ export default function Home() {
 
           </section>
         )}
+
+        {activeTab === 'research' && <ResearchAnalystPanel />}
       </main>
 
       {/* Account Deletion Warning Modal */}

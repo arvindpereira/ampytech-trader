@@ -1,0 +1,8 @@
+body { font-family: Georgia, serif; max-width: 820px; margin: 0 auto; padding: 24px; line-height: 1.6; color: #1a1a2e; background: #f8f9fc; }
+.site-header { margin-bottom: 24px; font-weight: 700; }
+.site-header a { color: #5b21b6; text-decoration: none; }
+.content { background: #fff; padding: 28px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.report .meta { font-size: 0.85rem; color: #666; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background: #f3f4f6; }
