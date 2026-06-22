@@ -4119,6 +4119,9 @@ export default function Home() {
                 </div>
               )}
             </aside>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <SectorExposurePanel scope="internal" />
+            </div>
           </>
         )}
 

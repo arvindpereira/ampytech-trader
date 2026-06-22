@@ -69,7 +69,15 @@ const money = (n: number) =>
 
 const pct = (w: number) => `${(w * 100).toFixed(1)}%`;
 
-export default function SectorExposurePanel() {
+type Scope = 'all' | 'internal' | 'external';
+
+const SCOPE_LABEL: Record<Scope, string> = {
+  all: 'All accounts (trading + external)',
+  internal: 'Trading account (Alpaca)',
+  external: 'External accounts (Robinhood / Vanguard)',
+};
+
+export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }) {
   const [data, setData] = useState<ExposureData | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -80,7 +88,7 @@ export default function SectorExposurePanel() {
     setLoading(true);
     try {
       const [expRes, uniRes] = await Promise.all([
-        fetch(apiUrl('/api/portfolio/sector-exposure?mode=real')),
+        fetch(apiUrl(`/api/portfolio/sector-exposure?mode=real&scope=${scope}`)),
         fetch(apiUrl('/api/universe')),
       ]);
       if (expRes.ok) setData(await expRes.json());
@@ -220,7 +228,8 @@ export default function SectorExposurePanel() {
         <div>
           <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>Sector Exposure Simulator</h3>
           <p style={{ margin: '6px 0 0', fontSize: '12.5px', color: 'var(--text-secondary)', maxWidth: '680px', lineHeight: 1.5 }}>
-            Consolidated holdings (trading account + external lots) mapped to canonical GICS sectors and compared to {data?.benchmark?.name || 'S&P 500'} weights ({data?.benchmark?.as_of || 'benchmark'}). Alerts trigger when deviations exceed {data?.alert_threshold_pp ?? 5}pp.
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{SCOPE_LABEL[scope]}</span>
+            {' '}mapped to canonical GICS sectors vs {data?.benchmark?.name || 'S&P 500'} weights ({data?.benchmark?.as_of || 'benchmark'}). Alerts trigger when deviations exceed {data?.alert_threshold_pp ?? 5}pp.
           </p>
         </div>
         <button

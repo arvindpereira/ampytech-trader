@@ -183,8 +183,8 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
     return recs
 
 
-def collect_consolidated_positions(db, mode: str = "real") -> List[dict]:
-    """Internal trading account + external equity lots, merged by ticker."""
+def collect_consolidated_positions(db, mode: str = "real", scope: str = "all") -> List[dict]:
+    """Consolidated positions. scope: 'all'=internal+external, 'internal'=trading only, 'external'=lots only."""
     from app.database import EquityLot, ExternalAccount, VirtualPosition
 
     merged: Dict[str, dict] = {}
@@ -211,26 +211,28 @@ def collect_consolidated_positions(db, mode: str = "real") -> List[dict]:
             merged[tk]["accounts"].append(account)
 
     # Internal trading (virtual / broker-backed)
-    try:
-        from execution.executor import get_alpaca_api
+    if scope in ("all", "internal"):
+        try:
+            from execution.executor import get_alpaca_api
 
-        api = get_alpaca_api()
-        for p in api.list_positions():
-            add(p.symbol, float(p.qty), float(p.current_price), "trading_account", "Alpaca")
-    except Exception:
-        for p in db.query(VirtualPosition).filter(
-            VirtualPosition.mode == pos_mode, VirtualPosition.quantity > 0
-        ).all():
-            px = _latest_price(db, p.ticker, p.entry_price)
-            add(p.ticker, p.quantity, px, "trading_account", pos_mode)
+            api = get_alpaca_api()
+            for p in api.list_positions():
+                add(p.symbol, float(p.qty), float(p.current_price), "trading_account", "Alpaca")
+        except Exception:
+            for p in db.query(VirtualPosition).filter(
+                VirtualPosition.mode == pos_mode, VirtualPosition.quantity > 0
+            ).all():
+                px = _latest_price(db, p.ticker, p.entry_price)
+                add(p.ticker, p.quantity, px, "trading_account", pos_mode)
 
     # External brokerage lots
-    external_labels = {a.account_label for a in db.query(ExternalAccount).all()}
-    for lot in db.query(EquityLot).all():
-        if lot.account_label not in external_labels:
-            continue
-        px = _latest_price(db, lot.ticker, lot.cost_basis_per_share)
-        add(lot.ticker, lot.shares, px, "external", lot.account_label or "external")
+    if scope in ("all", "external"):
+        external_labels = {a.account_label for a in db.query(ExternalAccount).all()}
+        for lot in db.query(EquityLot).all():
+            if lot.account_label not in external_labels:
+                continue
+            px = _latest_price(db, lot.ticker, lot.cost_basis_per_share)
+            add(lot.ticker, lot.shares, px, "external", lot.account_label or "external")
 
     rows = list(merged.values())
     for r in rows:
@@ -240,8 +242,8 @@ def collect_consolidated_positions(db, mode: str = "real") -> List[dict]:
     return rows
 
 
-def analyze_sector_exposure(db, mode: str = "real", *, refresh_metadata: bool = True) -> dict:
-    positions = collect_consolidated_positions(db, mode=mode)
+def analyze_sector_exposure(db, mode: str = "real", *, scope: str = "all", refresh_metadata: bool = True) -> dict:
+    positions = collect_consolidated_positions(db, mode=mode, scope=scope)
     total = sum(p["market_value"] for p in positions)
     if total <= 0:
         return {

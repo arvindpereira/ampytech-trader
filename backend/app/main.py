@@ -2420,11 +2420,14 @@ def get_external_accounts(db=Depends(get_db)):
 
 
 @app.get("/api/portfolio/sector-exposure")
-def portfolio_sector_exposure(mode: str = "real", refresh: bool = True, db=Depends(get_db)):
-    """Consolidated sector exposure vs S&P 500 GICS weights (trading + external accounts)."""
+def portfolio_sector_exposure(mode: str = "real", refresh: bool = True,
+                              scope: str = "all", db=Depends(get_db)):
+    """Sector exposure vs S&P 500. scope: all=internal+external, internal=trading only, external=lots only."""
     from ml_engine.sector_exposure_analyzer import analyze_sector_exposure
 
-    return analyze_sector_exposure(db, mode=mode, refresh_metadata=refresh)
+    if scope not in ("all", "internal", "external"):
+        scope = "all"
+    return analyze_sector_exposure(db, mode=mode, scope=scope, refresh_metadata=refresh)
 
 
 @app.post("/api/external/accounts/{account_label}/strategy")
