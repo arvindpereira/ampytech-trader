@@ -85,7 +85,7 @@ export default function SectorExposurePanel() {
       if (expRes.ok) setData(await expRes.json());
       if (uniRes.ok) {
         const j = await uniRes.json();
-        setUniverseSet(new Set((j.tickers || []).map((t: { ticker: string }) => t.ticker)));
+        setUniverseSet(new Set((j.tickers || []) as string[]));
       }
     } catch (e) {
       console.error(e);
