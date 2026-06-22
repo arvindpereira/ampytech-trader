@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Integer, Date, PrimaryKeyConstraint, Boolean
+from sqlalchemy import Column, String, Float, Integer, Date, PrimaryKeyConstraint, Boolean, Text
 from app.database.connection import Base
 
 class RecentPrice(Base):
@@ -587,6 +587,64 @@ class ExternalAnalystItem(Base):
     target_price = Column(Float, nullable=True)
     raw_json = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
+
+
+class EarningsTranscript(Base):
+    """Full earnings call transcripts (Finnhub Professional+)."""
+    __tablename__ = "earnings_transcripts"
+
+    ticker = Column(String, nullable=False)
+    finnhub_id = Column(String, nullable=False)
+    quarter = Column(Integer, nullable=True)
+    year = Column(Integer, nullable=True)
+    period = Column(String, nullable=True)  # e.g. 2024Q1
+    call_date = Column(String, nullable=True)
+    title = Column(String, nullable=True)
+    content = Column(Text, nullable=True)
+    summary_excerpt = Column(String, nullable=True)
+    source = Column(String, nullable=False, default="finnhub:transcript")
+    fetched_at = Column(String, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "finnhub_id", name="pk_earnings_transcripts"),
+    )
+
+
+class EarningsEstimateSnapshot(Base):
+    """Point-in-time EPS estimate snapshots for revision tracking."""
+    __tablename__ = "earnings_estimate_snapshots"
+
+    ticker = Column(String, nullable=False)
+    period = Column(String, nullable=False)  # YYYY-MM-DD fiscal period end
+    freq = Column(String, nullable=False, default="quarterly")
+    as_of_date = Column(String, nullable=False)
+    eps_avg = Column(Float, nullable=True)
+    eps_high = Column(Float, nullable=True)
+    eps_low = Column(Float, nullable=True)
+    num_analysts = Column(Integer, nullable=True)
+    raw_json = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "period", "freq", "as_of_date", name="pk_earnings_estimate_snapshots"),
+    )
+
+
+class EarningsSurprise(Base):
+    """Historical reported EPS vs estimate."""
+    __tablename__ = "earnings_surprises"
+
+    ticker = Column(String, nullable=False)
+    period = Column(String, nullable=False)
+    report_date = Column(String, nullable=True)
+    eps_actual = Column(Float, nullable=True)
+    eps_estimate = Column(Float, nullable=True)
+    surprise_pct = Column(Float, nullable=True)
+    raw_json = Column(String, nullable=True)
+    fetched_at = Column(String, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "period", name="pk_earnings_surprises"),
+    )
 
 
 class ResearchWatchlist(Base):

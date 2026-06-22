@@ -7,36 +7,12 @@ from app.core.config import RESEARCH_MAX_TICKERS, TICKER_UNIVERSE
 from ml_engine.intent_router import RoutedQuery
 from ml_engine.rank_engine import rank_tickers
 from ml_engine.research_framework import GICS_SECTOR_ETF, METHODOLOGY_VERSION, aggregate_sector_metrics
-
-# Query phrases → GICS-style sector names (from ticker_metadata.sector)
-_SECTOR_ALIASES = {
-    "technology": "Technology",
-    "tech": "Technology",
-    "semiconductor": "Technology",
-    "semiconductors": "Technology",
-    "semi": "Technology",
-    "chip": "Technology",
-    "software": "Technology",
-    "financial": "Financial Services",
-    "financials": "Financial Services",
-    "bank": "Financial Services",
-    "banks": "Financial Services",
-    "healthcare": "Healthcare",
-    "health": "Healthcare",
-    "pharma": "Healthcare",
-    "energy": "Energy",
-    "oil": "Energy",
-    "consumer": "Consumer Defensive",
-    "staples": "Consumer Defensive",
-    "industrial": "Industrials",
-    "industrials": "Industrials",
-    "communication": "Communication Services",
-    "telecom": "Communication Services",
-    "real estate": "Real Estate",
-    "utilities": "Utilities",
-    "materials": "Basic Materials",
-    "basic materials": "Basic Materials",
-}
+from ml_engine.sector_resolver import (
+    match_sectors_in_query,
+    merge_constituents,
+    sector_handbook_for,
+    seed_tickers,
+)
 
 
 def _norm_sector(name: str) -> str:
@@ -44,19 +20,17 @@ def _norm_sector(name: str) -> str:
 
 
 def detect_sectors_in_query(query: str) -> List[str]:
-    low = (query or "").lower()
-    found: List[str] = []
-    for phrase, sector in sorted(_SECTOR_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
-        if phrase in low and sector not in found:
-            found.append(sector)
-    return found
+    return match_sectors_in_query(query)
 
 
 def list_sectors(db) -> List[str]:
     from app.database import CompanySnapshot
+    from ml_engine.sector_resolver import list_sector_entries
 
+    catalog = {_norm_sector(s.get("sector")) for s in list_sector_entries() if s.get("sector")}
     rows = db.query(CompanySnapshot.sector).filter(CompanySnapshot.sector.isnot(None)).distinct().all()
-    return sorted({_norm_sector(r[0]) for r in rows if r[0]})
+    db_sectors = {_norm_sector(r[0]) for r in rows if r[0]}
+    return sorted(catalog | db_sectors)
 
 
 def _latest_snaps_by_ticker(db, sector: str, as_of_date: Optional[str] = None) -> list:
@@ -98,25 +72,37 @@ def _spy_momentum(db) -> Optional[float]:
 def sector_constituents(db, sector: str, limit: int = RESEARCH_MAX_TICKERS) -> List[str]:
     snaps = _latest_snaps_by_ticker(db, sector)
     universe = {t.upper() for t in TICKER_UNIVERSE}
-    seen: List[str] = []
+    kb_seen: List[str] = []
     for s in snaps:
         t = (s.ticker or "").upper().strip()
-        if t and t not in seen and (t in universe or len(seen) < limit):
-            seen.append(t)
-        if len(seen) >= limit:
+        if t and t not in kb_seen and (t in universe or len(kb_seen) < limit):
+            kb_seen.append(t)
+        if len(kb_seen) >= limit:
             break
-    return seen
+    return merge_constituents(kb_seen, sector, limit=limit)
 
 
 def aggregate_sector(db, sector: str, as_of_date: Optional[str] = None) -> Dict:
     snaps = _latest_snaps_by_ticker(db, sector, as_of_date)
+    handbook = sector_handbook_for([sector])
     if not snaps:
-        return {"sector": sector, "ticker_count": 0, "methodology_version": METHODOLOGY_VERSION}
+        seeds = seed_tickers(sector, limit=RESEARCH_MAX_TICKERS)
+        return {
+            "sector": sector,
+            "ticker_count": len(seeds),
+            "methodology_version": METHODOLOGY_VERSION,
+            "etf_proxy": GICS_SECTOR_ETF.get(_norm_sector(sector)),
+            "constituents": seeds,
+            "handbook_only": True,
+            "sector_handbook": handbook[0] if handbook else None,
+        }
     tickers = [s.ticker for s in snaps]
     caps = _market_caps(db, tickers)
     agg = aggregate_sector_metrics(snaps, market_caps=caps, spy_momentum_3m=_spy_momentum(db))
     agg["etf_proxy"] = agg.get("etf_proxy") or GICS_SECTOR_ETF.get(_norm_sector(sector))
-    agg["constituents"] = tickers[:RESEARCH_MAX_TICKERS]
+    agg["constituents"] = merge_constituents(tickers, sector, limit=RESEARCH_MAX_TICKERS)
+    if handbook:
+        agg["sector_handbook"] = handbook[0]
     return agg
 
 
@@ -125,6 +111,10 @@ def screen_sectors(db, sort_by: str = "upside", *, ascending: bool = False) -> L
     rows = []
     for sec in sectors:
         agg = aggregate_sector(db, sec)
+        if agg.get("handbook_only"):
+            agg["screen_score"] = 0.0
+            rows.append(agg)
+            continue
         if agg.get("ticker_count", 0) < 2:
             continue
         score_key = {
@@ -169,6 +159,12 @@ def resolve_sector_screen(routed: RoutedQuery, db) -> Tuple[List[str], Dict]:
         tickers = list(top.get("constituents") or [])[:RESEARCH_MAX_TICKERS]
         sectors = [top["sector"]]
 
+    if not tickers and sectors:
+        for sec in sectors:
+            for t in seed_tickers(sec):
+                if t not in tickers:
+                    tickers.append(t)
+
     if not tickers:
         from ml_engine.research_dossier import get_many
 
@@ -179,9 +175,11 @@ def resolve_sector_screen(routed: RoutedQuery, db) -> Tuple[List[str], Dict]:
     meta = {
         "sectors": sectors,
         "sector_rankings": sector_rankings[:8],
+        "sector_handbook": sector_handbook_for(sectors),
         "sort_by": sort_by,
         "methodology_version": METHODOLOGY_VERSION,
         "screen_framing": "overvalued" if ascending else "undervalued" if "undervalued" in low else "neutral",
+        "handbook_source": "research_sectors.json",
     }
     return tickers[:RESEARCH_MAX_TICKERS], meta
 
@@ -196,4 +194,5 @@ def sector_facts_for_synthesis(db, sector: str) -> Dict:
         "aggregate": agg,
         "ranked_constituents": rank_tickers(facts),
         "facts_by_ticker": facts,
+        "sector_handbook": agg.get("sector_handbook"),
     }

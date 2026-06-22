@@ -59,6 +59,11 @@ _SPILLOVER_KEYWORDS = (
 )
 
 _INTENT_KEYWORDS = {
+    "earnings_report": [
+        "transcript", "earnings call", "earnings report", "what did management",
+        "management say", "guidance", "quarterly earnings", "earnings analysis",
+        "read the earnings", "last quarter",
+    ],
     "theme_rank": ["rank", "ranking", "rank-ordered", "most likely", "least successful", "outlook for", "companies in"],
     "ticker_outlook": ["outlook", "price target", "targets", "next year", "forecast", "consensus"],
     "sector_screen": ["sector", "under-valued", "undervalued", "over-valued", "overvalued", "sectors are"],
@@ -111,7 +116,10 @@ def _detect_intent(text: str) -> str:
     scores = {intent: sum(1 for k in kws if k in low) for intent, kws in _INTENT_KEYWORDS.items()}
     best = max(scores, key=scores.get)
     if scores[best] > 0:
-        return best
+        if best == "earnings_report" and not _extract_tickers(text):
+            pass
+        else:
+            return best
     if _is_spillover_intent(low) and _extract_tickers(text):
         return "event_spillover"
     if any(k in low for k in ("quantum", "companies who")):

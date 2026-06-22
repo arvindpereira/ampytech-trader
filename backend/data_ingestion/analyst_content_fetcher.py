@@ -181,10 +181,17 @@ def fetch_massive_ratings(db, ticker: str) -> int:
 
 def refresh_ticker(db, ticker: str) -> dict:
     ticker = ticker.upper().strip()
-    stats = {"news": 0, "finnhub": 0, "massive": 0}
+    stats = {"news": 0, "finnhub": 0, "massive": 0, "earnings": 0}
     stats["news"] = promote_news_headlines(db, ticker)
     stats["finnhub"] = fetch_finnhub_consensus(db, ticker)
     stats["massive"] = fetch_massive_ratings(db, ticker)
+    try:
+        from data_ingestion.earnings_content_fetcher import refresh_ticker as refresh_earnings
+
+        estats = refresh_earnings(db, ticker)
+        stats["earnings"] = sum(estats.values())
+    except Exception:
+        pass
     db.commit()
     return stats
 

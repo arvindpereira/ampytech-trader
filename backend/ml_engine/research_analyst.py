@@ -6,6 +6,7 @@ ProgressCb = Optional[Callable[[int, str], None]]
 from ml_engine.analyst_synthesizer import (
     synthesize_crowding,
     synthesize_cross_theme,
+    synthesize_earnings,
     synthesize_sector,
     synthesize_spillover,
     synthesize_theme,
@@ -18,6 +19,7 @@ from ml_engine.research_llm_router import RouteDecision, decide
 from ml_engine.research_templates import (
     crowding_shell,
     cross_theme_shell,
+    earnings_report_shell,
     event_spillover_shell,
     lookup_template,
     sector_screen_shell,
@@ -82,6 +84,7 @@ def build_report(
             query=routed.raw_query,
             news_by_ticker=news_by_ticker,
             web_items=web_items,
+            sector_handbook=expansion.get("sector_handbook"),
         )
         if syn.get("error"):
             syn = {"caveats": syn.get("caveats", [])}
@@ -154,6 +157,28 @@ def build_report(
         progress(85, "Assembling spillover report")
         return event_spillover_shell(primary, related, facts_by_ticker, syn, expansion)
 
+    if routed.intent == "earnings_report":
+        ticker = routed.tickers[0] if routed.tickers else None
+        if not ticker:
+            return stub_shell("earnings_report", "No ticker detected. Mention a symbol like NVDA.")
+        facts = facts_by_ticker.get(ticker, {})
+        items = items_by_ticker.get(ticker, [])
+        earnings_meta = expansion or {}
+        progress(35, f"Synthesizing earnings analysis ({_tier_label(route.tier)})")
+        syn = synthesize_earnings(
+            ticker,
+            facts,
+            items,
+            earnings_meta,
+            tier=route.tier,
+            query=routed.raw_query,
+            news_rows=news_by_ticker.get(ticker, []),
+        )
+        if syn.get("error"):
+            syn = {"caveats": syn.get("caveats", [])}
+        progress(85, "Assembling earnings report")
+        return earnings_report_shell(ticker, facts, earnings_meta, syn)
+
     if routed.intent == "ticker_outlook":
         ticker = routed.tickers[0] if routed.tickers else None
         if not ticker:
@@ -181,6 +206,19 @@ def build_report(
     return stub_shell(routed.intent, "Unsupported intent.")
 
 
+def _prioritize_earnings_items(items: list) -> list:
+    """Surface transcript and earnings items first for synthesis."""
+    def rank(it):
+        src = (it.source or "").lower()
+        if "transcript" in src:
+            return (0, it.published_at or "")
+        if src.startswith("finnhub:") or "earnings" in src:
+            return (1, it.published_at or "")
+        return (2, it.published_at or "")
+
+    return sorted(items, key=rank)
+
+
 def prepare_context(
     tickers: List[str],
     db,
@@ -192,7 +230,7 @@ def prepare_context(
     from ml_engine.news_retriever import retrieve_for_query
 
     facts_by_ticker = get_many(tickers, db=db)
-    items_by_ticker = {t: recent_items(db, t) for t in tickers}
+    items_by_ticker = {t: _prioritize_earnings_items(recent_items(db, t)) for t in tickers}
     news_by_ticker = {t: recent_news_headlines(db, t) for t in tickers}
 
     if query.strip():

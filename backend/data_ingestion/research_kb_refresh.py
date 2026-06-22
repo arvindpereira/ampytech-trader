@@ -123,6 +123,13 @@ def materialize_ticker(db, ticker: str, as_of_date: Optional[str] = None) -> Com
     news_30, news_cnt = _news_agg(db, ticker, 30)
     fund = _fundamentals_summary(db, ticker)
 
+    try:
+        from data_ingestion.earnings_content_fetcher import earnings_facts_for_ticker
+
+        earnings = earnings_facts_for_ticker(db, ticker)
+    except Exception:
+        earnings = {}
+
     facts = {
         "ticker": _field(ticker, "universe", as_of),
         "price": _field(price, "daily_prices", as_of),
@@ -145,6 +152,19 @@ def materialize_ticker(db, ticker: str, as_of_date: Optional[str] = None) -> Com
         "fundamentals_summary": _field(fund, "ticker_fundamentals", as_of, "full" if fund else "missing"),
         "sector": _field(meta.sector if meta else None, "ticker_metadata", as_of),
         "industry": _field(meta.industry if meta else None, "ticker_metadata", as_of),
+        "eps_revision_30d": _field(earnings.get("eps_revision_30d"), "earnings_estimate_snapshots", as_of),
+        "next_eps_avg": _field(
+            (earnings.get("next_eps_estimate") or {}).get("eps_avg"),
+            "earnings_estimate_snapshots",
+            as_of,
+        ),
+        "last_earnings_surprise_pct": _field(
+            earnings.get("last_earnings_surprise_pct"), "earnings_surprises", as_of
+        ),
+        "latest_transcript_period": _field(
+            earnings.get("latest_transcript_period"), "earnings_transcripts", as_of,
+            "full" if earnings.get("has_transcript") else "missing",
+        ),
     }
     keys = [k for k in facts if k != "fundamentals_summary"]
     full = sum(1 for k in keys if facts[k].get("coverage") == "full")
@@ -275,6 +295,12 @@ def run_refresh(tickers: Optional[Iterable[str]] = None, fetch_analyst: bool = T
 
         for sec in list_sectors(db):
             materialize_sector(db, sec)
+        try:
+            from data_ingestion.sector_catalog_refresh import refresh_catalog
+
+            refresh_catalog(db=db, top_n=5, fetch=True, portfolio_only=True)
+        except Exception:
+            pass
         return {"status": "ok", "tickers": len(universe), "as_of": _today()}
     finally:
         db.close()

@@ -212,6 +212,21 @@ fetch-forecasts:
 research-kb-refresh:
 	cd backend && $(VENV_PY) data_ingestion/research_kb_refresh.py
 
+research-sectors-refresh:
+	cd backend && $(VENV_PY) data_ingestion/sector_catalog_refresh.py --portfolio-only
+
+research-sectors-refresh-full:
+	cd backend && $(VENV_PY) data_ingestion/sector_catalog_refresh.py
+
+research-sectors-refresh-fast:
+	cd backend && $(VENV_PY) data_ingestion/sector_catalog_refresh.py --no-fetch
+
+research-calibrate-factors:
+	cd backend && $(VENV_PY) -m ml_engine.factor_calibrator
+
+research-calibrate-factors-dry:
+	cd backend && $(VENV_PY) -m ml_engine.factor_calibrator --no-write
+
 research-wiki-export:
 	cd backend && $(VENV_PY) -c "from ml_engine.research_wiki_export import rebuild_all; print(rebuild_all())"
 

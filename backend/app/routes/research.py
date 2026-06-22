@@ -79,6 +79,9 @@ def _run_query_job(jid, req_data):
         if expansion.get("error") == "no_holdings":
             _job_update(jid, status="error", error="No portfolio holdings found for crowding analysis.")
             return
+        if expansion.get("error") == "no_ticker":
+            _job_update(jid, status="error", error=expansion.get("message", "No ticker detected for earnings analysis."))
+            return
         if not tickers and routed.intent == "ticker_outlook":
             _job_update(jid, status="error", error="No ticker detected in query.")
             return
@@ -97,8 +100,12 @@ def _run_query_job(jid, req_data):
             _job_update(jid, progress=12, stage=f"Including portfolio peers: {peers}")
 
         _job_update(jid, progress=15, stage="Refreshing knowledge base")
+        from data_ingestion.earnings_content_fetcher import refresh_ticker as refresh_earnings_data
+
         for t in tickers:
             try:
+                if routed.intent == "earnings_report":
+                    refresh_earnings_data(db, t)
                 materialize_ticker(db, t)
             except Exception:
                 pass
@@ -293,11 +300,20 @@ def feedback_summary_route():
 
 @router.get("/methodology")
 def methodology():
-    from ml_engine.research_framework import METHODOLOGY_VERSION, STOCK_FACTOR_WEIGHTS, GICS_SECTOR_ETF
+    from ml_engine.research_framework import (
+        GICS_SECTOR_ETF,
+        METHODOLOGY_VERSION,
+        STOCK_FACTOR_WEIGHTS,
+        calibration_metadata,
+        get_stock_factor_weights,
+    )
+    cal = calibration_metadata()
     return {
         "version": METHODOLOGY_VERSION,
         "doc": "docs/research-methodology.md",
-        "stock_factor_weights": STOCK_FACTOR_WEIGHTS,
+        "stock_factor_weights": get_stock_factor_weights(),
+        "default_factor_weights": STOCK_FACTOR_WEIGHTS,
+        "calibration": cal,
         "sector_etfs": GICS_SECTOR_ETF,
     }
 
@@ -346,6 +362,43 @@ def query_result(job_id: str):
 def get_themes():
     from ml_engine.theme_resolver import list_themes
     return {"themes": list_themes()}
+
+
+@router.get("/sectors")
+def get_sectors():
+    """GICS sector handbook — ETF proxies, cap-ranked seeds, portfolio classification."""
+    from ml_engine.sector_resolver import list_sectors as list_sector_catalog, load_catalog, portfolio_by_sector
+    from ml_engine.research_framework import GICS_SECTOR_ETF
+
+    cat = load_catalog()
+    return {
+        "sectors": list_sector_catalog(),
+        "sector_etfs": GICS_SECTOR_ETF,
+        "source": "backend/data/research_sectors.json",
+        "last_refreshed_at": cat.get("last_refreshed_at"),
+        "portfolio_by_sector": portfolio_by_sector(),
+    }
+
+
+@router.get("/portfolio/sectors")
+def portfolio_sectors():
+    """Portfolio tickers classified by GICS sector (internal + external holdings)."""
+    from ml_engine.portfolio_holdings import all_holdings, portfolio_tickers
+    from ml_engine.sector_resolver import load_catalog, portfolio_classification
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return {
+            "tickers": portfolio_tickers(db),
+            "holdings": all_holdings(db),
+            "classification": portfolio_classification(),
+            "by_sector": load_catalog().get("portfolio_by_sector") or {},
+            "last_refreshed_at": load_catalog().get("last_refreshed_at"),
+            "refresh": "make research-sectors-refresh",
+        }
+    finally:
+        db.close()
 
 
 @router.get("/threads")

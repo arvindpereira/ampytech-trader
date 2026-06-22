@@ -1,0 +1,3584 @@
+{
+  "version": "2026.06-gics-v1",
+  "source_doc": "perplexity_sectors.md",
+  "taxonomy": "GICS",
+  "description": "GICS sector handbook seed \u2014 representative large-cap US names, ETF proxies, and query aliases. Live metrics come from company_snapshots; ranks here are structural priors.",
+  "last_refreshed_at": "2026-06-22 06:26:51",
+  "seeds_top_n": 5,
+  "metadata_universe_size": 118,
+  "classified_equity_count": 65,
+  "portfolio_classification": [
+    {
+      "ticker": "AAPL",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 4376979237699.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Robinhood Joint (116424851826)",
+        "external:Vanguard Joint (7062)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Robinhood Joint (116424851826)",
+        "Vanguard Joint (7062)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "ADBE",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 77576101456.00002,
+      "sources": [
+        "equity_lot",
+        "virtual"
+      ],
+      "accounts": [
+        "E*TRADE Stock Plan",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "AMAT",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 489960280875.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "AMD",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 876235828903.0001,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint (116424851826)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint (116424851826)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "AMZN",
+      "sector": "Consumer Cyclical",
+      "industry": "Retail",
+      "market_cap": 2628929953590.9995,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "ARM",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 467585430908.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "AVAV",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "market_cap": 8469304156.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "AVGO",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 1957030594175.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "BABA",
+      "sector": "Consumer Cyclical",
+      "industry": "Retail",
+      "market_cap": 256823348217.222,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Vanguard Joint (7062)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "BAC",
+      "sector": "Financial Services",
+      "industry": "Banking",
+      "market_cap": 398828382074.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "BB",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 6927246307.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "BRK.B",
+      "sector": "Financial Services",
+      "industry": "Financial Services",
+      "market_cap": 1055400327699.8011,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "BYND",
+      "sector": "Consumer Defensive",
+      "industry": "Food Products",
+      "market_cap": 366356921.99999994,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "CAT",
+      "sector": "Industrials",
+      "industry": "Machinery",
+      "market_cap": 454105194299.99994,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "CRM",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 124307819000.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "CRWD",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 174341258441.00003,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "DASH",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Restaurants & Leisure",
+      "market_cap": 75579777544.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "DELL",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 265471087065.0001,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "DKNG",
+      "sector": "Consumer Cyclical",
+      "industry": "Hotels, Restaurants & Leisure",
+      "market_cap": 13092839117.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "FDX",
+      "sector": "Industrials",
+      "industry": "Logistics & Transportation",
+      "market_cap": 77833524922.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "FSLY",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 2801349940.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "GE",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "market_cap": 373139160199.99994,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "GEV",
+      "sector": "Industrials",
+      "industry": "Electrical Equipment",
+      "market_cap": 298206641706.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "GLD",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": false
+    },
+    {
+      "ticker": "GOOGL",
+      "sector": "Communication Services",
+      "industry": "Media",
+      "market_cap": 4480603316799.999,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "HMC",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobiles",
+      "market_cap": 5504067840332.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "HOOD",
+      "sector": "Financial Services",
+      "industry": "Financial Services",
+      "market_cap": 97476170909.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Robinhood Joint (116424851826)",
+        "external:Vanguard Joint (7062)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Robinhood Joint (116424851826)",
+        "Vanguard Joint (7062)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "IAU",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "IBM",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 234125422485.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "INTC",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 673433767609.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "INTU",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 73034375610.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "ISRG",
+      "sector": "Healthcare",
+      "industry": "Health Care",
+      "market_cap": 144066360354.00003,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "IWF",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "JKS",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 976027628.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "JPM",
+      "sector": "Financial Services",
+      "industry": "Banking",
+      "market_cap": 871430725043.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "KDK",
+      "sector": "Consumer Cyclical",
+      "industry": "Auto Components",
+      "market_cap": 1202385961.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "KMX",
+      "sector": "Consumer Cyclical",
+      "industry": "Retail",
+      "market_cap": 7610100054.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "LUV",
+      "sector": "Industrials",
+      "industry": "Airlines",
+      "market_cap": 23446475569.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "META",
+      "sector": "Communication Services",
+      "industry": "Media",
+      "market_cap": 1465228522512.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Vanguard Joint (7062)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "MMM",
+      "sector": "Industrials",
+      "industry": "Industrial Conglomerates",
+      "market_cap": 83763705259.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "MRNA",
+      "sector": "Healthcare",
+      "industry": "Biotechnology",
+      "market_cap": 25378448498.999996,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "MSFT",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 2818348030637.0005,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "MU",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 1278839077614.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "NFLX",
+      "sector": "Communication Services",
+      "industry": "Media",
+      "market_cap": 325831563972.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Robinhood Joint (116424851826)",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Robinhood Joint (116424851826)",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "NIO",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobiles",
+      "market_cap": 12110299066.64508,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "NOK",
+      "sector": "Communication Services",
+      "industry": "Communications",
+      "market_cap": 65778143526.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "NSANY",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobiles",
+      "market_cap": 1144412420322.0,
+      "sources": [
+        "equity_lot"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "NVDA",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 5098698059082.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Vanguard Joint (7062)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "ORCL",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 530026479314.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "PALL",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "PINS",
+      "sector": "Communication Services",
+      "industry": "Media",
+      "market_cap": 11354389216.999998,
+      "sources": [
+        "equity_lot",
+        "virtual"
+      ],
+      "accounts": [
+        "Charles Schwab",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "PLTR",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 307982712702.00006,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "PYPL",
+      "sector": "Financial Services",
+      "industry": "Financial Services",
+      "market_cap": 37498304591.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "QCOM",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 238319940643.00003,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "QQQ",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": false
+    },
+    {
+      "ticker": "REMX",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "RGTI",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 7100038650.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "ROKU",
+      "sector": "Communication Services",
+      "industry": "Media",
+      "market_cap": 20481604189.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Robinhood Joint (116424851826)",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Robinhood Joint (116424851826)",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "RTX",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "market_cap": 249944437907.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "RUN",
+      "sector": "Industrials",
+      "industry": "Electrical Equipment",
+      "market_cap": 3225186454.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "RYCEY",
+      "sector": "Industrials",
+      "industry": "Aerospace & Defense",
+      "market_cap": 117686682635.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "SHOP",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 141249713665.23578,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Robinhood Joint (116424851826)",
+        "external:Vanguard Joint (7062)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Robinhood Joint (116424851826)",
+        "Vanguard Joint (7062)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "SMCI",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 19833125647.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "SNDK",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 323539119450.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "SNOW",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 80511713091.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "SNPS",
+      "sector": "Technology",
+      "industry": "Technology",
+      "market_cap": 87220748900.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "SPY",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)"
+      ],
+      "is_equity": false
+    },
+    {
+      "ticker": "TSLA",
+      "sector": "Consumer Cyclical",
+      "industry": "Automobiles",
+      "market_cap": 1504129721028.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint (116424851826)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Joint (116424851826)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "TSM",
+      "sector": "Technology",
+      "industry": "Semiconductors",
+      "market_cap": 62497009628906.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "UBER",
+      "sector": "Industrials",
+      "industry": "Road & Rail",
+      "market_cap": 145830311048.0,
+      "sources": [
+        "virtual"
+      ],
+      "accounts": [
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VASGX",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VFIAX",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VOO",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VSMGX",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VTI",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VTSAX",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VUG",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "VXUS",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "WMT",
+      "sector": "Consumer Cyclical",
+      "industry": "Retail",
+      "market_cap": 963166320000.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Individual (706393097)",
+        "virtual"
+      ],
+      "accounts": [
+        "Robinhood Individual (706393097)",
+        "real"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "XYZ",
+      "sector": "Financial Services",
+      "industry": "Financial Services",
+      "market_cap": 44448120000.0,
+      "sources": [
+        "equity_lot",
+        "external:Robinhood Joint",
+        "external:Vanguard Joint (7062)"
+      ],
+      "accounts": [
+        "Robinhood Joint",
+        "Vanguard Joint (7062)"
+      ],
+      "is_equity": true
+    },
+    {
+      "ticker": "ZZZZ",
+      "sector": null,
+      "industry": null,
+      "market_cap": null,
+      "sources": [
+        "external:Robinhood"
+      ],
+      "accounts": [
+        "Robinhood"
+      ],
+      "is_equity": true
+    }
+  ],
+  "portfolio_by_sector": {
+    "Technology": [
+      {
+        "ticker": "AAPL",
+        "industry": "Technology",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Robinhood Joint (116424851826)",
+          "external:Vanguard Joint (7062)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Robinhood Joint (116424851826)",
+          "Vanguard Joint (7062)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "ADBE",
+        "industry": "Technology",
+        "sources": [
+          "equity_lot",
+          "virtual"
+        ],
+        "accounts": [
+          "E*TRADE Stock Plan",
+          "real"
+        ]
+      },
+      {
+        "ticker": "AMAT",
+        "industry": "Semiconductors",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "AMD",
+        "industry": "Semiconductors",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint (116424851826)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint (116424851826)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "ARM",
+        "industry": "Semiconductors",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "AVGO",
+        "industry": "Semiconductors",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "BB",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "CRM",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "CRWD",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "DELL",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "FSLY",
+        "industry": "Technology",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "IBM",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "INTC",
+        "industry": "Semiconductors",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "INTU",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "JKS",
+        "industry": "Semiconductors",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "MSFT",
+        "industry": "Technology",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Vanguard Joint (7062)"
+        ]
+      },
+      {
+        "ticker": "MU",
+        "industry": "Semiconductors",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "NVDA",
+        "industry": "Semiconductors",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Vanguard Joint (7062)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "ORCL",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "PLTR",
+        "industry": "Technology",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "QCOM",
+        "industry": "Semiconductors",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "RGTI",
+        "industry": "Semiconductors",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "SHOP",
+        "industry": "Technology",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint",
+          "external:Robinhood Joint (116424851826)",
+          "external:Vanguard Joint (7062)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Joint",
+          "Robinhood Joint (116424851826)",
+          "Vanguard Joint (7062)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "SMCI",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "SNDK",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "SNOW",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "SNPS",
+        "industry": "Technology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "TSM",
+        "industry": "Semiconductors",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      }
+    ],
+    "Consumer Cyclical": [
+      {
+        "ticker": "AMZN",
+        "industry": "Retail",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "BABA",
+        "industry": "Retail",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Vanguard Joint (7062)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "DASH",
+        "industry": "Hotels, Restaurants & Leisure",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "DKNG",
+        "industry": "Hotels, Restaurants & Leisure",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "HMC",
+        "industry": "Automobiles",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)"
+        ]
+      },
+      {
+        "ticker": "KDK",
+        "industry": "Auto Components",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)"
+        ]
+      },
+      {
+        "ticker": "KMX",
+        "industry": "Retail",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "NIO",
+        "industry": "Automobiles",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "NSANY",
+        "industry": "Automobiles",
+        "sources": [
+          "equity_lot"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)"
+        ]
+      },
+      {
+        "ticker": "TSLA",
+        "industry": "Automobiles",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "WMT",
+        "industry": "Retail",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      }
+    ],
+    "Industrials": [
+      {
+        "ticker": "AVAV",
+        "industry": "Aerospace & Defense",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "CAT",
+        "industry": "Machinery",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "FDX",
+        "industry": "Logistics & Transportation",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "GE",
+        "industry": "Aerospace & Defense",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "GEV",
+        "industry": "Electrical Equipment",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "LUV",
+        "industry": "Airlines",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "MMM",
+        "industry": "Industrial Conglomerates",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "RTX",
+        "industry": "Aerospace & Defense",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "RUN",
+        "industry": "Electrical Equipment",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "RYCEY",
+        "industry": "Aerospace & Defense",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint (116424851826)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint (116424851826)"
+        ]
+      },
+      {
+        "ticker": "UBER",
+        "industry": "Road & Rail",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      }
+    ],
+    "Financial Services": [
+      {
+        "ticker": "BAC",
+        "industry": "Banking",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "BRK.B",
+        "industry": "Financial Services",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)"
+        ]
+      },
+      {
+        "ticker": "HOOD",
+        "industry": "Financial Services",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Robinhood Joint (116424851826)",
+          "external:Vanguard Joint (7062)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Robinhood Joint (116424851826)",
+          "Vanguard Joint (7062)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "JPM",
+        "industry": "Banking",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "PYPL",
+        "industry": "Financial Services",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)"
+        ],
+        "accounts": [
+          "Robinhood Joint",
+          "Vanguard Joint (7062)"
+        ]
+      },
+      {
+        "ticker": "XYZ",
+        "industry": "Financial Services",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)"
+        ],
+        "accounts": [
+          "Robinhood Joint",
+          "Vanguard Joint (7062)"
+        ]
+      }
+    ],
+    "Consumer Defensive": [
+      {
+        "ticker": "BYND",
+        "industry": "Food Products",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint (116424851826)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Joint (116424851826)",
+          "real"
+        ]
+      }
+    ],
+    "Communication Services": [
+      {
+        "ticker": "GOOGL",
+        "industry": "Media",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "META",
+        "industry": "Media",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)",
+          "virtual"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Vanguard Joint (7062)",
+          "real"
+        ]
+      },
+      {
+        "ticker": "NFLX",
+        "industry": "Media",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Individual (706393097)",
+          "external:Robinhood Joint",
+          "external:Robinhood Joint (116424851826)",
+          "external:Vanguard Joint (7062)"
+        ],
+        "accounts": [
+          "Robinhood Individual (706393097)",
+          "Robinhood Joint",
+          "Robinhood Joint (116424851826)",
+          "Vanguard Joint (7062)"
+        ]
+      },
+      {
+        "ticker": "NOK",
+        "industry": "Communications",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      },
+      {
+        "ticker": "PINS",
+        "industry": "Media",
+        "sources": [
+          "equity_lot",
+          "virtual"
+        ],
+        "accounts": [
+          "Charles Schwab",
+          "real"
+        ]
+      },
+      {
+        "ticker": "ROKU",
+        "industry": "Media",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint",
+          "external:Robinhood Joint (116424851826)",
+          "external:Vanguard Joint (7062)"
+        ],
+        "accounts": [
+          "Robinhood Joint",
+          "Robinhood Joint (116424851826)",
+          "Vanguard Joint (7062)"
+        ]
+      }
+    ],
+    "Healthcare": [
+      {
+        "ticker": "ISRG",
+        "industry": "Health Care",
+        "sources": [
+          "equity_lot",
+          "external:Robinhood Joint",
+          "external:Vanguard Joint (7062)"
+        ],
+        "accounts": [
+          "Robinhood Joint",
+          "Vanguard Joint (7062)"
+        ]
+      },
+      {
+        "ticker": "MRNA",
+        "industry": "Biotechnology",
+        "sources": [
+          "virtual"
+        ],
+        "accounts": [
+          "real"
+        ]
+      }
+    ]
+  },
+  "sectors": [
+    {
+      "id": "information_technology",
+      "gics_name": "Information Technology",
+      "sector": "Technology",
+      "label": "Information Technology",
+      "subsectors": [
+        "semiconductors",
+        "hardware",
+        "software",
+        "IT services"
+      ],
+      "keywords": [
+        "technology",
+        "tech",
+        "software",
+        "semiconductor",
+        "semiconductors",
+        "chip",
+        "it sector",
+        "information technology"
+      ],
+      "etf_spdr": "XLK",
+      "etf_alt": [
+        "VGT"
+      ],
+      "index": "S&P 500 Information Technology Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "TSM",
+          "company": "TSM",
+          "exchange": null,
+          "subsector": "Semiconductors",
+          "notes": "portfolio holding",
+          "market_cap": 62497009628906.0
+        },
+        {
+          "rank": 2,
+          "ticker": "NVDA",
+          "company": "NVDA",
+          "exchange": null,
+          "subsector": "Semiconductors",
+          "notes": "portfolio holding",
+          "market_cap": 5098698059082.0
+        },
+        {
+          "rank": 3,
+          "ticker": "AAPL",
+          "company": "AAPL",
+          "exchange": null,
+          "subsector": "Technology",
+          "notes": "portfolio holding",
+          "market_cap": 4376979237699.0
+        },
+        {
+          "rank": 4,
+          "ticker": "MSFT",
+          "company": "MSFT",
+          "exchange": null,
+          "subsector": "Technology",
+          "notes": "portfolio holding",
+          "market_cap": 2818348030637.0005
+        },
+        {
+          "rank": 5,
+          "ticker": "AVGO",
+          "company": "AVGO",
+          "exchange": null,
+          "subsector": "Semiconductors",
+          "notes": "portfolio holding",
+          "market_cap": 1957030594175.0
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "AAPL",
+          "industry": "Technology",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Robinhood Joint (116424851826)",
+            "external:Vanguard Joint (7062)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Robinhood Joint (116424851826)",
+            "Vanguard Joint (7062)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "ADBE",
+          "industry": "Technology",
+          "sources": [
+            "equity_lot",
+            "virtual"
+          ],
+          "accounts": [
+            "E*TRADE Stock Plan",
+            "real"
+          ]
+        },
+        {
+          "ticker": "AMAT",
+          "industry": "Semiconductors",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "AMD",
+          "industry": "Semiconductors",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint (116424851826)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint (116424851826)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "ARM",
+          "industry": "Semiconductors",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "AVGO",
+          "industry": "Semiconductors",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "BB",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "CRM",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "CRWD",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "DELL",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "FSLY",
+          "industry": "Technology",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "IBM",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "INTC",
+          "industry": "Semiconductors",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "INTU",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "JKS",
+          "industry": "Semiconductors",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "MSFT",
+          "industry": "Technology",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Vanguard Joint (7062)"
+          ]
+        },
+        {
+          "ticker": "MU",
+          "industry": "Semiconductors",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "NVDA",
+          "industry": "Semiconductors",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Vanguard Joint (7062)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "ORCL",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "PLTR",
+          "industry": "Technology",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "QCOM",
+          "industry": "Semiconductors",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "RGTI",
+          "industry": "Semiconductors",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "SHOP",
+          "industry": "Technology",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint",
+            "external:Robinhood Joint (116424851826)",
+            "external:Vanguard Joint (7062)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Joint",
+            "Robinhood Joint (116424851826)",
+            "Vanguard Joint (7062)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "SMCI",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "SNDK",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "SNOW",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "SNPS",
+          "industry": "Technology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "TSM",
+          "industry": "Semiconductors",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        }
+      ],
+      "classified_ticker_count": 28
+    },
+    {
+      "id": "communication_services",
+      "gics_name": "Communication Services",
+      "sector": "Communication Services",
+      "label": "Communication Services",
+      "subsectors": [
+        "interactive media",
+        "telecom",
+        "entertainment",
+        "social media"
+      ],
+      "keywords": [
+        "communication",
+        "telecom",
+        "media",
+        "streaming",
+        "social media"
+      ],
+      "etf_spdr": "XLC",
+      "etf_alt": [],
+      "index": "S&P 500 Communication Services Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "GOOGL",
+          "company": "GOOGL",
+          "exchange": null,
+          "subsector": "Media",
+          "notes": "portfolio holding",
+          "market_cap": 4480603316799.999
+        },
+        {
+          "rank": 2,
+          "ticker": "META",
+          "company": "META",
+          "exchange": null,
+          "subsector": "Media",
+          "notes": "portfolio holding",
+          "market_cap": 1465228522512.0
+        },
+        {
+          "rank": 3,
+          "ticker": "NFLX",
+          "company": "NFLX",
+          "exchange": null,
+          "subsector": "Media",
+          "notes": "portfolio holding",
+          "market_cap": 325831563972.0
+        },
+        {
+          "rank": 4,
+          "ticker": "NOK",
+          "company": "NOK",
+          "exchange": null,
+          "subsector": "Communications",
+          "notes": "portfolio holding",
+          "market_cap": 65778143526.0
+        },
+        {
+          "rank": 5,
+          "ticker": "ROKU",
+          "company": "ROKU",
+          "exchange": null,
+          "subsector": "Media",
+          "notes": "portfolio holding",
+          "market_cap": 20481604189.0
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "GOOGL",
+          "industry": "Media",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "META",
+          "industry": "Media",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Vanguard Joint (7062)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "NFLX",
+          "industry": "Media",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Robinhood Joint (116424851826)",
+            "external:Vanguard Joint (7062)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Robinhood Joint (116424851826)",
+            "Vanguard Joint (7062)"
+          ]
+        },
+        {
+          "ticker": "NOK",
+          "industry": "Communications",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "PINS",
+          "industry": "Media",
+          "sources": [
+            "equity_lot",
+            "virtual"
+          ],
+          "accounts": [
+            "Charles Schwab",
+            "real"
+          ]
+        },
+        {
+          "ticker": "ROKU",
+          "industry": "Media",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint",
+            "external:Robinhood Joint (116424851826)",
+            "external:Vanguard Joint (7062)"
+          ],
+          "accounts": [
+            "Robinhood Joint",
+            "Robinhood Joint (116424851826)",
+            "Vanguard Joint (7062)"
+          ]
+        }
+      ],
+      "classified_ticker_count": 6
+    },
+    {
+      "id": "consumer_discretionary",
+      "gics_name": "Consumer Discretionary",
+      "sector": "Consumer Cyclical",
+      "label": "Consumer Discretionary",
+      "subsectors": [
+        "internet retail",
+        "autos",
+        "hotels",
+        "restaurants",
+        "home improvement"
+      ],
+      "keywords": [
+        "consumer discretionary",
+        "cyclical consumer",
+        "retail",
+        "autos",
+        "e-commerce"
+      ],
+      "etf_spdr": "XLY",
+      "etf_alt": [],
+      "index": "S&P 500 Consumer Discretionary Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "HMC",
+          "company": "HMC",
+          "exchange": null,
+          "subsector": "Automobiles",
+          "notes": "portfolio holding",
+          "market_cap": 5504067840332.0
+        },
+        {
+          "rank": 2,
+          "ticker": "AMZN",
+          "company": "AMZN",
+          "exchange": null,
+          "subsector": "Retail",
+          "notes": "portfolio holding",
+          "market_cap": 2628929953590.9995
+        },
+        {
+          "rank": 3,
+          "ticker": "TSLA",
+          "company": "TSLA",
+          "exchange": null,
+          "subsector": "Automobiles",
+          "notes": "portfolio holding",
+          "market_cap": 1504129721028.0
+        },
+        {
+          "rank": 4,
+          "ticker": "NSANY",
+          "company": "NSANY",
+          "exchange": null,
+          "subsector": "Automobiles",
+          "notes": "portfolio holding",
+          "market_cap": 1144412420322.0
+        },
+        {
+          "rank": 5,
+          "ticker": "WMT",
+          "company": "WMT",
+          "exchange": null,
+          "subsector": "Retail",
+          "notes": "portfolio holding",
+          "market_cap": 963166320000.0
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "AMZN",
+          "industry": "Retail",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "BABA",
+          "industry": "Retail",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Vanguard Joint (7062)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "DASH",
+          "industry": "Hotels, Restaurants & Leisure",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "DKNG",
+          "industry": "Hotels, Restaurants & Leisure",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "HMC",
+          "industry": "Automobiles",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)"
+          ]
+        },
+        {
+          "ticker": "KDK",
+          "industry": "Auto Components",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)"
+          ]
+        },
+        {
+          "ticker": "KMX",
+          "industry": "Retail",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "NIO",
+          "industry": "Automobiles",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "NSANY",
+          "industry": "Automobiles",
+          "sources": [
+            "equity_lot"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)"
+          ]
+        },
+        {
+          "ticker": "TSLA",
+          "industry": "Automobiles",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "WMT",
+          "industry": "Retail",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        }
+      ],
+      "classified_ticker_count": 11
+    },
+    {
+      "id": "consumer_staples",
+      "gics_name": "Consumer Staples",
+      "sector": "Consumer Defensive",
+      "label": "Consumer Staples",
+      "subsectors": [
+        "food",
+        "beverages",
+        "household products",
+        "staple retail"
+      ],
+      "keywords": [
+        "consumer staples",
+        "staples",
+        "defensive consumer",
+        "household products",
+        "beverages"
+      ],
+      "etf_spdr": "XLP",
+      "etf_alt": [],
+      "index": "S&P 500 Consumer Staples Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "BYND",
+          "company": "BYND",
+          "exchange": null,
+          "subsector": "Food Products",
+          "notes": "portfolio holding",
+          "market_cap": 366356921.99999994
+        },
+        {
+          "rank": 2,
+          "ticker": "WMT",
+          "company": "Walmart",
+          "exchange": "NYSE",
+          "subsector": "Hypermarkets",
+          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 3,
+          "ticker": "PG",
+          "company": "Procter & Gamble",
+          "exchange": "NYSE",
+          "subsector": "Household Products",
+          "notes": "Consumer brands (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 4,
+          "ticker": "KO",
+          "company": "Coca-Cola",
+          "exchange": "NYSE",
+          "subsector": "Beverages",
+          "notes": "Soft drinks (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 5,
+          "ticker": "PEP",
+          "company": "PepsiCo",
+          "exchange": "NASDAQ",
+          "subsector": "Beverages",
+          "notes": "Drinks & snacks (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "BYND",
+          "industry": "Food Products",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)",
+            "real"
+          ]
+        }
+      ],
+      "classified_ticker_count": 1
+    },
+    {
+      "id": "health_care",
+      "gics_name": "Health Care",
+      "sector": "Healthcare",
+      "label": "Health Care",
+      "subsectors": [
+        "pharma",
+        "biotech",
+        "health-care equipment",
+        "managed care"
+      ],
+      "keywords": [
+        "healthcare",
+        "health care",
+        "pharma",
+        "biotech",
+        "managed care"
+      ],
+      "etf_spdr": "XLV",
+      "etf_alt": [],
+      "index": "S&P 500 Health Care Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "ISRG",
+          "company": "ISRG",
+          "exchange": null,
+          "subsector": "Health Care",
+          "notes": "portfolio holding",
+          "market_cap": 144066360354.00003
+        },
+        {
+          "rank": 2,
+          "ticker": "MRNA",
+          "company": "MRNA",
+          "exchange": null,
+          "subsector": "Biotechnology",
+          "notes": "portfolio holding",
+          "market_cap": 25378448498.999996
+        },
+        {
+          "rank": 3,
+          "ticker": "LLY",
+          "company": "Eli Lilly",
+          "exchange": "NYSE",
+          "subsector": "Pharmaceuticals",
+          "notes": "Obesity/diabetes (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 4,
+          "ticker": "JNJ",
+          "company": "Johnson & Johnson",
+          "exchange": "NYSE",
+          "subsector": "Pharma & Devices",
+          "notes": "Diversified HC (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 5,
+          "ticker": "UNH",
+          "company": "UnitedHealth Group",
+          "exchange": "NYSE",
+          "subsector": "Managed Care",
+          "notes": "Insurance, services (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "ISRG",
+          "industry": "Health Care",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)"
+          ],
+          "accounts": [
+            "Robinhood Joint",
+            "Vanguard Joint (7062)"
+          ]
+        },
+        {
+          "ticker": "MRNA",
+          "industry": "Biotechnology",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        }
+      ],
+      "classified_ticker_count": 2
+    },
+    {
+      "id": "financials",
+      "gics_name": "Financials",
+      "sector": "Financial Services",
+      "label": "Financials",
+      "subsectors": [
+        "banks",
+        "insurance",
+        "diversified financials",
+        "payment networks"
+      ],
+      "keywords": [
+        "financial",
+        "financials",
+        "bank",
+        "banks",
+        "insurance",
+        "payments"
+      ],
+      "etf_spdr": "XLF",
+      "etf_alt": [],
+      "index": "S&P 500 Financials Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "BRK.B",
+          "company": "BRK.B",
+          "exchange": null,
+          "subsector": "Financial Services",
+          "notes": "portfolio holding",
+          "market_cap": 1055400327699.8011
+        },
+        {
+          "rank": 2,
+          "ticker": "JPM",
+          "company": "JPM",
+          "exchange": null,
+          "subsector": "Banking",
+          "notes": "portfolio holding",
+          "market_cap": 871430725043.0
+        },
+        {
+          "rank": 3,
+          "ticker": "BAC",
+          "company": "BAC",
+          "exchange": null,
+          "subsector": "Banking",
+          "notes": "portfolio holding",
+          "market_cap": 398828382074.0
+        },
+        {
+          "rank": 4,
+          "ticker": "HOOD",
+          "company": "HOOD",
+          "exchange": null,
+          "subsector": "Financial Services",
+          "notes": "portfolio holding",
+          "market_cap": 97476170909.0
+        },
+        {
+          "rank": 5,
+          "ticker": "XYZ",
+          "company": "XYZ",
+          "exchange": null,
+          "subsector": "Financial Services",
+          "notes": "portfolio holding",
+          "market_cap": 44448120000.0
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "BAC",
+          "industry": "Banking",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "BRK.B",
+          "industry": "Financial Services",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)"
+          ]
+        },
+        {
+          "ticker": "HOOD",
+          "industry": "Financial Services",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint",
+            "external:Robinhood Joint (116424851826)",
+            "external:Vanguard Joint (7062)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint",
+            "Robinhood Joint (116424851826)",
+            "Vanguard Joint (7062)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "JPM",
+          "industry": "Banking",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "PYPL",
+          "industry": "Financial Services",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)"
+          ],
+          "accounts": [
+            "Robinhood Joint",
+            "Vanguard Joint (7062)"
+          ]
+        },
+        {
+          "ticker": "XYZ",
+          "industry": "Financial Services",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint",
+            "external:Vanguard Joint (7062)"
+          ],
+          "accounts": [
+            "Robinhood Joint",
+            "Vanguard Joint (7062)"
+          ]
+        }
+      ],
+      "classified_ticker_count": 6
+    },
+    {
+      "id": "industrials",
+      "gics_name": "Industrials",
+      "sector": "Industrials",
+      "label": "Industrials",
+      "subsectors": [
+        "capital goods",
+        "aerospace & defense",
+        "transportation",
+        "machinery"
+      ],
+      "keywords": [
+        "industrial",
+        "industrials",
+        "aerospace",
+        "defense",
+        "machinery",
+        "railroads"
+      ],
+      "etf_spdr": "XLI",
+      "etf_alt": [],
+      "index": "S&P 500 Industrials Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "CAT",
+          "company": "CAT",
+          "exchange": null,
+          "subsector": "Machinery",
+          "notes": "portfolio holding",
+          "market_cap": 454105194299.99994
+        },
+        {
+          "rank": 2,
+          "ticker": "GE",
+          "company": "GE",
+          "exchange": null,
+          "subsector": "Aerospace & Defense",
+          "notes": "portfolio holding",
+          "market_cap": 373139160199.99994
+        },
+        {
+          "rank": 3,
+          "ticker": "GEV",
+          "company": "GEV",
+          "exchange": null,
+          "subsector": "Electrical Equipment",
+          "notes": "portfolio holding",
+          "market_cap": 298206641706.0
+        },
+        {
+          "rank": 4,
+          "ticker": "RTX",
+          "company": "RTX",
+          "exchange": null,
+          "subsector": "Aerospace & Defense",
+          "notes": "portfolio holding",
+          "market_cap": 249944437907.0
+        },
+        {
+          "rank": 5,
+          "ticker": "UBER",
+          "company": "UBER",
+          "exchange": null,
+          "subsector": "Road & Rail",
+          "notes": "portfolio holding",
+          "market_cap": 145830311048.0
+        }
+      ],
+      "portfolio_holdings": [
+        {
+          "ticker": "AVAV",
+          "industry": "Aerospace & Defense",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "CAT",
+          "industry": "Machinery",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "FDX",
+          "industry": "Logistics & Transportation",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "GE",
+          "industry": "Aerospace & Defense",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "GEV",
+          "industry": "Electrical Equipment",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "LUV",
+          "industry": "Airlines",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "virtual"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "real"
+          ]
+        },
+        {
+          "ticker": "MMM",
+          "industry": "Industrial Conglomerates",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "RTX",
+          "industry": "Aerospace & Defense",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        },
+        {
+          "ticker": "RUN",
+          "industry": "Electrical Equipment",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "RYCEY",
+          "industry": "Aerospace & Defense",
+          "sources": [
+            "equity_lot",
+            "external:Robinhood Individual (706393097)",
+            "external:Robinhood Joint (116424851826)"
+          ],
+          "accounts": [
+            "Robinhood Individual (706393097)",
+            "Robinhood Joint (116424851826)"
+          ]
+        },
+        {
+          "ticker": "UBER",
+          "industry": "Road & Rail",
+          "sources": [
+            "virtual"
+          ],
+          "accounts": [
+            "real"
+          ]
+        }
+      ],
+      "classified_ticker_count": 11
+    },
+    {
+      "id": "materials",
+      "gics_name": "Materials",
+      "sector": "Basic Materials",
+      "label": "Materials",
+      "subsectors": [
+        "chemicals",
+        "metals & mining",
+        "construction materials"
+      ],
+      "keywords": [
+        "materials",
+        "basic materials",
+        "mining",
+        "chemicals",
+        "metals"
+      ],
+      "etf_spdr": "XLB",
+      "etf_alt": [],
+      "index": "S&P 500 Materials Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "SCCO",
+          "company": "Southern Copper",
+          "exchange": "NYSE",
+          "subsector": "Copper Mining",
+          "notes": "Copper producer (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 2,
+          "ticker": "DOW",
+          "company": "Dow Inc.",
+          "exchange": "NYSE",
+          "subsector": "Chemicals",
+          "notes": "Commodity chemicals (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 3,
+          "ticker": "DD",
+          "company": "DuPont",
+          "exchange": "NYSE",
+          "subsector": "Specialty Chemicals",
+          "notes": "Specialty products (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 4,
+          "ticker": "NEM",
+          "company": "Newmont",
+          "exchange": "NYSE",
+          "subsector": "Gold Mining",
+          "notes": "Gold miner (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 5,
+          "ticker": "FCX",
+          "company": "Freeport-McMoRan",
+          "exchange": "NYSE",
+          "subsector": "Metals & Mining",
+          "notes": "Copper, gold (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        }
+      ],
+      "portfolio_holdings": [],
+      "classified_ticker_count": 0
+    },
+    {
+      "id": "energy",
+      "gics_name": "Energy",
+      "sector": "Energy",
+      "label": "Energy",
+      "subsectors": [
+        "integrated oil & gas",
+        "exploration & production",
+        "oilfield services"
+      ],
+      "keywords": [
+        "energy",
+        "oil",
+        "gas",
+        "upstream",
+        "refining"
+      ],
+      "etf_spdr": "XLE",
+      "etf_alt": [],
+      "index": "S&P 500 Energy Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "XOM",
+          "company": "Exxon Mobil",
+          "exchange": "NYSE",
+          "subsector": "Integrated Oil",
+          "notes": "Oil & gas (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 2,
+          "ticker": "CVX",
+          "company": "Chevron",
+          "exchange": "NYSE",
+          "subsector": "Integrated Oil",
+          "notes": "Oil & gas (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 3,
+          "ticker": "COP",
+          "company": "ConocoPhillips",
+          "exchange": "NYSE",
+          "subsector": "E&P",
+          "notes": "Upstream (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 4,
+          "ticker": "SLB",
+          "company": "Schlumberger",
+          "exchange": "NYSE",
+          "subsector": "Oilfield Services",
+          "notes": "Services (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 5,
+          "ticker": "PSX",
+          "company": "Phillips 66",
+          "exchange": "NYSE",
+          "subsector": "Refining & Midstream",
+          "notes": "Downstream (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        }
+      ],
+      "portfolio_holdings": [],
+      "classified_ticker_count": 0
+    },
+    {
+      "id": "utilities",
+      "gics_name": "Utilities",
+      "sector": "Utilities",
+      "label": "Utilities",
+      "subsectors": [
+        "regulated electric",
+        "multi-utilities",
+        "independent power"
+      ],
+      "keywords": [
+        "utilities",
+        "electric utility",
+        "power",
+        "regulated utility"
+      ],
+      "etf_spdr": "XLU",
+      "etf_alt": [],
+      "index": "S&P 500 Utilities Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "NEE",
+          "company": "NextEra Energy",
+          "exchange": "NYSE",
+          "subsector": "Electric Utility",
+          "notes": "Renewables-heavy (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 2,
+          "ticker": "DUK",
+          "company": "Duke Energy",
+          "exchange": "NYSE",
+          "subsector": "Electric Utility",
+          "notes": "Regulated (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 3,
+          "ticker": "SO",
+          "company": "Southern Company",
+          "exchange": "NYSE",
+          "subsector": "Electric Utility",
+          "notes": "Regulated (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 4,
+          "ticker": "D",
+          "company": "Dominion Energy",
+          "exchange": "NYSE",
+          "subsector": "Multi-utility",
+          "notes": "Gas & power (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 5,
+          "ticker": "AEP",
+          "company": "American Electric Power",
+          "exchange": "NASDAQ",
+          "subsector": "Electric Utility",
+          "notes": "Regulated (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        }
+      ],
+      "portfolio_holdings": [],
+      "classified_ticker_count": 0
+    },
+    {
+      "id": "real_estate",
+      "gics_name": "Real Estate",
+      "sector": "Real Estate",
+      "label": "Real Estate",
+      "subsectors": [
+        "REITs",
+        "industrial",
+        "residential",
+        "tower",
+        "storage"
+      ],
+      "keywords": [
+        "real estate",
+        "reit",
+        "reits",
+        "property"
+      ],
+      "etf_spdr": "XLRE",
+      "etf_alt": [],
+      "index": "S&P 500 Real Estate Index",
+      "seed_tickers": [
+        {
+          "rank": 1,
+          "ticker": "PLD",
+          "company": "Prologis",
+          "exchange": "NYSE",
+          "subsector": "Industrial REIT",
+          "notes": "Logistics (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 2,
+          "ticker": "AMT",
+          "company": "American Tower",
+          "exchange": "NYSE",
+          "subsector": "Tower REIT",
+          "notes": "Towers (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 3,
+          "ticker": "WELL",
+          "company": "Welltower",
+          "exchange": "NYSE",
+          "subsector": "Healthcare REIT",
+          "notes": "Senior housing (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 4,
+          "ticker": "SPG",
+          "company": "Simon Property",
+          "exchange": "NYSE",
+          "subsector": "Mall REIT",
+          "notes": "Retail (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        },
+        {
+          "rank": 5,
+          "ticker": "PSA",
+          "company": "Public Storage",
+          "exchange": "NYSE",
+          "subsector": "Storage REIT",
+          "notes": "Self-storage (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+        }
+      ],
+      "portfolio_holdings": [],
+      "classified_ticker_count": 0
+    }
+  ]
+}

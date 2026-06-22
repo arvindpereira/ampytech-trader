@@ -194,6 +194,55 @@ CROWDING_LLM_SCHEMA = {
     "caveats": ["..."],
 }
 
+EARNINGS_REPORT_LLM_SCHEMA = {
+    "tldr": "2-3 sentence bottom line on the latest earnings and forward setup",
+    "earnings_summary": "what the company reported vs expectations — cite surprise and EPS revision",
+    "management_highlights": [
+        {"theme": "guidance / demand / margins", "detail": "...", "sources": ["item:1", "transcript:excerpt"]}
+    ],
+    "guidance_assessment": "management tone and forward guidance vs consensus",
+    "revision_view": "interpretation of 30d EPS estimate revisions",
+    "outlook_narrative": "1-2 paragraphs tying transcript, revisions, and snapshot together",
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}
+
+
+def earnings_report_shell(
+    ticker: str,
+    facts: Dict[str, Any],
+    earnings_meta: Dict[str, Any],
+    synthesis: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    syn = synthesis or {}
+    em = earnings_meta or {}
+    tx = em.get("transcript") or {}
+    return {
+        "template": "earnings_report",
+        "ticker": ticker,
+        "tldr": syn.get("tldr") or "",
+        "earnings_context": {
+            "period": tx.get("period") or _field_val(facts, "latest_transcript_period"),
+            "call_date": tx.get("call_date"),
+            "revision_30d": em.get("revision_30d") or _field_val(facts, "eps_revision_30d"),
+            "last_surprise_pct": em.get("last_surprise_pct") or _field_val(facts, "last_earnings_surprise_pct"),
+            "next_eps_avg": _field_val(facts, "next_eps_avg"),
+            "transcript_available": em.get("transcript_available", False),
+        },
+        "earnings_summary": syn.get("earnings_summary") or "",
+        "management_highlights": syn.get("management_highlights") or [],
+        "guidance_assessment": syn.get("guidance_assessment") or "",
+        "revision_view": syn.get("revision_view") or "",
+        "outlook_narrative": syn.get("outlook_narrative") or "",
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": syn.get("caveats") or [
+            "Earnings analysis uses ingested transcripts and estimate snapshots — not live SEC filings.",
+            "Finnhub transcripts require Professional+ API tier; without access, analysis relies on estimates and news.",
+        ],
+    }
+
 
 def event_spillover_shell(
     primary: str,

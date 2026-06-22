@@ -34,19 +34,10 @@ def is_spillover_query(query: str) -> bool:
 
 
 def portfolio_tickers(db) -> List[str]:
-    """Tickers the user actually holds or monitors (external + virtual + universe)."""
-    from app.database import EquityLot, UniverseTicker, VirtualPosition
+    """Tickers the user actually holds or monitors (external + virtual + equity lots)."""
+    from ml_engine.portfolio_holdings import portfolio_tickers as _all
 
-    tickers: set[str] = set()
-    for row in db.query(EquityLot.ticker).distinct().all():
-        if row[0]:
-            tickers.add(row[0].upper().strip())
-    for row in db.query(UniverseTicker.ticker).all():
-        if row.ticker:
-            tickers.add(row.ticker.upper().strip())
-    for row in db.query(VirtualPosition).filter(VirtualPosition.quantity > 0).all():
-        tickers.add(row.ticker.upper().strip())
-    return sorted(tickers)
+    return _all(db)
 
 
 def _sector_for_ticker(db, ticker: str) -> Tuple[Optional[str], Optional[str]]:
@@ -169,6 +160,15 @@ def resolve_query_tickers(
         meta.update(crowd_meta)
         if crowd_meta.get("error"):
             return [], crowd_meta
+        return tickers[:RESEARCH_MAX_TICKERS], meta
+
+    if routed.intent == "earnings_report":
+        from ml_engine.earnings_analyzer import resolve_earnings_tickers
+
+        tickers, earnings_meta = resolve_earnings_tickers(routed, db)
+        meta.update(earnings_meta)
+        if earnings_meta.get("error"):
+            return [], earnings_meta
         return tickers[:RESEARCH_MAX_TICKERS], meta
 
     tickers = list(routed.tickers or [])

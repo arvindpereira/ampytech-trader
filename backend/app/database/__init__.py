@@ -9,5 +9,6 @@ from app.database.models import (
     ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding,
     TickerMetadata, CompanySnapshot, ExternalAnalystItem, ResearchWatchlist,
     WebSearchCache, SectorSnapshot, InternalPriceTarget, ResearchNewsEmbedding,
+    EarningsTranscript, EarningsEstimateSnapshot, EarningsSurprise,
     ResearchThread, ResearchMessage,
 )

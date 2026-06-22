@@ -14,6 +14,7 @@ from ml_engine.research_llm_router import model_for_tier
 from ml_engine.research_templates import (
     CROWDING_LLM_SCHEMA,
     CROSS_THEME_LLM_SCHEMA,
+    EARNINGS_REPORT_LLM_SCHEMA,
     EVENT_SPILLOVER_LLM_SCHEMA,
     SECTOR_SCREEN_LLM_SCHEMA,
     THEME_RANK_LLM_SCHEMA,
@@ -114,6 +115,53 @@ def _synthesize_llm(prompt: str, system: str, tier: str) -> dict:
     if provider == "openai":
         return _call_openai(prompt, system, model)
     return _call_ollama(prompt, system)
+
+
+def _transcript_block(earnings_meta: dict) -> str:
+    tx = earnings_meta.get("transcript") or {}
+    excerpt = tx.get("excerpt") or ""
+    if not excerpt:
+        return "(no earnings transcript ingested — use estimate revisions, surprises, and external items)"
+    header = f"Period {tx.get('period') or 'n/a'}, call date {tx.get('call_date') or 'n/a'}"
+    return f"{header}\n{excerpt[:10000]}"
+
+
+def synthesize_earnings(
+    ticker: str,
+    facts: dict,
+    items,
+    earnings_meta: dict,
+    tier: str = "standard",
+    query: str = "",
+    news_rows=None,
+) -> dict:
+    schema = json.dumps(EARNINGS_REPORT_LLM_SCHEMA, indent=2)
+    system = _editor_system(
+        "earnings research editor. Ground every claim in the transcript excerpt, EPS revisions, "
+        "surprise history, or cited items. Quote management themes; do not invent guidance numbers",
+        schema,
+    )
+    rev = earnings_meta.get("revision_30d")
+    surp = earnings_meta.get("last_surprise_pct")
+    nxt = earnings_meta.get("next_eps") or {}
+    prompt = (
+        f"User question: {query}\nTicker: {ticker}\n\n"
+        f"EPS REVISION (30d): {rev}\n"
+        f"LAST SURPRISE %: {surp}\n"
+        f"NEXT EPS ESTIMATE: {json.dumps(nxt)}\n\n"
+        f"SNAPSHOT:\n{_snapshot_block(facts)}\n\n"
+        f"EARNINGS TRANSCRIPT:\n{_transcript_block(earnings_meta)}\n\n"
+        f"EXTERNAL ITEMS:\n{_items_block(items)}"
+    )
+    if news_rows is not None:
+        prompt += f"\n\nRECENT NEWS HEADLINES:\n{_news_block(news_rows)}"
+    try:
+        out = _synthesize_llm(prompt, system, tier)
+        if "error" in out:
+            return out
+        return validate(out, [it.id for it in items])
+    except Exception as e:
+        return {"error": str(e)[:200], "caveats": ["Earnings synthesis failed — showing template with snapshot only."]}
 
 
 def synthesize_ticker(
@@ -229,6 +277,7 @@ def synthesize_sector(
     query: str = "",
     news_by_ticker: dict = None,
     web_items=None,
+    sector_handbook=None,
 ) -> dict:
     schema = json.dumps(SECTOR_SCREEN_LLM_SCHEMA, indent=2)
     system = _editor_system(
@@ -252,11 +301,28 @@ def synthesize_sector(
     web_block = ""
     if web_items:
         web_block = f"\n\nWEB SEARCH SNIPPETS:\n{_items_block(web_items)}"
+    handbook_block = ""
+    handbook = None
+    if sector_handbook:
+        handbook = sector_handbook[0] if isinstance(sector_handbook, list) and sector_handbook else sector_handbook
+    if not handbook:
+        for r in sector_rankings or []:
+            if r.get("sector_handbook"):
+                handbook = r["sector_handbook"]
+                break
+    if not handbook and sectors:
+        from ml_engine.sector_resolver import sector_handbook_for
+
+        books = sector_handbook_for(sectors)
+        handbook = books[0] if books else None
+    if handbook:
+        handbook_block = f"\n\nGICS SECTOR HANDBOOK (structural context, not live prices):\n{json.dumps(handbook, indent=2)[:4000]}"
     prompt = (
         f"Sectors: {', '.join(sectors) or 'multi-sector'}\nQuery: {query}\n\n"
         f"SECTOR RANKINGS:\n{rank_lines}\n\nTICKER RANKINGS:\n{ticker_lines}\n\n"
         + "\n".join(blocks)
         + web_block
+        + handbook_block
     )
     all_ids = [it.id for items in items_by_ticker.values() for it in items]
     if web_items:

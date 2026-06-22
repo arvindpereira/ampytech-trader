@@ -12,6 +12,7 @@ import {
 } from './CitationText';
 
 const EXAMPLES = [
+  "What did NVIDIA management say on the last earnings call? Summarize guidance and risks.",
   "How might Micron earnings impact my semiconductor holdings?",
   "What's the outlook for quantum computing companies in H2? Rank the companies.",
   "What's the outlook for NVIDIA over the next year? What are analyst price targets?",
@@ -49,6 +50,17 @@ type Report = {
   sectors?: string[];
   standouts?: Array<{ ticker?: string; why?: string }>;
   event_summary?: string;
+  earnings_summary?: string;
+  guidance_assessment?: string;
+  revision_view?: string;
+  earnings_context?: {
+    period?: string;
+    call_date?: string;
+    revision_30d?: number;
+    last_surprise_pct?: number;
+    transcript_available?: boolean;
+  };
+  management_highlights?: Array<{ theme?: string; detail?: string }>;
   primary_ticker?: string;
   related_holdings?: Array<{ ticker: string; momentum_3m?: number; news_score_30d?: number; impact?: string }>;
   catalysts?: string[];
@@ -541,6 +553,48 @@ export default function ResearchAnalystPanel() {
               <div style={{ marginBottom: '12px' }}>
                 <div style={labelStyle}>Sector outlook</div>
                 <NarrativeBlock text={report.sector_narrative} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.earnings_context && (
+              <div style={{ marginBottom: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                {report.earnings_context.period && <span>Period {report.earnings_context.period} · </span>}
+                {report.earnings_context.revision_30d != null && (
+                  <span>EPS revision 30d: {(report.earnings_context.revision_30d * 100).toFixed(1)}% · </span>
+                )}
+                {report.earnings_context.transcript_available === false && (
+                  <span>No transcript ingested (Finnhub Professional+ required)</span>
+                )}
+              </div>
+            )}
+            {report.earnings_summary && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Earnings summary</div>
+                <NarrativeBlock text={report.earnings_summary} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.guidance_assessment && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Guidance</div>
+                <NarrativeBlock text={report.guidance_assessment} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.revision_view && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Estimate revisions</div>
+                <NarrativeBlock text={report.revision_view} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.management_highlights && report.management_highlights.length > 0 && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Management highlights</div>
+                <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '13px' }}>
+                  {report.management_highlights.map((h, i) => (
+                    <li key={i} style={{ marginBottom: '6px' }}>
+                      {h.theme && <strong>{h.theme}: </strong>}
+                      <CitationText text={h.detail || ''} citationsByRef={citeMap} />
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
             {report.event_summary && (

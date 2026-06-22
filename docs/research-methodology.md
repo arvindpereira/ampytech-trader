@@ -16,6 +16,30 @@ only** — every number in a report traceable to a snapshot field or `item:N` ci
 Sector labels come from `ticker_metadata.sector` (Yahoo/Polygon), which follows
 **GICS-style** sector names (e.g. `Technology`, `Financial Services`, `Healthcare`).
 
+A structured **sector handbook** (`backend/data/research_sectors.json`) seeds all
+11 GICS sectors with:
+
+- Canonical sector name mapping (GICS label → our metadata sector key)
+- SPDR ETF proxies (XLK, XLF, …) and index references
+- Representative large-cap **seed tickers** per sector (from `perplexity_sectors.md`)
+- Query **keywords** for intent detection (`sector_resolver.py`)
+
+Live price, upside, and momentum always come from `company_snapshots` on refresh.
+Seed tickers fill coverage gaps when the RKB has few names in a sector. Handbook
+context is injected into sector-screen LLM synthesis as structural RAG (not live quotes).
+
+Refresh seeds and portfolio classification:
+
+```bash
+make research-sectors-refresh      # Yahoo metadata + cap-ranked seeds + portfolio map
+make research-sectors-refresh-fast # Re-rank from DB only (no Yahoo fetch)
+```
+
+`research_kb_refresh` also runs sector refresh at the end. Portfolio holdings include
+`equity_lots`, `virtual_positions`, and `external_statement_holdings`.
+
+API: `GET /api/research/sectors`, `GET /api/research/portfolio/sectors`
+
 Sector ETF proxies in our universe (standard SPDR sector funds):
 
 | GICS sector (approx.) | ETF proxy |
@@ -48,6 +72,36 @@ Components are normalized to [0, 1] per ticker; final scores are **min-max norma
 within the peer set** for ranking (not absolute forecasts).
 
 Implementation: `backend/ml_engine/research_framework.py` → `stock_component_scores()`.
+
+### Walk-forward calibration (optional)
+
+Default weights above are practitioner priors. Run:
+
+```bash
+make research-calibrate-factors
+```
+
+This executes `ml_engine/factor_calibrator.py`, which builds a panel from historical
+`company_snapshots`, computes 63-day forward returns from `daily_prices`, and
+walk-forward grid-searches weights to maximize Spearman rank IC vs forward return.
+Results are written to `backend/data/research_factor_weights.json`.
+
+`get_stock_factor_weights()` loads calibrated weights when present; otherwise defaults
+apply. Requires daily `make research-kb-refresh` history.
+
+## Earnings depth (transcripts & revisions)
+
+Ingested via Finnhub (`FINNHUB_API_KEY`):
+
+| Endpoint | Table | Use |
+|----------|-------|-----|
+| `/stock/eps-estimate` | `earnings_estimate_snapshots` | EPS consensus snapshots → `eps_revision_30d` |
+| `/stock/earnings` | `earnings_surprises` | Reported vs estimated EPS |
+| `/stock/transcripts` | `earnings_transcripts` | Call text + `external_analyst_items` citations |
+
+Transcripts require **Finnhub Professional+**; free tier returns 403 and analysis
+falls back to estimates, surprises, and news. Use the `earnings_report` intent for
+transcript-grounded synthesis.
 
 ## Sector snapshots
 
@@ -110,9 +164,10 @@ of the full sell-side corpus. Phase 2c adds BM25/semantic re-rank on headlines o
 
 ## What we are not
 
-- Not a factor backtest — weights are practitioner defaults, not optimized on your book.
+- Not a live factor backtest in production — weights are calibrated offline when you run `make research-calibrate-factors`.
 - Not full GICS index membership — limited to `TICKER_UNIVERSE` + watchlist + holdings.
 - Not investment advice — snapshots can be stale; consensus can be wrong in regime shifts.
+- Not a substitute for reading SEC filings — transcripts are Finnhub-sourced when available.
 
 ## Versioning
 

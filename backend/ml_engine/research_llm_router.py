@@ -9,6 +9,7 @@ INTENT_BASE = {
     "ticker_outlook": 0.2,
     "theme_rank": 0.5,
     "event_spillover": 0.55,
+    "earnings_report": 0.75,
     "sector_screen": 0.7,
     "cross_theme": 0.85,
     "crowding_risk": 0.85,
@@ -27,6 +28,7 @@ _SYNTHESIS_TOKEN_EST = {
     "ticker_outlook": (4500, 900),
     "theme_rank": (3500, 1100),
     "event_spillover": (4000, 1000),
+    "earnings_report": (9000, 1400),
     "sector_screen": (5500, 1200),
     "cross_theme": (6000, 1400),
     "crowding_risk": (6000, 1400),
@@ -173,7 +175,7 @@ def decide(
     auto_premium = (
         c >= RESEARCH_PREMIUM_COMPLEXITY
         or routed.deep_research
-        or routed.intent in ("cross_theme", "crowding_risk")
+        or routed.intent in ("cross_theme", "crowding_risk", "earnings_report")
     )
     if auto_premium:
         use_search = routed.deep_research and bool(coverage_by_ticker) and min(
