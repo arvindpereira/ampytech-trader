@@ -63,6 +63,7 @@ Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempo
 **Universe, strategy & settings**
 - `universe_tickers` — `ticker` (PK) + **`strategy`** (`swing`/`longterm`/`hold`) per-ticker assignment.
 - `app_settings` — generic key/value; holds the **capital-bucket allocations** (JSON).
+- `ticker_metadata` — `ticker` (PK), sector, industry, market_cap, exchange from Yahoo/Polygon. Used by sector exposure and research snapshot aggregation.
 
 **Accounts & execution (virtual broker)**
 - `virtual_accounts` — id 1 (replay) / id 2 (real) cash + equity.
@@ -71,7 +72,21 @@ Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempo
 - `executed_trades` — historical executed-trade log.
 - `broker_performance_logs` — daily equity vs SPY/QQQ/BRK snapshots.
 
-**Research & Analyst Subsystem (Tab 7)**
+**Equity Advisor (Tab 4)**
+- `equity_lots` — one row per tax lot (RSU/ESPP/other): `ticker`, `account_label`, `lot_type`, `shares`, `cost_basis_per_share`, `acquisition_date`, `notes`. Non-external lots only (external accounts use `ExternalAccount`/`EquityLot` overlap handled by label filter).
+- `equity_vest_schedules` — `(ticker, lot_type)` PK, vest cadence, next vest date, estimated shares, `vesting_complete`.
+- `equity_auto_trade_blocks` — `ticker` PK, boolean `blocked`; gates whether the auto-trader may buy a ticker held externally (e.g. PINS during a wash-sale window). Syncs with `trading_blocks`.
+- `tax_profile` — single row (id=1): `filing_status`, `ordinary_income`, `magi`, `state_ltcg_rate`, `state_stcg_rate`, `carryover_loss`, `tax_year`. Drives HIFO lot tax estimates.
+- `ticker_analyst_forecasts` — `(ticker, as_of_date)` PK: consensus price targets (mean/high/low/median), num_analysts, recommendation, upside %. All fields nullable; source-tagged.
+- `trading_blocks` — per-ticker active BUY guards: `block_type` (`wash_sale`/`permanent`), `blocked_until`, `sale_date`, `realized_loss`, `shares`. Opportunistically expired by the API on read.
+
+**External Portfolio Manager (Tab 6)**
+- `external_accounts` — one row per brokerage account: `account_label` (PK), `cash`, `risk_profile`, `strategy_mode`, `aggression`, `buckets_json`, `de_risk_policy`.
+- `external_statement_holdings` — statement-date anchor: `(account_label, ticker, statement_date)` PK, `shares`, `cost_basis_per_share`. Seeded from `data_ingestion/anchors/*.csv`; auto-updated by PDF import. Used as the basis reference for FIFO reconciliation.
+- `external_orders` — proposed/confirmed order log for external accounts: `account_label`, `ticker`, `side`, `shares`, `price`, `status` (`proposed`/`confirmed`/`cancelled`).
+- `external_transactions` — raw transaction rows from Robinhood CSV import (after deduplication).
+
+**Research & Analyst Subsystem (Research tab)**
 - `company_snapshots` — **`(ticker, as_of_date)` PK**, denormalized daily company state (price, momentum metrics, consensus forecasts, news scores, sector/industry details, facts JSON, coverage %). Used as RAG knowledge base.
 - `external_analyst_items` — **`id` PK**, third-party analyst ratings, excerpts, targets, and dates (fetched from Finnhub transcripts or news APIs).
 - `earnings_transcripts` — **`(ticker, finnhub_id)` PK**, earnings call transcript text, period (e.g. 2024Q1), call date, and excerpt.
@@ -86,8 +101,11 @@ Scoring is **resumable** (already-scored `article_id`s are skipped) and **idempo
 - `research_messages` — **`id` PK**, transcripts of chat queries and structured JSON assistant report payloads.
 
 
-`init_db()` creates tables, runs idempotent **auto-migrations** (e.g. the `strategy` column on
-`universe_tickers`, `mode`/`is_mock` columns), and seeds the universe + default accounts.
+`init_db()` creates tables via SQLAlchemy `create_all`, then runs an idempotent **migration dict**
+(`connection.py::MIGRATIONS`) that `ALTER TABLE … ADD COLUMN` for columns added after the initial
+schema (e.g. `strategy` on `universe_tickers`, `de_risk_policy` on `external_accounts`). New tables
+never need a migration shim — `create_all` handles them. Seeds the universe + default accounts on
+first run.
 
 ## Point-in-time correctness
 

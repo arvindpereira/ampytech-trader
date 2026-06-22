@@ -1,10 +1,9 @@
 # Strategy Suggester — Plan (per-ticker: Swing vs Long-term MPT vs Hold)
 
-> **Status: PLAN, not built.** This drafts an evidence-driven recommender that, for each ticker in the
-> universe, suggests which strategy bucket should manage it — feeding the per-stock strategy dropdown in
-> the Portfolio tab. It deliberately avoids a black box: every suggestion comes with the numbers behind
-> it and a confidence, and the defaults are conservative given [the evaluation findings](./strategy-evaluation-findings.md)
-> (swing is a bull amplifier; MPT carries resilience but its absolute returns are survivorship-inflated).
+> **Status: SHIPPED** (v1 + self-validation + v2 regime overlay all implemented). This document records
+> the original design intent. The live implementation is in `ml_engine/strategy_suggester.py` and
+> `ml_engine/evaluate.py`; surface it via Portfolio tab → "Suggest per-stock strategies" / "Validate vs
+> current". See [ml-and-strategy.md](./ml-and-strategy.md) for how it works today.
 
 ## Objective
 

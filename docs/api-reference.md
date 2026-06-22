@@ -73,18 +73,47 @@ registry and polled for progress.
 
 | Method · Path | Returns |
 | :-- | :-- |
-| `GET /api/external/accounts` | `[{account_label, cash, holdings_value, total_value, risk_profile}]`. Returns list of active external brokerage accounts. |
+| `GET /api/external/accounts` | `[{account_label, cash, holdings_value, total_value, risk_profile, strategy_mode, aggression, de_risk_policy}]`. |
 | `POST /api/external/accounts` | Creates or updates an external account (risk profile and cash). |
-| `DELETE /api/external/accounts/{account_label}` | Deletes the specified account and cascades to clear matching equity lots, statement holdings, orders, transactions, and trade blocks. |
+| `DELETE /api/external/accounts/{account_label}` | Deletes the account and cascades to clear equity lots, statement holdings, orders, transactions, and trade blocks. |
 | `POST /api/external/accounts/{account_label}/cash` | Updates cash balance manually. |
-| `GET /api/external/positions?account_label` | Grouped position holdings and list of all individual tax lots with acquisition dates (filters out ESPP/RSU lots). |
-| `GET /api/external/suggestions?account_label` | Rebalancing target trade recommendations using active Glide Path preset & swing signals. |
-| `POST /api/external/import` | Uploads and parses statement PDF (Robinhood/Vanguard) positions or transaction history. |
+| `GET /api/external/positions?account_label` | Grouped positions + individual tax lots (filters out ESPP/RSU lots). |
+| `POST /api/external/accounts/{account_label}/strategy` | Set `strategy_mode` (`growth`\|`de_risk`\|`glide_path`\|`all_weather`\|`barbell`), `aggression` (0–100), `buckets`, and `de_risk_policy` (`rotate`\|`shed_beta`\|null). |
+| `GET /api/external/suggestions?account_label` | Builds `target = a·growth + (1−a)·defensive`, diffs vs holdings → BUY/SELL proposals. Response includes `de_risk_policy`, `recommended_policy`, `recommendation_reason`, `book_beta`, `tiers`, `current_weights`, `target_reason_codes`. |
+| `POST /api/external/accounts/{label}/wargame?lookback_years=N` | Walk-forward each strategy mode over `N` years of real prices (monthly rebalancing, partial-entry). Returns equity curves + Sharpe/CAGR/MDD per mode. |
+| `POST /api/external/accounts/{label}/crash-stress?era=gfc` | Replay each strategy mode through a historical crash era (`gfc`\|`dot_com`\|`covid`\|`2022`) using an SPY-beta proxy. Returns per-mode equity curves + max drawdown. |
+| `POST /api/external/accounts/{label}/policy-compare?lookback_years=N&era=gfc` | Run de_risk under both policies (rotate vs shed-to-cash) side-by-side. Returns curves, crash drawdown, portfolio beta, cash target, and the model's recommended policy + reason. |
+| `POST /api/external/import` | Upload a Robinhood/Vanguard PDF statement to import positions and auto-populate the statement anchor. |
+| `POST /api/external/sync/robinhood` | Sync holdings directly via Robinhood API credentials (`username`, `password`, `mfa_secret`, `account_label`). Requires `robin_stocks` installed. |
 | `GET /api/external/orders/pending` | Lists all pending/proposed external orders (`status == "proposed"`). |
-| `POST /api/external/orders/confirm` | Manually confirms a proposed order execution, adjusting position/lots (FIFO) and cash. |
-| `POST /api/external/reconcile?account_label` | Cross-references monthly transaction logs, de-duping matches, and updates holdings. |
+| `POST /api/external/orders/confirm` | Confirms a proposed order, adjusting position/lots (FIFO) and cash. |
+| `POST /api/external/reconcile?account_label` | Cross-references monthly transaction logs, de-dupes, and updates holdings. |
 
-## Research Analyst (Tab 7)
+## Equity Advisor (Tab 4)
+
+RSU/ESPP lot management, tax-optimized sell planning, wash-sale guards, and vesting schedules.
+
+| Method · Path | Returns |
+| :-- | :-- |
+| `GET /api/equity/lots` | All equity lots (non-external) with live prices, analyst forecasts, HIFO classifications, per-lot sell recommendations, concentration rollup, auto-trade-block flags, and upcoming vest schedules. |
+| `POST /api/equity/lots` | Create or update a lot `{ticker, account_label, lot_type (rsu\|espp\|other), shares, cost_basis_per_share, acquisition_date, notes, id?}`. |
+| `DELETE /api/equity/lots/{lot_id}` | Delete a lot. |
+| `POST /api/equity/lots/import` | Upload a brokerage PDF to auto-extract lots (LLM-parsed; `force_llm`, `replace_ticker_account` form params). |
+| `POST /api/equity/lots/{lot_id}/sell` | Record a sale against a specific lot: `{shares, price}`. Returns proceeds, realized gain, and whether a wash-sale block was auto-created. |
+| `GET /api/equity/tax-profile` | Active tax profile (`filing_status`, `ordinary_income`, `magi`, `state_ltcg_rate`, `state_stcg_rate`, `carryover_loss`, `tax_year`). |
+| `POST /api/equity/tax-profile` | Upsert the tax profile. Validates filing status, year range, and non-negative values. |
+| `GET /api/equity/forecast/{ticker}` | Analyst consensus price target, upside %, rating, and current price for a ticker. |
+| `GET /api/equity/grant-timeline/{ticker}` | Full grant history → daily price + running weighted-average cost basis + % of shares in-the-money, downsampled to ~750 points. Includes grant markers and upcoming vest events. Powers the `GrantTimeline` chart. |
+| `POST /api/equity/analyze` → `GET /api/equity/analyze/result?job_id` | Background job: tax-optimized sell plan for an objective (`raise_cash`\|`harvest_loss`\|`exit_ticker`) with HIFO lot selection, wash-sale flags, and LLM narrative. |
+| `GET /api/equity/trading-blocks` | Active wash-sale / never-trade BUY guards + the global `auto_trading_paused` state. Opportunistically retires expired wash-sale blocks. |
+| `POST /api/equity/trading-blocks` | Create a block: `{ticker, block_type (wash_sale\|permanent), sale_date?, window_days?, shares?, realized_loss?, account_label?, reason?}`. Wash-sale blocks auto-compute `blocked_until`. |
+| `DELETE /api/equity/trading-blocks/{block_id}` | Deactivate (release) a block. |
+| `POST /api/equity/auto-trade-block` | Toggle whether the auto-trader may buy a ticker held externally: `{ticker, blocked: bool}`. |
+| `GET /api/equity/vest-schedules` | All vest schedules with upcoming vest events and `vesting_complete` flag. |
+| `POST /api/equity/vest-schedules` | Upsert a vest schedule for a ticker (cadence, next vest, total shares, etc.). |
+| `POST /api/execution/auto-trading` | Global auto-trading kill-switch: `{paused: bool}`. `paused=true` freezes all auto buys and sells. |
+
+## Research Analyst (Research tab)
 
 | Method · Path | Returns |
 | :-- | :-- |
@@ -104,7 +133,7 @@ registry and polled for progress.
 | `GET /api/research/library` | Fetches published reports cataloged in the library. |
 | `GET /api/research/premium/estimate` | Cost/complexity estimates for re-synthesizing a query using premium LLM models. |
 
-## Sector Exposure Simulator (Tab 8)
+## Sector Exposure Simulator (embedded in External Portfolio tab)
 
 | Method · Path | Returns |
 | :-- | :-- |

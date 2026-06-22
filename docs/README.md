@@ -28,16 +28,17 @@ explorations are preserved at the bottom for history).
 
 | Doc | What it covers |
 | :-- | :-- |
-| [architecture.md](./architecture.md) | Components, processes (API / scheduler / servers), data flows, deployment, **Crash Radar, Research Analyst, and Sector Simulator components** |
-| [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider, **stress indicators, estimates, transcripts**), DB schema (ERD, **snapshots, research schemas**) |
+| [architecture.md](./architecture.md) | Components, 7-tab frontend, processes (API / scheduler / servers), data flows, **Crash Radar, External Portfolio strategy (holdings-aware de_risk + war-game), Research Analyst, Sector Heatmap** |
+| [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider, **stress indicators, estimates, transcripts**), DB schema (**all table groups: prices, fundamentals, signals, virtual broker, Equity Advisor, External Portfolio, research**) |
 | [ml-and-strategy.md](./ml-and-strategy.md) | Features, strategies (swing+news, long-term MPT, HMM, **Composite Crash Index, Research Analyst, Sector Simulator**), suggester, evaluation harness |
 | [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca paper execution, capital buckets, regime overlay, re-execution, virtual broker, **defensive playbook stances** |
-| [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns (including **/api/crash/\***, **/api/research/\***, and **/api/portfolio/sector-exposure**) |
+| [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns (including **/api/crash/\***, **/api/research/\***, **/api/equity/\*** (Equity Advisor), **/api/external/\*** (war-game + policy-compare), and **/api/portfolio/sector-exposure**) |
 | [operations.md](./operations.md) | Setup, Makefile/CLI (with **Research KB & sector commands**), scheduler jobs, model retraining, DB backups |
 | [research-methodology.md](./research-methodology.md) | **RKB & GICS screens.** snapshot materialization, relative multi-factor ranks, earnings depth, internal 12m targets, structured RAG |
 | [strategy-evaluation-findings.md](./strategy-evaluation-findings.md) | **Honest OOS results.** The 2022-bear test, swing-as-bull-amplifier, MPT survivorship, the blend |
 | [strategy-suggester-plan.md](./strategy-suggester-plan.md) | The per-ticker suggester design (v1 + self-validation + v2 regime overlay), all shipped |
 | [current-state-and-gaps.md](./current-state-and-gaps.md) | **Read this.** What's real vs. weak, known caveats, and the honest roadmap |
+| [equity-advisor-plan.md](./equity-advisor-plan.md) | *Original* Equity Advisor design plan (shipped; see api-reference.md §Equity Advisor for current endpoints) |
 | [stock_trader_design.md](./stock_trader_design.md) | *Original* architecture exploration (pre-build design intent) |
 | [implementation_plan.md](./implementation_plan.md) | *Original* staged build plan (pre-build design intent) |
 

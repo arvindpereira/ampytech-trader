@@ -1,5 +1,10 @@
 # Equity Advisor Tab (Tax-Aware Sell Planner)
 
+> **Status: SHIPPED.** This document is the original design plan. The implementation lives in
+> `ml_engine/tax_advisor.py`, `data_ingestion/analyst_fetcher.py`, `app/main.py` (`/api/equity/*`),
+> and `frontend/src/app/page.tsx` (Tab 4). See [api-reference.md](./api-reference.md) for current
+> endpoints. The sections below remain accurate as a design reference.
+
 A self-contained, advisory-only module for personally-held vested employee shares (e.g. PINS, ADBE)
 held in an external brokerage. You enter your lots and tax situation; the system shows the latest
 available analyst forecasts (best-effort, delayed) and computes a **tax-aware** sell plan using a

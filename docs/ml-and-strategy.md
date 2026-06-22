@@ -13,8 +13,8 @@ suggester, the regime overlay, and the honest out-of-sample evaluation harness.
 | **Swing + News** | ~5 trading days | XGBoost on daily technicals **+ LLM-scored news** | **Default tradeable**; real edge in bull regimes, amplifies bears | `ml_engine/swing_alpha.py` |
 | **Long-term MPT** | weeks–months | regime-aware max-Sharpe optimizer over the universe | Bear-resilient; absolute returns survivorship-inflated | `ml_engine/longterm_alpha.py`, `models.py:PortfolioOptimizer` |
 | **Regime HMM** | — | 3-state HMM on daily SPY vol + macro → growth/transition/crisis | Drives MPT scaling + the swing **regime overlay** | `ml_engine/models.py:train_models` |
-| **Research Analyst** | — | Intent router + Context expander + Pluggable LLM Synthesis | **Tab 7 (Inquiry & Wiki)**; generates structured reports with citations | `ml_engine/research_analyst.py`, `ml_engine/analyst_synthesizer.py` |
-| **Sector Simulator** | — | Consolidated portfolio weights vs S&P 500 GICS benchmarks | **Tab 8 (Exposure & Heatmap)**; identifies drifts and alerts | `ml_engine/sector_exposure_analyzer.py`, `ml_engine/sector_resolver.py` |
+| **Research Analyst** | — | Intent router + Context expander + Pluggable LLM Synthesis | **Research tab**; generates structured reports with citations | `ml_engine/research_analyst.py`, `ml_engine/analyst_synthesizer.py` |
+| **Sector Simulator** | — | Consolidated portfolio weights vs S&P 500 GICS benchmarks | **Embedded in External tab**; identifies drifts and alerts | `ml_engine/sector_exposure_analyzer.py`, `ml_engine/sector_resolver.py` |
 | **Short-term (legacy)** | ~2 trading days (hourly) | XGBoost breakout | **Net-negative; not executed by default** | `ml_engine/models.py`, `deep_models.py` (PyTorch, opt-in) |
 
 The PyTorch temporal-attention model (`deep_models.py`) exists but `SERVED_MODEL=xgboost`, so it is not
