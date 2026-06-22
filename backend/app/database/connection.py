@@ -167,6 +167,23 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for external account strategy columns: {em}")
 
+    # 10. Migrate ticker_metadata: company_name, description
+    try:
+        with engine.connect() as _c:
+            _meta_cols = {r[1] for r in _c.execute(text("PRAGMA table_info(ticker_metadata)"))}
+        meta_migrations = {
+            "company_name": "ALTER TABLE ticker_metadata ADD COLUMN company_name VARCHAR",
+            "description":  "ALTER TABLE ticker_metadata ADD COLUMN description VARCHAR",
+        }
+        for col, stmt in meta_migrations.items():
+            if col not in _meta_cols:
+                with engine.connect() as conn:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                print(f"Successfully added {col} to ticker_metadata.")
+    except Exception as em:
+        print(f"Auto-migration check failed for ticker_metadata company columns: {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE

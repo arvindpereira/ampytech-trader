@@ -165,10 +165,27 @@ def _yahoo_batch(symbols: List[str]) -> dict:
     return out
 
 
+def _yfinance_company_info(ticker: str) -> dict:
+    """Fetch company name and description via yfinance .info (slow, one ticker at a time)."""
+    try:
+        import yfinance as yf
+        info = yf.Ticker(map_ticker_to_yahoo(ticker)).info or {}
+        name = info.get("longName") or info.get("shortName") or ""
+        desc = info.get("longBusinessSummary") or ""
+        # Truncate long descriptions to ~500 chars for DB storage
+        if desc and len(desc) > 500:
+            desc = desc[:497] + "…"
+        return {"company_name": name or None, "description": desc or None}
+    except Exception:
+        return {"company_name": None, "description": None}
+
+
 def fetch_metadata(ticker: str) -> Optional[dict]:
     tk = ticker.upper().strip()
     row = _finnhub_profile(tk)
     if row and row.get("sector"):
+        info = _yfinance_company_info(tk)
+        row.update(info)
         return row
     batch = _yahoo_batch([tk])
     y = batch.get(tk) or batch.get(map_ticker_to_yahoo(tk).upper())
@@ -180,6 +197,8 @@ def fetch_metadata(ticker: str) -> Optional[dict]:
     merged["market_cap"] = merged.get("market_cap") or y.get("market_cap")
     if not merged.get("sector") and not merged.get("industry") and not merged.get("market_cap"):
         return None
+    info = _yfinance_company_info(tk)
+    merged.update(info)
     merged["source"] = merged.get("source") or "yahoo"
     merged["updated_at"] = _now()
     return merged

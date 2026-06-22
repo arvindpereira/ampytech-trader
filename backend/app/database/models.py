@@ -530,6 +530,8 @@ class TickerMetadata(Base):
     sector = Column(String, nullable=True)
     industry = Column(String, nullable=True)
     market_cap = Column(Float, nullable=True)
+    company_name = Column(String, nullable=True)   # e.g. "NVIDIA Corporation"
+    description = Column(String, nullable=True)    # short business description from yfinance
     source = Column(String, nullable=True)
     updated_at = Column(String, nullable=True)
 

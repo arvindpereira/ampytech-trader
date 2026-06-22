@@ -4115,6 +4115,94 @@ def get_price_summary(db=Depends(get_db)):
     _price_summary_cache = {"data": res, "timestamp": now}
     return res
 
+@app.get("/api/tickers/info")
+def get_tickers_info(tickers: str, db=Depends(get_db)):
+    """Company name, description, sector, industry for a comma-separated ticker list.
+    Serves from ticker_metadata; lazily fetches any missing entries via yfinance."""
+    from app.database import TickerMetadata
+    from data_ingestion.ticker_metadata_fetcher import _yfinance_company_info, _now
+
+    requested = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    rows = {r.ticker: r for r in db.query(TickerMetadata).filter(TickerMetadata.ticker.in_(requested)).all()}
+
+    # Lazily backfill company_name/description for any ticker that's missing them
+    for tk in requested:
+        row = rows.get(tk)
+        if row and (row.company_name or row.description):
+            continue
+        info = _yfinance_company_info(tk)
+        if info.get("company_name") or info.get("description"):
+            if row:
+                row.company_name = info["company_name"]
+                row.description = info["description"]
+                row.updated_at = _now()
+            else:
+                new_row = TickerMetadata(ticker=tk, company_name=info["company_name"],
+                                         description=info["description"], updated_at=_now())
+                db.add(new_row)
+                rows[tk] = new_row
+    try:
+        db.commit()
+    except Exception:
+        pass
+
+    result = {}
+    for tk in requested:
+        r = rows.get(tk)
+        result[tk] = {
+            "company_name": r.company_name if r else None,
+            "description": r.description if r else None,
+            "sector": r.sector if r else None,
+            "industry": r.industry if r else None,
+            "market_cap": r.market_cap if r else None,
+        }
+    return {"tickers": result}
+
+
+@app.get("/api/prices/chart")
+def get_price_chart(ticker: str, range: str = "1M", db=Depends(get_db)):
+    """Price series for a single ticker over a time range, served from the local DB.
+    range: 1D | 3D | 1W | 1M | 6M | YTD | 1Y | 5Y"""
+    from app.database import DailyPrice, RecentPrice
+    from datetime import date as _date
+
+    tk = ticker.upper().strip()
+    today = _date.today()
+    use_hourly = range in ("1D", "3D")
+
+    if use_hourly:
+        days_back = 1 if range == "1D" else 3
+        cutoff = (today - timedelta(days=days_back)).isoformat()
+        rows = (db.query(RecentPrice.date, RecentPrice.close)
+                .filter(RecentPrice.ticker == tk, RecentPrice.date >= cutoff, RecentPrice.close != None)
+                .order_by(RecentPrice.date.asc()).all())
+        series = [{"date": r.date, "close": round(float(r.close), 2)} for r in rows]
+    else:
+        if range == "1W":
+            cutoff = (today - timedelta(days=7)).isoformat()
+        elif range == "1M":
+            cutoff = (today - timedelta(days=30)).isoformat()
+        elif range == "6M":
+            cutoff = (today - timedelta(days=182)).isoformat()
+        elif range == "YTD":
+            cutoff = f"{today.year}-01-01"
+        elif range == "1Y":
+            cutoff = (today - timedelta(days=365)).isoformat()
+        elif range == "5Y":
+            cutoff = (today - timedelta(days=1825)).isoformat()
+        else:
+            cutoff = (today - timedelta(days=30)).isoformat()
+
+        all_rows = (db.query(DailyPrice.date, DailyPrice.close)
+                    .filter(DailyPrice.ticker == tk, DailyPrice.date >= cutoff, DailyPrice.close != None)
+                    .order_by(DailyPrice.date.asc()).all())
+        # For 5Y, sample ~weekly to keep payload small
+        step = 5 if range == "5Y" else 1
+        series = [{"date": r.date, "close": round(float(r.close), 2)} for r in all_rows[::step]]
+
+    return {"ticker": tk, "range": range, "series": series}
+
+
 # In-memory cache for screener results to keep response quick
 _volatile_screener_cache = {
     "data": None,
