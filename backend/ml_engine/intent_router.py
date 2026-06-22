@@ -8,11 +8,34 @@ from app.core.config import TICKER_UNIVERSE
 _TICKER_RE = re.compile(r"\b([A-Z]{1,5}(?:-[A-Z])?)\b")
 
 _NAME_ALIASES = {
+    "MICRON": "MU",
     "NVIDIA": "NVDA",
     "GOOGLE": "GOOGL",
     "ALPHABET": "GOOGL",
     "BERKSHIRE": "BRK-B",
+    "BROADCOM": "AVGO",
+    "MICRON TECHNOLOGY": "MU",
+    "ADVANCED MICRO": "AMD",
+    "LAM RESEARCH": "LRCX",
+    "APPLIED MATERIALS": "AMAT",
 }
+
+_SPILLOVER_KEYWORDS = (
+    "earnings",
+    "impact",
+    "impacted",
+    "affect",
+    "affected",
+    "spillover",
+    "read-through",
+    "read through",
+    "ripple",
+    "my portfolio",
+    "my holdings",
+    "holdings",
+    "other stocks",
+    "other names",
+)
 
 _INTENT_KEYWORDS = {
     "theme_rank": ["rank", "ranking", "rank-ordered", "most likely", "least successful", "outlook for", "companies in"],
@@ -39,8 +62,8 @@ def _extract_tickers(text: str) -> List[str]:
     known = {t.upper() for t in TICKER_UNIVERSE}
     found = []
     upper = text.upper()
-    for name, sym in _NAME_ALIASES.items():
-        if name in upper and sym not in found:
+    for name, sym in sorted(_NAME_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+        if re.search(rf"\b{re.escape(name)}\b", upper) and sym not in found:
             found.append(sym)
     for m in _TICKER_RE.finditer(upper):
         tk = m.group(1)
@@ -50,8 +73,14 @@ def _extract_tickers(text: str) -> List[str]:
     return found
 
 
+def _is_spillover_intent(low: str) -> bool:
+    return any(k in low for k in _SPILLOVER_KEYWORDS)
+
+
 def _detect_intent(text: str) -> str:
     low = text.lower()
+    if _is_spillover_intent(low) and _extract_tickers(text):
+        return "event_spillover"
     if any(k in low for k in ("quantum", "theme", "companies who")):
         return "theme_rank"
     scores = {}
@@ -68,6 +97,8 @@ def _detect_theme(text: str) -> Optional[str]:
     if "quantum" in low:
         return "quantum_computing"
     if "ai infra" in low or "ai infrastructure" in low:
+        return "ai_infrastructure"
+    if any(k in low for k in ("semiconductor", "semi ", "memory", "chip")):
         return "ai_infrastructure"
     return None
 

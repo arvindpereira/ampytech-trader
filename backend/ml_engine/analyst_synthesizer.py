@@ -12,7 +12,11 @@ from app.core.config import (
 )
 from app.core.llm_cost import record_usage
 from ml_engine.citation_validator import validate
-from ml_engine.research_templates import THEME_RANK_LLM_SCHEMA, TICKER_OUTLOOK_LLM_SCHEMA
+from ml_engine.research_templates import (
+    EVENT_SPILLOVER_LLM_SCHEMA,
+    THEME_RANK_LLM_SCHEMA,
+    TICKER_OUTLOOK_LLM_SCHEMA,
+)
 
 
 def _items_block(items) -> str:
@@ -28,6 +32,18 @@ def _snapshot_block(facts: dict) -> str:
     return json.dumps(facts, indent=2)[:6000]
 
 
+def _news_block(rows) -> str:
+    if not rows:
+        return "(no recent scored headlines)"
+    lines = []
+    for r in rows:
+        lines.append(
+            f"- {r.published_utc or r.date}: {(r.title or '')[:200]} "
+            f"(score {r.llm_score:+.2f}, rel {r.llm_relevance:.2f})"
+        )
+    return "\n".join(lines)
+
+
 def _call_ollama(prompt: str, system: str) -> dict:
     body = {
         "model": RESEARCH_LOCAL_MODEL,
@@ -37,7 +53,15 @@ def _call_ollama(prompt: str, system: str) -> dict:
     }
     r = requests.post(f"{OLLAMA_URL}/api/generate", json=body, timeout=180)
     r.raise_for_status()
-    text = (r.json().get("response") or "").strip()
+    j = r.json()
+    text = (j.get("response") or "").strip()
+    record_usage(
+        "research_synthesis",
+        RESEARCH_LOCAL_MODEL,
+        j.get("prompt_eval_count", 0),
+        j.get("eval_count", 0),
+        provider="ollama",
+    )
     return json.loads(text)
 
 
@@ -71,6 +95,7 @@ def synthesize_ticker(
     items,
     tier: str = "local",
     query: str = "",
+    news_rows=None,
 ) -> dict:
     schema = json.dumps(TICKER_OUTLOOK_LLM_SCHEMA, indent=2)
     system = (
@@ -82,6 +107,8 @@ def synthesize_ticker(
         f"User question: {query}\nTicker: {ticker}\n\nSNAPSHOT:\n{_snapshot_block(facts)}\n\n"
         f"EXTERNAL ITEMS:\n{_items_block(items)}"
     )
+    if news_rows is not None:
+        prompt += f"\n\nRECENT NEWS HEADLINES:\n{_news_block(news_rows)}"
     try:
         if tier == "expert" and OPENAI_API_KEY:
             out = _call_openai(prompt, system, RESEARCH_EXPERT_MODEL or OPENAI_EXPERT_MODEL)
@@ -101,6 +128,7 @@ def synthesize_theme(
     items_by_ticker: dict,
     tier: str = "expert",
     query: str = "",
+    news_by_ticker: dict = None,
 ) -> dict:
     schema = json.dumps(THEME_RANK_LLM_SCHEMA, indent=2)
     system = (
@@ -113,9 +141,11 @@ def synthesize_theme(
         for r in ranked
     )
     blocks = []
+    news_by_ticker = news_by_ticker or {}
     for t, facts in facts_by_ticker.items():
         items = items_by_ticker.get(t, [])
-        blocks.append(f"=== {t} ===\n{_snapshot_block(facts)}\n{_items_block(items)}")
+        news_part = f"\nRECENT NEWS:\n{_news_block(news_by_ticker.get(t, []))}"
+        blocks.append(f"=== {t} ===\n{_snapshot_block(facts)}\n{_items_block(items)}{news_part}")
     prompt = f"Theme: {theme}\nQuery: {query}\n\nRANKING (fixed):\n{rank_lines}\n\n" + "\n".join(blocks)
     all_ids = [it.id for items in items_by_ticker.values() for it in items]
     try:
@@ -128,3 +158,50 @@ def synthesize_theme(
         return validate(out, all_ids)
     except Exception as e:
         return {"error": str(e)[:200], "caveats": ["Theme synthesis failed — rank table still valid."]}
+
+
+def synthesize_spillover(
+    primary: str,
+    related: list,
+    facts_by_ticker: dict,
+    items_by_ticker: dict,
+    tier: str = "expert",
+    query: str = "",
+    news_by_ticker: dict = None,
+) -> dict:
+    schema = json.dumps(EVENT_SPILLOVER_LLM_SCHEMA, indent=2)
+    system = (
+        "You are a skeptical equity research editor analyzing event read-through. "
+        "The PRIMARY ticker is the event subject; RELATED tickers are the user's holdings. "
+        "Explain plausible spillover using ONLY provided snapshots, items, and headlines. "
+        "Cite item:ID or snapshot:field. Do not invent earnings figures. "
+        f"Return JSON matching: {schema}"
+    )
+    news_by_ticker = news_by_ticker or {}
+    primary_block = (
+        f"PRIMARY {primary}\n{_snapshot_block(facts_by_ticker.get(primary, {}))}\n"
+        f"{_items_block(items_by_ticker.get(primary, []))}\n"
+        f"RECENT NEWS:\n{_news_block(news_by_ticker.get(primary, []))}"
+    )
+    related_blocks = []
+    for t in related:
+        related_blocks.append(
+            f"HOLDING {t}\n{_snapshot_block(facts_by_ticker.get(t, {}))}\n"
+            f"{_items_block(items_by_ticker.get(t, []))}\n"
+            f"RECENT NEWS:\n{_news_block(news_by_ticker.get(t, []))}"
+        )
+    prompt = (
+        f"User question: {query}\n\n{primary_block}\n\n"
+        + "\n\n".join(related_blocks)
+    )
+    all_ids = [it.id for items in items_by_ticker.values() for it in items]
+    try:
+        if tier == "expert" and OPENAI_API_KEY:
+            out = _call_openai(prompt, system, RESEARCH_EXPERT_MODEL or OPENAI_EXPERT_MODEL)
+        else:
+            out = _call_ollama(prompt, system)
+        if "error" in out:
+            return out
+        return validate(out, all_ids)
+    except Exception as e:
+        return {"error": str(e)[:200], "caveats": ["Spillover synthesis failed — showing snapshots only."]}

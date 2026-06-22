@@ -152,3 +152,59 @@ THEME_RANK_LLM_SCHEMA = {
     "risks": ["..."],
     "caveats": ["..."],
 }
+
+EVENT_SPILLOVER_LLM_SCHEMA = {
+    "tldr": "2-3 sentence bottom line on event read-through",
+    "event_summary": "what happened or is expected for the primary ticker",
+    "holdings_impact": [
+        {"ticker": "NVDA", "impact": "likely positive/neutral/negative and why", "sources": ["snapshot:momentum_3m"]}
+    ],
+    "spillover_narrative": "1-2 paragraphs connecting primary event to related holdings",
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}
+
+
+def event_spillover_shell(
+    primary: str,
+    related: List[str],
+    facts_by_ticker: Dict[str, Dict],
+    synthesis: Optional[Dict] = None,
+    expansion: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    syn = synthesis or {}
+    exp = expansion or {}
+    holdings = []
+    for t in related:
+        facts = facts_by_ticker.get(t, {})
+        holdings.append({
+            "ticker": t,
+            "price": _field_val(facts, "price"),
+            "momentum_3m": _field_val(facts, "momentum_3m"),
+            "news_score_30d": _field_val(facts, "news_score_30d"),
+            "sector": _field_val(facts, "sector"),
+            "impact": next(
+                (h.get("impact") for h in syn.get("holdings_impact", []) if h.get("ticker") == t),
+                "",
+            ),
+        })
+    caveats = list(syn.get("caveats") or [])
+    if exp.get("sector_peers"):
+        caveats.append(
+            f"Related holdings expanded from your portfolio ({', '.join(exp['sector_peers'][:8])})."
+        )
+    return {
+        "template": "event_spillover",
+        "primary_ticker": primary,
+        "related_holdings": holdings,
+        "tldr": syn.get("tldr") or "",
+        "event_summary": syn.get("event_summary") or "",
+        "spillover_narrative": syn.get("spillover_narrative") or "",
+        "holdings_impact": syn.get("holdings_impact") or [],
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": caveats or [
+            "Read-through analysis uses local snapshots and news — not a live earnings transcript.",
+        ],
+    }

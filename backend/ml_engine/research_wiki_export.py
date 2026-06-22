@@ -3,10 +3,11 @@ import json
 import os
 import re
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 
 from app.core.config import BASE_DIR
 from app.database import ResearchMessage, ResearchThread, SessionLocal
+from ml_engine.citation_resolver import render_inline_citations, render_inline_citations_html
 
 WIKI_ROOT = os.path.join(os.path.dirname(BASE_DIR), "research-wiki")  # repo root / research-wiki
 REPORTS_DIR = os.path.join(WIKI_ROOT, "reports")
@@ -51,6 +52,53 @@ def _report_message(db, thread_id: str) -> Optional[ResearchMessage]:
     )
 
 
+def _by_ref(report: dict) -> dict:
+    return report.get("citations_by_ref") or {}
+
+
+def _md_cite(report: dict, text: str) -> str:
+    return render_inline_citations(text or "", _by_ref(report))
+
+
+def _html_cite(report: dict, text: str) -> str:
+    return render_inline_citations_html(text or "", _by_ref(report))
+
+
+def _render_sources_md(report: dict) -> List[str]:
+    bundle = report.get("source_bundle") or []
+    citations = report.get("citations") or []
+    if not bundle and not citations:
+        return []
+    lines = [
+        "## Sources\n",
+        "`item:N` = external headline/analyst row from the research KB. "
+        "`snapshot:field` = computed fact from `company_snapshots` (price, momentum, targets, etc.).\n",
+    ]
+    if bundle:
+        lines.append("### Articles & analyst items reviewed\n")
+        for s in bundle:
+            ref = s.get("ref", "")
+            title = (s.get("title") or "—").replace("|", "/")
+            src = s.get("source") or ""
+            url = s.get("url")
+            if url:
+                lines.append(f"- `{ref}` **{s.get('ticker', '')}** [{title}]({url}) — _{src}_")
+            else:
+                lines.append(f"- `{ref}` **{s.get('ticker', '')}** {title} — _{src}_ (no publisher URL on file)")
+    snap_rows = [c for c in citations if c.get("kind") == "snapshot"]
+    if snap_rows:
+        lines.append("\n### Snapshot fields cited\n")
+        for s in snap_rows:
+            val = s.get("value")
+            lines.append(
+                f"- `{s.get('ref')}` **{s.get('ticker')}** {s.get('label')}: {val} "
+                f"(as of {s.get('as_of') or 'n/a'}, from {s.get('source_table')})"
+            )
+    lines.append("")
+    lines.append("*\\* = no url available*\n")
+    return lines
+
+
 def render_markdown(thread: ResearchThread, report: dict) -> str:
     tickers = json.loads(thread.tickers_json) if thread.tickers_json else []
     fm = {
@@ -70,7 +118,13 @@ def render_markdown(thread: ResearchThread, report: dict) -> str:
             lines.append(f"{k}: {v}")
     lines.append("---\n")
 
-    lines.append(f"## TLDR\n\n{report.get('tldr', '')}\n")
+    gen = report.get("generation") or {}
+    if report.get("generation_note"):
+        lines.append(f"*{report['generation_note']}*\n")
+    elif gen.get("note"):
+        lines.append(f"*{gen['note']}*\n")
+
+    lines.append(f"## TLDR\n\n{_md_cite(report, report.get('tldr', ''))}\n")
 
     if report.get("template") == "theme_rank":
         lines.append("## Ranked companies\n")
@@ -81,11 +135,11 @@ def render_markdown(thread: ResearchThread, report: dict) -> str:
                 f"| {r.get('rank')} | {r.get('ticker')} | {r.get('score')} | {r.get('coverage_pct')} |"
             )
         if report.get("winners_summary"):
-            lines.append(f"\n### Winners\n\n{report['winners_summary']}\n")
+            lines.append(f"\n### Winners\n\n{_md_cite(report, report['winners_summary'])}\n")
         if report.get("losers_summary"):
-            lines.append(f"\n### Laggards\n\n{report['losers_summary']}\n")
+            lines.append(f"\n### Laggards\n\n{_md_cite(report, report['losers_summary'])}\n")
         if report.get("theme_narrative"):
-            lines.append(f"\n## Theme narrative\n\n{report['theme_narrative']}\n")
+            lines.append(f"\n## Theme narrative\n\n{_md_cite(report, report['theme_narrative'])}\n")
 
     elif report.get("template") == "ticker_outlook":
         snap = report.get("snapshot_summary") or {}
@@ -96,14 +150,16 @@ def render_markdown(thread: ResearchThread, report: dict) -> str:
         lines.append(f"- Analysts: {snap.get('num_analysts')} ({snap.get('recommendation_key')})")
         lines.append(f"- Tier: {snap.get('tier')}\n")
         if report.get("outlook_narrative"):
-            lines.append(f"## Outlook\n\n{report['outlook_narrative']}\n")
+            lines.append(f"## Outlook\n\n{_md_cite(report, report['outlook_narrative'])}\n")
+
+    lines.extend(_render_sources_md(report))
 
     for section in ("catalysts", "risks", "caveats"):
         items = report.get(section)
         if items:
             lines.append(f"## {section.title()}\n")
             for it in items:
-                lines.append(f"- {it}")
+                lines.append(f"- {_md_cite(report, str(it))}")
             lines.append("")
 
     return "\n".join(lines)
@@ -122,8 +178,11 @@ def render_html(thread: ResearchThread, report: dict) -> str:
         f"<h1>{title}</h1>",
         f"<p class='meta'>Date: {d} · Intent: {_esc(thread.intent)} · "
         f"Tickers: {_esc(', '.join(tickers))} · Coverage: {thread.coverage_pct}</p>",
-        f"<h2>TLDR</h2><p>{_esc(report.get('tldr', ''))}</p>",
     ]
+    gen_note = report.get("generation_note") or (report.get("generation") or {}).get("note")
+    if gen_note:
+        parts.append(f"<p class='meta'><em>{_esc(gen_note)}</em></p>")
+    parts.append(f"<h2>TLDR</h2><p>{_html_cite(report, report.get('tldr', ''))}</p>")
     if report.get("template") == "theme_rank":
         parts.append("<h2>Ranked companies</h2><table><tr><th>Rank</th><th>Ticker</th><th>Score</th><th>Coverage</th></tr>")
         for r in report.get("ranked_companies") or []:
@@ -133,11 +192,11 @@ def render_html(thread: ResearchThread, report: dict) -> str:
             )
         parts.append("</table>")
         if report.get("winners_summary"):
-            parts.append(f"<h3>Winners</h3><p>{_esc(report['winners_summary'])}</p>")
+            parts.append(f"<h3>Winners</h3><p>{_html_cite(report, report['winners_summary'])}</p>")
         if report.get("losers_summary"):
-            parts.append(f"<h3>Laggards</h3><p>{_esc(report['losers_summary'])}</p>")
+            parts.append(f"<h3>Laggards</h3><p>{_html_cite(report, report['losers_summary'])}</p>")
         if report.get("theme_narrative"):
-            parts.append(f"<h2>Theme narrative</h2><p>{_esc(report['theme_narrative'])}</p>")
+            parts.append(f"<h2>Theme narrative</h2><p>{_html_cite(report, report['theme_narrative'])}</p>")
     elif report.get("template") == "ticker_outlook":
         snap = report.get("snapshot_summary") or {}
         parts.append("<h2>Snapshot</h2><ul>")
@@ -145,13 +204,25 @@ def render_html(thread: ResearchThread, report: dict) -> str:
             parts.append(f"<li>{_esc(k)}: {_esc(v)}</li>")
         parts.append("</ul>")
         if report.get("outlook_narrative"):
-            parts.append(f"<h2>Outlook</h2><p>{_esc(report['outlook_narrative'])}</p>")
+            parts.append(f"<h2>Outlook</h2><p>{_html_cite(report, report['outlook_narrative'])}</p>")
+    bundle = report.get("source_bundle") or []
+    if bundle:
+        parts.append("<h2>Sources checked</h2><ul>")
+        for s in bundle:
+            ref = _esc(s.get("ref", ""))
+            title = _esc(s.get("title") or "—")
+            url = s.get("url")
+            if url:
+                parts.append(f"<li><code>{ref}</code> {_esc(s.get('ticker', ''))} — <a href='{_esc(url)}'>{title}</a></li>")
+            else:
+                parts.append(f"<li><code>{ref}</code> {_esc(s.get('ticker', ''))} — {title} <em>(no URL on file)</em></li>")
+        parts.append("</ul>")
     for section in ("catalysts", "risks", "caveats"):
         items = report.get(section)
         if items:
             parts.append(f"<h2>{section.title()}</h2><ul>")
             for it in items:
-                parts.append(f"<li>{_esc(it)}</li>")
+                parts.append(f"<li>{_html_cite(report, str(it))}</li>")
             parts.append("</ul>")
     parts.append("</article></body></html>")
     return "".join(parts)

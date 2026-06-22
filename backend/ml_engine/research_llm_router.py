@@ -8,6 +8,7 @@ from ml_engine.intent_router import RoutedQuery, is_stub_intent
 INTENT_BASE = {
     "ticker_outlook": 0.2,
     "theme_rank": 0.5,
+    "event_spillover": 0.55,
     "sector_screen": 0.7,
     "cross_theme": 0.85,
     "crowding_risk": 0.85,
@@ -62,7 +63,91 @@ def decide(routed: RoutedQuery, coverage_by_ticker: Optional[Dict[str, float]] =
     c = complexity_score(routed, coverage_by_ticker)
     if c < 0.45 and routed.intent == "ticker_outlook" and len(routed.tickers) <= 2:
         return RouteDecision("local", c, "low complexity ticker outlook", False)
-    if c >= 0.45 or routed.deep_research or routed.intent in ("cross_theme", "crowding_risk", "theme_rank"):
+    if c >= 0.45 or routed.deep_research or routed.intent in (
+        "cross_theme", "crowding_risk", "theme_rank", "event_spillover"
+    ):
         use_search = routed.deep_research and bool(coverage_by_ticker) and min(coverage_by_ticker.values(), default=1) < 0.6
         return RouteDecision("expert", c, "complex or multi-ticker research", use_search)
     return RouteDecision("local", c, "default local tier", False)
+
+
+def generation_info(route: RouteDecision) -> dict:
+    """Human-readable provenance for how a report was generated."""
+    from app.core.config import (
+        OPENAI_API_KEY,
+        OPENAI_EXPERT_MODEL,
+        RESEARCH_EXPERT_MODEL,
+        RESEARCH_LOCAL_MODEL,
+    )
+
+    if route.tier == "lookup":
+        return {
+            "agent": "Research Analyst",
+            "tier": "lookup",
+            "model": None,
+            "provider": None,
+            "note": (
+                "Generated from the local knowledge base only (template lookup — no LLM). "
+                "All figures are snapshot facts; there is no AI narrative."
+            ),
+        }
+
+    if route.tier == "local":
+        return {
+            "agent": "Research Analyst (local)",
+            "tier": "local",
+            "model": RESEARCH_LOCAL_MODEL,
+            "provider": "ollama",
+            "note": (
+                f"Narrative synthesized by local Ollama ({RESEARCH_LOCAL_MODEL}). "
+                "Computed ranks and snapshot numbers are deterministic; prose quality is typically lower than expert tier."
+            ),
+        }
+
+    if OPENAI_API_KEY:
+        model = RESEARCH_EXPERT_MODEL or OPENAI_EXPERT_MODEL
+        return {
+            "agent": "Research Analyst (expert)",
+            "tier": "expert",
+            "model": model,
+            "provider": "openai",
+            "note": (
+                f"Narrative synthesized by OpenAI ({model}, expert tier). "
+                "Computed ranks and snapshot numbers are deterministic; only prose sections vary by model."
+            ),
+        }
+
+    return {
+        "agent": "Research Analyst (local fallback)",
+        "tier": "expert",
+        "model": RESEARCH_LOCAL_MODEL,
+        "provider": "ollama",
+        "note": (
+            f"Expert tier selected but OPENAI_API_KEY is unset — narrative used Ollama ({RESEARCH_LOCAL_MODEL}) instead."
+        ),
+    }
+
+
+def stamp_generation(report: dict, route: RouteDecision) -> dict:
+    """Attach generation metadata and a plain-English note to the report JSON."""
+    template = report.get("template")
+    if template == "stub":
+        info = {
+            "agent": "Research Analyst (stub)",
+            "tier": route.tier,
+            "model": None,
+            "provider": None,
+            "note": (
+                "This intent is not fully implemented yet — placeholder report only, no LLM synthesis. "
+                f"Router tier was {route.tier}."
+            ),
+        }
+    elif template == "lookup":
+        info = generation_info(RouteDecision("lookup", route.complexity, route.reason))
+    else:
+        info = generation_info(route)
+
+    report = dict(report)
+    report["generation"] = info
+    report["generation_note"] = info["note"]
+    return report

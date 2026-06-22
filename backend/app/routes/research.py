@@ -49,11 +49,12 @@ def _now():
 
 def _run_query_job(jid, req_data):
     from app.database import ResearchMessage, ResearchThread, SessionLocal
-    from data_ingestion.research_kb_refresh import materialize_ticker, refresh_tickers
+    from data_ingestion.research_kb_refresh import materialize_ticker
     from ml_engine.intent_router import route
+    from ml_engine.context_expander import resolve_query_tickers
     from ml_engine.research_analyst import build_report, prepare_context
-    from ml_engine.research_llm_router import decide
-    from ml_engine.theme_resolver import resolve
+    from ml_engine.citation_resolver import attach_citations
+    from ml_engine.research_llm_router import decide, stamp_generation
 
     db = SessionLocal()
     try:
@@ -63,14 +64,26 @@ def _run_query_job(jid, req_data):
             deep_research=req_data.get("deep_research", False),
             extra_tickers=req_data.get("extra_tickers"),
         )
-        _job_update(jid, progress=10, stage="Resolving tickers & theme")
-        if routed.intent == "theme_rank":
-            tickers = resolve(routed.theme, routed.tickers)
-        else:
-            tickers = routed.tickers or []
+        _job_update(jid, progress=10, stage="Resolving tickers & portfolio context")
+        tickers, expansion = resolve_query_tickers(
+            routed, db, extra_tickers=req_data.get("extra_tickers")
+        )
+        if expansion.get("error") == "no_primary_ticker":
+            _job_update(jid, status="error", error="No ticker detected — mention a symbol (e.g. MU or Micron).")
+            return
         if not tickers and routed.intent == "ticker_outlook":
             _job_update(jid, status="error", error="No ticker detected in query.")
             return
+        if not tickers and routed.intent == "theme_rank":
+            _job_update(jid, status="error", error="No tickers resolved for theme.")
+            return
+        if not tickers:
+            _job_update(jid, status="error", error="No tickers resolved for this query.")
+            return
+
+        if expansion.get("sector_peers"):
+            peers = ", ".join(expansion["sector_peers"][:6])
+            _job_update(jid, progress=12, stage=f"Including portfolio peers: {peers}")
 
         _job_update(jid, progress=15, stage="Refreshing knowledge base")
         for t in tickers:
@@ -79,8 +92,8 @@ def _run_query_job(jid, req_data):
             except Exception:
                 pass
 
-        _job_update(jid, progress=35, stage="Loading snapshots & analyst items")
-        facts_by_ticker, items_by_ticker, coverage = prepare_context(tickers, db)
+        _job_update(jid, progress=35, stage="Loading snapshots, news & analyst items")
+        facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(tickers, db)
         route_decision = decide(routed, coverage)
         _job_update(
             jid,
@@ -97,7 +110,12 @@ def _run_query_job(jid, req_data):
             items_by_ticker,
             route_decision,
             progress_cb=report_progress,
+            news_by_ticker=news_by_ticker,
+            expansion=expansion,
         )
+        report = stamp_generation(report, route_decision)
+        report = attach_citations(report, items_by_ticker, facts_by_ticker, db=db)
+        gen = report.get("generation") or {}
 
         thread_id = req_data.get("thread_id") or uuid.uuid4().hex
         title = (routed.raw_query or "Research")[:120]
@@ -136,7 +154,7 @@ def _run_query_job(jid, req_data):
             content=tldr,
             structured_json=json.dumps(report),
             snapshot_tickers_json=json.dumps(tickers),
-            model=route_decision.tier,
+            model=gen.get("model") or route_decision.tier,
             created_at=_now(),
         ))
         _job_update(jid, progress=95, stage="Saving draft")
@@ -146,11 +164,14 @@ def _run_query_job(jid, req_data):
             "thread_id": thread_id,
             "report": report,
             "tier": route_decision.tier,
+            "generation": gen,
+            "generation_note": report.get("generation_note"),
             "complexity": route_decision.complexity,
             "reason": route_decision.reason,
             "tickers": tickers,
             "coverage": coverage,
             "intent": routed.intent,
+            "expansion": expansion,
         }
         _RESEARCH_RESULTS[jid] = result
         _RESEARCH_QUERY_META[thread_id] = {
@@ -302,7 +323,10 @@ def publish_thread(thread_id: str):
         t.published_at = _now()
         t.updated_at = _now()
         db.commit()
-        path = export_thread(thread_id, db)
+        try:
+            path = export_thread(thread_id, db)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Wiki export failed: {str(e)[:300]}")
         t.wiki_exported_at = _now()
         db.commit()
         return {"status": "published", "wiki_path": str(path) if path else None}

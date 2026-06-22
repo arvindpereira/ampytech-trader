@@ -1,13 +1,20 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiUrl } from '../lib/api';
 import { Brain, BookOpen, Search, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Circle, Loader2 } from 'lucide-react';
+import {
+  buildCitationsMap,
+  CitationFootnotes,
+  CitationText,
+  collectReportCitationRefs,
+  NarrativeBlock,
+} from './CitationText';
 
 const EXAMPLES = [
+  "How might Micron earnings impact my semiconductor holdings?",
   "What's the outlook for quantum computing companies in H2? Rank the companies.",
   "What's the outlook for NVIDIA over the next year? What are analyst price targets?",
-  "What is NVDA's consensus price target?",
 ];
 
 const RESEARCH_STEPS = [
@@ -35,9 +42,55 @@ type Report = {
   winners_summary?: string;
   losers_summary?: string;
   theme_narrative?: string;
+  spillover_narrative?: string;
+  event_summary?: string;
+  primary_ticker?: string;
+  related_holdings?: Array<{ ticker: string; momentum_3m?: number; news_score_30d?: number; impact?: string }>;
   catalysts?: string[];
   risks?: string[];
   caveats?: string[];
+  generation_note?: string;
+  generation?: {
+    agent?: string;
+    tier?: string;
+    model?: string | null;
+    provider?: string | null;
+    note?: string;
+  };
+  citations?: Array<{
+    ref: string;
+    kind: string;
+    id?: number;
+    ticker?: string;
+    title?: string;
+    label?: string;
+    value?: unknown;
+    url?: string | null;
+    source?: string;
+    published_at?: string;
+    missing?: boolean;
+    note?: string;
+  }>;
+  source_bundle?: Array<{
+    ref: string;
+    kind: string;
+    id?: number;
+    ticker?: string;
+    title?: string;
+    url?: string | null;
+    source?: string;
+    published_at?: string;
+    excerpt?: string;
+  }>;
+  citations_by_ref?: Record<string, {
+    ref: string;
+    kind?: string;
+    title?: string;
+    label?: string;
+    value?: unknown;
+    url?: string | null;
+    ticker?: string;
+  }>;
 };
 
 export default function ResearchAnalystPanel() {
@@ -52,10 +105,18 @@ export default function ResearchAnalystPanel() {
   const [error, setError] = useState('');
   const [threadId, setThreadId] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
-  const [tier, setTier] = useState('');
   const [library, setLibrary] = useState<Array<Record<string, unknown>>>([]);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
+
+  const citeMap = useMemo(
+    () => (report ? buildCitationsMap(report) : {}),
+    [report],
+  );
+  const allCiteRefs = useMemo(
+    () => (report ? collectReportCitationRefs(report) : []),
+    [report],
+  );
 
   const fetchKb = useCallback(async () => {
     try {
@@ -97,7 +158,6 @@ export default function ResearchAnalystPanel() {
       if (j.status === 'done' && j.result) {
         setReport(j.result.report);
         setThreadId(j.result.thread_id);
-        setTier(j.result.tier || '');
         setLoading(false);
         setProgress(100);
         setStage('');
@@ -126,7 +186,6 @@ export default function ResearchAnalystPanel() {
     setProgress(0);
     setStage('Starting…');
     setError('');
-    setTier('');
     try {
       const r = await fetch(apiUrl('/api/research/query'), {
         method: 'POST',
@@ -149,9 +208,22 @@ export default function ResearchAnalystPanel() {
 
   const publish = async () => {
     if (!threadId) return;
-    await fetch(apiUrl(`/api/research/thread/${threadId}/publish`), { method: 'POST' });
-    fetchLibrary();
-    alert('Published to library and wiki export.');
+    try {
+      const r = await fetch(apiUrl(`/api/research/thread/${threadId}/publish`), { method: 'POST' });
+      if (!r.ok) {
+        let detail = r.statusText;
+        try {
+          const j = await r.json();
+          detail = j.detail || detail;
+        } catch { /* ignore */ }
+        alert(`Publish failed: ${detail}`);
+        return;
+      }
+      fetchLibrary();
+      alert('Published to library and wiki export.');
+    } catch (e) {
+      alert(`Publish failed: ${e instanceof Error ? e.message : 'Network error'}. Check that the backend is running.`);
+    }
   };
 
   const reject = async () => {
@@ -276,7 +348,6 @@ export default function ResearchAnalystPanel() {
                 </span>
               ) : 'Run analysis'}
             </button>
-            {tier && <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px' }}>Tier: {tier}</p>}
             <div style={{ marginTop: '16px' }}>
               <div style={labelStyle}>Examples</div>
               {EXAMPLES.map((ex) => (
@@ -322,7 +393,15 @@ export default function ResearchAnalystPanel() {
         {report && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '14px' }}>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Template: {report.template}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                Template: {report.template}
+                {report.generation?.agent && (
+                  <span> · {report.generation.agent}</span>
+                )}
+                {report.generation?.model && (
+                  <span> · {report.generation.model}</span>
+                )}
+              </div>
               {threadId && (
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button onClick={publish} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.1)', color: '#10B981', cursor: 'pointer' }}>
@@ -334,9 +413,19 @@ export default function ResearchAnalystPanel() {
                 </div>
               )}
             </div>
+            {(report.generation_note || report.generation?.note) && (
+              <div style={{
+                fontSize: '12px', lineHeight: 1.55, color: 'var(--text-secondary)', marginBottom: '14px',
+                padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-glass)',
+              }}>
+                <span style={{ fontWeight: 600, color: '#c4b5fd' }}>How this report was generated: </span>
+                {report.generation_note || report.generation?.note}
+              </div>
+            )}
             {report.tldr && (
               <div style={{ fontSize: '14px', lineHeight: 1.6, padding: '12px', borderRadius: '8px', background: 'rgba(139,92,246,0.1)', borderLeft: '3px solid #a78bfa', marginBottom: '16px' }}>
-                {report.tldr}
+                <CitationText text={report.tldr} citationsByRef={citeMap} />
               </div>
             )}
             {report.ranked_companies && report.ranked_companies.length > 0 && (
@@ -356,10 +445,110 @@ export default function ResearchAnalystPanel() {
                 </table>
               </div>
             )}
-            {report.theme_narrative && <div style={{ marginBottom: '12px' }}><div style={labelStyle}>Theme</div><p style={{ fontSize: '13px', lineHeight: 1.6 }}>{report.theme_narrative}</p></div>}
-            {report.outlook_narrative && <div style={{ marginBottom: '12px' }}><div style={labelStyle}>Outlook</div><p style={{ fontSize: '13px', lineHeight: 1.6 }}>{report.outlook_narrative}</p></div>}
-            {report.winners_summary && <div style={{ marginBottom: '8px' }}><div style={labelStyle}>Winners</div><p style={{ fontSize: '12.5px' }}>{report.winners_summary}</p></div>}
-            {report.losers_summary && <div style={{ marginBottom: '8px' }}><div style={labelStyle}>Laggards</div><p style={{ fontSize: '12.5px' }}>{report.losers_summary}</p></div>}
+            {report.related_holdings && report.related_holdings.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={labelStyle}>Portfolio read-through ({report.primary_ticker} event)</div>
+                <table className="trade-table" style={{ width: '100%', fontSize: '12px' }}>
+                  <thead>
+                    <tr><th>Ticker</th><th>3m momentum</th><th>News 30d</th><th>Impact</th></tr>
+                  </thead>
+                  <tbody>
+                    {report.related_holdings.map((h) => (
+                      <tr key={h.ticker}>
+                        <td>{h.ticker}</td>
+                        <td>{h.momentum_3m != null ? `${(h.momentum_3m * 100).toFixed(1)}%` : '—'}</td>
+                        <td>{h.news_score_30d != null ? h.news_score_30d.toFixed(2) : '—'}</td>
+                        <td style={{ maxWidth: '240px', fontSize: '12px', lineHeight: 1.5 }}>
+                          {h.impact ? <CitationText text={h.impact} citationsByRef={citeMap} /> : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {report.event_summary && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Event</div>
+                <NarrativeBlock text={report.event_summary} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.spillover_narrative && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Spillover</div>
+                <NarrativeBlock text={report.spillover_narrative} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.theme_narrative && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Theme</div>
+                <NarrativeBlock text={report.theme_narrative} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.outlook_narrative && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Outlook</div>
+                <NarrativeBlock text={report.outlook_narrative} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.winners_summary && (
+              <div style={{ marginBottom: '8px' }}>
+                <div style={labelStyle}>Winners</div>
+                <NarrativeBlock text={report.winners_summary} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {report.losers_summary && (
+              <div style={{ marginBottom: '8px' }}>
+                <div style={labelStyle}>Laggards</div>
+                <NarrativeBlock text={report.losers_summary} citationsByRef={citeMap} showFootnotes={false} />
+              </div>
+            )}
+            {allCiteRefs.length > 0 && (
+              <CitationFootnotes refs={allCiteRefs} citationsByRef={citeMap} />
+            )}
+            {(report.source_bundle && report.source_bundle.length > 0) && (
+              <div style={{ marginTop: '14px', borderTop: '1px solid var(--border-glass)', paddingTop: '12px' }}>
+                <div style={labelStyle}>Sources checked</div>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
+                  <code style={{ fontSize: '10px' }}>item:N</code> = headline or analyst row from the research KB.
+                  <code style={{ fontSize: '10px' }}> snapshot:field</code> = fact from your local company snapshot (price, momentum, targets).
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {report.source_bundle.map((s) => (
+                    <div key={s.ref} style={{ fontSize: '12px', padding: '8px 10px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'baseline' }}>
+                        <code style={{ color: '#c4b5fd', fontSize: '11px' }}>{s.ref}</code>
+                        {s.ticker && <span style={{ fontWeight: 600 }}>{s.ticker}</span>}
+                        {s.source && <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{s.source}</span>}
+                      </div>
+                      {s.url ? (
+                        <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: '#a78bfa', textDecoration: 'underline', display: 'block', marginTop: '4px' }}>
+                          {s.title || 'Open article'}
+                        </a>
+                      ) : (
+                        <div style={{ marginTop: '4px', color: 'var(--text-primary)' }}>{s.title || '—'}</div>
+                      )}
+                      {!s.url && s.title && (
+                        <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>No publisher URL stored for this item</div>
+                      )}
+                      {s.published_at && <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>{s.published_at}</div>}
+                    </div>
+                  ))}
+                </div>
+                {(report.citations || []).some((c) => c.kind === 'snapshot') && (
+                  <div style={{ marginTop: '12px' }}>
+                    <div style={{ ...labelStyle, marginBottom: '6px' }}>Snapshot fields cited in narrative</div>
+                    <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {report.citations!.filter((c) => c.kind === 'snapshot').map((c) => (
+                        <li key={c.ref}>
+                          <code>{c.ref}</code> — {c.label} ({c.ticker}): {String(c.value ?? 'n/a')}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
             {(report.caveats || []).length > 0 && (
               <div style={{ marginTop: '14px', borderTop: '1px solid var(--border-glass)', paddingTop: '12px' }}>
                 <div style={{ ...labelStyle, color: 'var(--color-gold)' }}><AlertTriangle size={12} style={{ display: 'inline', marginRight: '4px' }} />Caveats</div>

@@ -56,11 +56,12 @@ def promote_news_headlines(db, ticker: str, limit: int = 5) -> int:
     for r in rows:
         title = (r.title or "")[:300]
         excerpt = f"LLM score {r.llm_score:+.2f} (relevance {r.llm_relevance:.2f})"
+        url = _lookup_news_url(db, ticker, title)
         if _upsert_item(
             db,
             ticker=ticker.upper(),
             source="news_llm",
-            source_url=None,
+            source_url=url,
             published_at=r.published_utc,
             title=title,
             excerpt=excerpt,
@@ -68,6 +69,28 @@ def promote_news_headlines(db, ticker: str, limit: int = 5) -> int:
         ):
             added += 1
     return added
+
+
+def _lookup_news_url(db, ticker: str, title: str) -> Optional[str]:
+    """Resolve publisher URL from sentiment logs when promoting headlines."""
+    try:
+        from app.core.text import normalize_headline
+        from app.database import SentimentSourceLog
+
+        norm = normalize_headline(title)
+        rows = (
+            db.query(SentimentSourceLog)
+            .filter(SentimentSourceLog.ticker == ticker.upper(), SentimentSourceLog.source == "news")
+            .order_by(SentimentSourceLog.id.desc())
+            .limit(300)
+            .all()
+        )
+        for row in rows:
+            if row.url and normalize_headline(row.title or "") == norm:
+                return row.url
+    except Exception:
+        pass
+    return None
 
 
 def _finnhub_get(path: str, params: dict) -> Optional[dict]:
