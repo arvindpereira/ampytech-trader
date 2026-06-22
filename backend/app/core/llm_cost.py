@@ -22,6 +22,7 @@ _DEFAULT_PRICING = {
     "gpt-4.1": [2.00, 8.00],       # published
     # gpt-5.5 (and its dated snapshot id gpt-5_5-2026-04-23) — ESTIMATE, flagship 2026 tier. Calibrate me.
     "gpt-5.5": [1.25, 10.0],
+    "gpt-5.4": [1.00, 8.0],        # ESTIMATE
     "gpt-5_5": [1.25, 10.0],
     "gpt-5": [1.25, 10.0],         # ESTIMATE
 }

@@ -145,6 +145,16 @@ def resolve_query_tickers(
                 _append_unique(tickers, t)
         return tickers[:RESEARCH_MAX_TICKERS], meta
 
+    if routed.intent == "sector_screen":
+        from ml_engine.sector_analyzer import resolve_sector_screen
+
+        tickers, screen_meta = resolve_sector_screen(routed, db)
+        meta.update(screen_meta)
+        if extra_tickers:
+            for t in extra_tickers:
+                _append_unique(tickers, t)
+        return tickers[:RESEARCH_MAX_TICKERS], meta
+
     tickers = list(routed.tickers or [])
     if extra_tickers:
         for t in extra_tickers:

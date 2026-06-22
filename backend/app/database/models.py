@@ -605,6 +605,44 @@ class WebSearchCache(Base):
     fetched_at = Column(String, nullable=False)
 
 
+class SectorSnapshot(Base):
+    """Aggregated sector-level metrics for screening."""
+    __tablename__ = "sector_snapshots"
+
+    sector_id = Column(String, nullable=False)
+    as_of_date = Column(String, nullable=False)
+    ticker_count = Column(Integer, nullable=True)
+    median_upside_pct = Column(Float, nullable=True)
+    median_momentum_3m = Column(Float, nullable=True)
+    median_news_score_30d = Column(Float, nullable=True)
+    median_quality = Column(Float, nullable=True)
+    etf_proxy = Column(String, nullable=True)
+    facts_json = Column(String, nullable=True)
+    refreshed_at = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("sector_id", "as_of_date", name="pk_sector_snapshots"),
+    )
+
+
+class InternalPriceTarget(Base):
+    """Proprietary / blended price targets separate from sell-side consensus."""
+    __tablename__ = "internal_price_targets"
+
+    ticker = Column(String, nullable=False)
+    as_of_date = Column(String, nullable=False)
+    horizon_date = Column(String, nullable=False)
+    target_price = Column(Float, nullable=True)
+    method = Column(String, nullable=True)  # consensus_blend | momentum_adjusted
+    confidence = Column(Float, nullable=True)
+    notes = Column(String, nullable=True)
+    refreshed_at = Column(String, nullable=True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("ticker", "as_of_date", "horizon_date", name="pk_internal_price_targets"),
+    )
+
+
 class ResearchThread(Base):
     __tablename__ = "research_threads"
 

@@ -26,7 +26,10 @@ def register_jobs(job_new, job_update):
 class ResearchQueryRequest(BaseModel):
     query: str
     deep_research: bool = False
+    use_premium: bool = False
+    use_web_search: bool = False
     extra_tickers: Optional[List[str]] = None
+    thread_id: Optional[str] = None
 
 
 class ResearchMessageRequest(BaseModel):
@@ -54,14 +57,16 @@ def _run_query_job(jid, req_data):
     from ml_engine.context_expander import resolve_query_tickers
     from ml_engine.research_analyst import build_report, prepare_context
     from ml_engine.citation_resolver import attach_citations
-    from ml_engine.research_llm_router import decide, stamp_generation
+    from ml_engine.research_llm_router import decide, stamp_generation, upgrade_offer
 
     db = SessionLocal()
     try:
+        use_premium = bool(req_data.get("use_premium") or req_data.get("deep_research"))
+        use_web_search = bool(req_data.get("use_web_search") or req_data.get("deep_research"))
         _job_update(jid, progress=5, stage="Routing query")
         routed = route(
             req_data.get("query", ""),
-            deep_research=req_data.get("deep_research", False),
+            deep_research=use_web_search or req_data.get("deep_research", False),
             extra_tickers=req_data.get("extra_tickers"),
         )
         _job_update(jid, progress=10, stage="Resolving tickers & portfolio context")
@@ -77,11 +82,14 @@ def _run_query_job(jid, req_data):
         if not tickers and routed.intent == "theme_rank":
             _job_update(jid, status="error", error="No tickers resolved for theme.")
             return
-        if not tickers:
+        if not tickers and routed.intent != "sector_screen":
             _job_update(jid, status="error", error="No tickers resolved for this query.")
             return
 
-        if expansion.get("sector_peers"):
+        if expansion.get("sectors"):
+            sec_label = ", ".join(expansion["sectors"][:3])
+            _job_update(jid, progress=12, stage=f"Screening sectors: {sec_label}")
+        elif expansion.get("sector_peers"):
             peers = ", ".join(expansion["sector_peers"][:6])
             _job_update(jid, progress=12, stage=f"Including portfolio peers: {peers}")
 
@@ -94,11 +102,28 @@ def _run_query_job(jid, req_data):
 
         _job_update(jid, progress=35, stage="Loading snapshots, news & analyst items")
         facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(tickers, db)
-        route_decision = decide(routed, coverage)
+        route_decision = decide(routed, coverage, use_premium=use_premium)
+
+        web_items = []
+        low_coverage = bool(coverage) and min(coverage.values()) < 0.5
+        if route_decision.use_search or use_web_search or low_coverage:
+            _job_update(jid, progress=38, stage="Fetching web search snippets")
+            try:
+                from data_ingestion.web_search_fetcher import fetch_for_research
+                web_items = fetch_for_research(routed.raw_query, tickers, db=db)
+                if web_items:
+                    facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(
+                        tickers, db, web_items=web_items
+                    )
+            except Exception:
+                web_items = []
+        tier_label = {"standard": "GPT-4o mini", "premium": "Premium AI", "local": "local AI"}.get(
+            route_decision.tier, route_decision.tier
+        )
         _job_update(
             jid,
             progress=45,
-            stage=f"Selected {route_decision.tier} tier — {route_decision.reason}",
+            stage=f"Selected {tier_label} — {route_decision.reason}",
         )
 
         def report_progress(pct: int, stage: str) -> None:
@@ -112,9 +137,12 @@ def _run_query_job(jid, req_data):
             progress_cb=report_progress,
             news_by_ticker=news_by_ticker,
             expansion=expansion,
+            web_items=web_items,
         )
         report = stamp_generation(report, route_decision)
+        upgrade = upgrade_offer(route_decision, routed.intent, len(tickers))
         report = attach_citations(report, items_by_ticker, facts_by_ticker, db=db)
+        report["upgrade_offer"] = upgrade
         gen = report.get("generation") or {}
 
         thread_id = req_data.get("thread_id") or uuid.uuid4().hex
@@ -166,6 +194,7 @@ def _run_query_job(jid, req_data):
             "tier": route_decision.tier,
             "generation": gen,
             "generation_note": report.get("generation_note"),
+            "upgrade_offer": upgrade,
             "complexity": route_decision.complexity,
             "reason": route_decision.reason,
             "tickers": tickers,
@@ -243,6 +272,26 @@ def kb_refresh():
 
     threading.Thread(target=_run, args=(jid,), daemon=True).start()
     return {"status": "started", "job_id": jid}
+
+
+@router.get("/premium/estimate")
+def premium_estimate(query: str, extra_tickers: Optional[str] = None):
+    """Estimated cost for a premium-model re-synthesis of this query."""
+    from app.database import SessionLocal
+    from ml_engine.intent_router import route
+    from ml_engine.context_expander import resolve_query_tickers
+    from ml_engine.research_llm_router import estimate_cost_for_tier
+
+    db = SessionLocal()
+    try:
+        extras = [t.strip().upper() for t in (extra_tickers or "").split(",") if t.strip()]
+        routed = route(query, deep_research=False, extra_tickers=extras or None)
+        tickers, _ = resolve_query_tickers(routed, db, extra_tickers=extras or None)
+        n = max(len(tickers), 1)
+        est = estimate_cost_for_tier("premium", routed.intent, n)
+        return {"query": query, "intent": routed.intent, "ticker_count": n, **est}
+    finally:
+        db.close()
 
 
 @router.post("/query")

@@ -158,6 +158,7 @@ export function collectReportCitationRefs(report: {
   outlook_narrative?: string;
   theme_narrative?: string;
   spillover_narrative?: string;
+  sector_narrative?: string;
   event_summary?: string;
   winners_summary?: string;
   losers_summary?: string;
@@ -172,6 +173,7 @@ export function collectReportCitationRefs(report: {
     report.outlook_narrative,
     report.theme_narrative,
     report.spillover_narrative,
+    report.sector_narrative,
     report.event_summary,
     report.winners_summary,
     report.losers_summary,

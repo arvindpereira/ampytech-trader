@@ -15,6 +15,7 @@ const EXAMPLES = [
   "How might Micron earnings impact my semiconductor holdings?",
   "What's the outlook for quantum computing companies in H2? Rank the companies.",
   "What's the outlook for NVIDIA over the next year? What are analyst price targets?",
+  "Which technology sectors look undervalued right now?",
 ];
 
 const RESEARCH_STEPS = [
@@ -43,6 +44,10 @@ type Report = {
   losers_summary?: string;
   theme_narrative?: string;
   spillover_narrative?: string;
+  sector_narrative?: string;
+  sector_rankings?: Array<{ rank?: number; sector?: string; screen_score?: number; median_upside_pct?: number }>;
+  sectors?: string[];
+  standouts?: Array<{ ticker?: string; why?: string }>;
   event_summary?: string;
   primary_ticker?: string;
   related_holdings?: Array<{ ticker: string; momentum_3m?: number; news_score_30d?: number; impact?: string }>;
@@ -56,6 +61,11 @@ type Report = {
     model?: string | null;
     provider?: string | null;
     note?: string;
+  };
+  upgrade_offer?: {
+    available?: boolean;
+    premium_model?: string;
+    est_cost_usd?: number | null;
   };
   citations?: Array<{
     ref: string;
@@ -96,7 +106,7 @@ type Report = {
 export default function ResearchAnalystPanel() {
   const [subTab, setSubTab] = useState<'query' | 'library'>('query');
   const [query, setQuery] = useState('');
-  const [deepResearch, setDeepResearch] = useState(false);
+  const [useWebSearch, setUseWebSearch] = useState(false);
   const [kbStatus, setKbStatus] = useState<{ ticker_count?: number; last_refreshed?: string } | null>(null);
   const [themes, setThemes] = useState<Array<{ id: string; label: string }>>([]);
   const [loading, setLoading] = useState(false);
@@ -105,6 +115,7 @@ export default function ResearchAnalystPanel() {
   const [error, setError] = useState('');
   const [threadId, setThreadId] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  const [upgradeOffer, setUpgradeOffer] = useState<Report['upgrade_offer'] | null>(null);
   const [library, setLibrary] = useState<Array<Record<string, unknown>>>([]);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -157,6 +168,7 @@ export default function ResearchAnalystPanel() {
       const j = await r.json();
       if (j.status === 'done' && j.result) {
         setReport(j.result.report);
+        setUpgradeOffer(j.result.upgrade_offer || j.result.report?.upgrade_offer || null);
         setThreadId(j.result.thread_id);
         setLoading(false);
         setProgress(100);
@@ -179,18 +191,24 @@ export default function ResearchAnalystPanel() {
     setStage('');
   };
 
-  const runQuery = async () => {
+  const runQuery = async (opts?: { usePremium?: boolean }) => {
     if (!query.trim()) return;
     setLoading(true);
     setReport(null);
+    setUpgradeOffer(null);
     setProgress(0);
-    setStage('Starting…');
+    setStage(opts?.usePremium ? 'Upgrading with Premium AI…' : 'Starting…');
     setError('');
     try {
       const r = await fetch(apiUrl('/api/research/query'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, deep_research: deepResearch }),
+        body: JSON.stringify({
+          query,
+          use_premium: Boolean(opts?.usePremium),
+          use_web_search: useWebSearch,
+          thread_id: opts?.usePremium ? threadId : undefined,
+        }),
       });
       const j = await r.json();
       if (j.job_id) await pollJob(j.job_id);
@@ -328,6 +346,8 @@ export default function ResearchAnalystPanel() {
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
               KB: {kbStatus?.ticker_count ?? '—'} companies
               {kbStatus?.last_refreshed ? ` · updated ${kbStatus.last_refreshed}` : ''}
+              <br />
+              <span style={{ opacity: 0.9 }}>First pass uses GPT-4o mini. Upgrade to Premium AI after if you want a deeper analysis.</span>
             </p>
             <textarea
               value={query}
@@ -337,10 +357,10 @@ export default function ResearchAnalystPanel() {
               style={{ width: '100%', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '10px', fontSize: '13px', resize: 'vertical' }}
             />
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)', margin: '10px 0' }}>
-              <input type="checkbox" checked={deepResearch} onChange={(e) => setDeepResearch(e.target.checked)} />
-              Deep research (OpenAI expert tier)
+              <input type="checkbox" checked={useWebSearch} onChange={(e) => setUseWebSearch(e.target.checked)} />
+              Include web search (uses Tavily/Brave when API key configured; auto-enabled for low KB coverage)
             </label>
-            <button onClick={runQuery} disabled={loading || !query.trim()}
+            <button onClick={() => runQuery()} disabled={loading || !query.trim()}
               style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: 'rgba(139,92,246,0.25)', color: 'var(--text-primary)', fontWeight: 600, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.7 : 1 }}>
               {loading ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -423,6 +443,32 @@ export default function ResearchAnalystPanel() {
                 {report.generation_note || report.generation?.note}
               </div>
             )}
+            {upgradeOffer?.available && !loading && (
+              <div style={{
+                marginBottom: '14px', padding: '12px', borderRadius: '8px',
+                background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
+                display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px',
+              }}>
+                <div style={{ flex: '1 1 200px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Want a deeper analysis? Re-run with{' '}
+                  <strong style={{ color: 'var(--text-primary)' }}>{upgradeOffer.premium_model || 'Premium AI'}</strong>
+                  {upgradeOffer.est_cost_usd != null && (
+                    <span> — estimated <strong style={{ color: '#fbbf24' }}>${upgradeOffer.est_cost_usd.toFixed(3)}</strong> for this query</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => runQuery({ usePremium: true })}
+                  disabled={loading}
+                  style={{
+                    padding: '8px 14px', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.5)',
+                    background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontWeight: 600, fontSize: '12px',
+                    cursor: loading ? 'default' : 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  Use Premium AI model
+                </button>
+              </div>
+            )}
             {report.tldr && (
               <div style={{ fontSize: '14px', lineHeight: 1.6, padding: '12px', borderRadius: '8px', background: 'rgba(139,92,246,0.1)', borderLeft: '3px solid #a78bfa', marginBottom: '16px' }}>
                 <CitationText text={report.tldr} citationsByRef={citeMap} />
@@ -465,6 +511,31 @@ export default function ResearchAnalystPanel() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {report.sector_rankings && report.sector_rankings.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={labelStyle}>Sector rankings (computed)</div>
+                <table className="trade-table" style={{ width: '100%', fontSize: '12px' }}>
+                  <thead>
+                    <tr><th>Rank</th><th>Sector</th><th>Score</th><th>Median upside</th></tr>
+                  </thead>
+                  <tbody>
+                    {report.sector_rankings.map((r) => (
+                      <tr key={r.sector}>
+                        <td>{r.rank}</td><td>{r.sector}</td>
+                        <td>{r.screen_score != null ? r.screen_score.toFixed(3) : '—'}</td>
+                        <td>{r.median_upside_pct != null ? `${(r.median_upside_pct * 100).toFixed(1)}%` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {report.sector_narrative && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={labelStyle}>Sector outlook</div>
+                <NarrativeBlock text={report.sector_narrative} citationsByRef={citeMap} showFootnotes={false} />
               </div>
             )}
             {report.event_summary && (

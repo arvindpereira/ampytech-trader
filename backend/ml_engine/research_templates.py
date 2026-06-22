@@ -165,6 +165,16 @@ EVENT_SPILLOVER_LLM_SCHEMA = {
     "caveats": ["..."],
 }
 
+SECTOR_SCREEN_LLM_SCHEMA = {
+    "tldr": "2-3 sentence bottom line on sector opportunity/risk",
+    "sector_narrative": "1-2 paragraphs on sector outlook using aggregate metrics and constituent ranks",
+    "standouts": [{"ticker": "NVDA", "why": "brief reason", "sources": ["snapshot:upside_pct"]}],
+    "laggards": [{"ticker": "INTC", "why": "brief reason", "sources": ["snapshot:momentum_3m"]}],
+    "catalysts": ["..."],
+    "risks": ["..."],
+    "caveats": ["..."],
+}
+
 
 def event_spillover_shell(
     primary: str,
@@ -207,4 +217,33 @@ def event_spillover_shell(
         "caveats": caveats or [
             "Read-through analysis uses local snapshots and news — not a live earnings transcript.",
         ],
+    }
+
+
+def sector_screen_shell(
+    sectors: List[str],
+    sector_rankings: List[Dict[str, Any]],
+    ranked_tickers: List[Dict[str, Any]],
+    synthesis: Optional[Dict] = None,
+    expansion: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    syn = synthesis or {}
+    exp = expansion or {}
+    label = ", ".join(sectors) if sectors else "Multi-sector"
+    return {
+        "template": "sector_screen",
+        "sectors": sectors,
+        "sector_rankings": sector_rankings,
+        "ranked_companies": ranked_tickers,
+        "tldr": syn.get("tldr") or "",
+        "sector_narrative": syn.get("sector_narrative") or "",
+        "standouts": syn.get("standouts") or [],
+        "laggards": syn.get("laggards") or [],
+        "catalysts": syn.get("catalysts") or [],
+        "risks": syn.get("risks") or [],
+        "caveats": syn.get("caveats") or [
+            f"Sector screen: {label}. Ranks computed from local snapshots — not a live screener.",
+            "Web search snippets included when SEARCH_API_KEY is configured.",
+        ],
+        "screen_framing": exp.get("screen_framing"),
     }

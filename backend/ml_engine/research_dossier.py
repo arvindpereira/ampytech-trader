@@ -54,6 +54,29 @@ def get_snapshot(db, ticker: str, as_of_date: Optional[str] = None) -> Optional[
     return q.order_by(CompanySnapshot.as_of_date.desc()).first()
 
 
+def _attach_internal_target(db, facts: Dict[str, Any], ticker: str) -> Dict[str, Any]:
+    from app.database import InternalPriceTarget
+
+    row = (
+        db.query(InternalPriceTarget)
+        .filter(InternalPriceTarget.ticker == ticker.upper())
+        .order_by(InternalPriceTarget.as_of_date.desc())
+        .first()
+    )
+    if row and row.target_price is not None:
+        as_of = row.as_of_date or date.today().isoformat()
+        facts = dict(facts)
+        facts["internal_target_12m"] = {
+            "value": row.target_price,
+            "as_of": as_of,
+            "source": f"internal_price_targets ({row.method})",
+            "coverage": "full",
+            "confidence": row.confidence,
+            "horizon_date": row.horizon_date,
+        }
+    return facts
+
+
 def get(ticker: str, db=None) -> Dict[str, Any]:
     close = False
     if db is None:
@@ -75,7 +98,8 @@ def get_many(tickers: List[str], db=None) -> Dict[str, Dict[str, Any]]:
     try:
         out = {}
         for t in tickers:
-            out[t.upper().strip()] = snapshot_row_to_dict(get_snapshot(db, t))
+            facts = snapshot_row_to_dict(get_snapshot(db, t))
+            out[t.upper().strip()] = _attach_internal_target(db, facts, t)
         return out
     finally:
         if close:

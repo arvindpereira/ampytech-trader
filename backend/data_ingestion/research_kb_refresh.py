@@ -14,8 +14,10 @@ from app.core.config import TICKER_UNIVERSE
 from app.database import (
     CompanySnapshot,
     DailyPrice,
+    InternalPriceTarget,
     NewsLLMScore,
     ResearchWatchlist,
+    SectorSnapshot,
     SessionLocal,
     TickerClassification,
     TickerFundamental,
@@ -182,8 +184,84 @@ def materialize_ticker(db, ticker: str, as_of_date: Optional[str] = None) -> Com
     )
     db.execute(stmt)
     db.commit()
+    _write_internal_target(db, ticker, as_of, price, forecast)
     return db.query(CompanySnapshot).filter(
         CompanySnapshot.ticker == ticker, CompanySnapshot.as_of_date == as_of
+    ).first()
+
+
+def _horizon_12m(as_of: str) -> str:
+    from datetime import date as dt_date
+    d = dt_date.fromisoformat(as_of)
+    try:
+        return d.replace(year=d.year + 1).isoformat()
+    except ValueError:
+        return d.replace(year=d.year + 1, day=28).isoformat()
+
+
+def _write_internal_target(db, ticker: str, as_of: str, price: Optional[float], forecast) -> None:
+    """Blend consensus target with momentum for an internal 12m view."""
+    if not forecast or forecast.target_mean is None:
+        return
+    target = float(forecast.target_mean)
+    method = "consensus_blend"
+    confidence = 0.55
+    if forecast.num_analysts and forecast.num_analysts >= 5:
+        confidence = 0.7
+    mom = _momentum(db, ticker, 63)
+    if mom is not None and price:
+        # Light momentum tilt: +5% of 3m return applied to target
+        target = target * (1 + 0.05 * mom)
+        method = "momentum_adjusted"
+        confidence = min(0.85, confidence + 0.05)
+    horizon = _horizon_12m(as_of)
+    row = {
+        "ticker": ticker,
+        "as_of_date": as_of,
+        "horizon_date": horizon,
+        "target_price": round(target, 2),
+        "method": method,
+        "confidence": round(confidence, 2),
+        "notes": f"Blended from consensus ({forecast.target_mean})",
+        "refreshed_at": _now(),
+    }
+    stmt = sqlite_insert(InternalPriceTarget).values(row)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["ticker", "as_of_date", "horizon_date"],
+        set_={k: stmt.excluded[k] for k in row if k not in ("ticker", "as_of_date", "horizon_date")},
+    )
+    db.execute(stmt)
+    db.commit()
+
+
+def materialize_sector(db, sector_id: str, as_of_date: Optional[str] = None) -> Optional[SectorSnapshot]:
+    from ml_engine.sector_analyzer import aggregate_sector
+
+    as_of = as_of_date or _today()
+    agg = aggregate_sector(db, sector_id, as_of_date=None)
+    if not agg.get("ticker_count"):
+        return None
+    row = {
+        "sector_id": sector_id,
+        "as_of_date": as_of,
+        "ticker_count": agg.get("ticker_count"),
+        "median_upside_pct": agg.get("median_upside_pct"),
+        "median_momentum_3m": agg.get("median_momentum_3m"),
+        "median_news_score_30d": agg.get("median_news_score_30d"),
+        "median_quality": agg.get("median_quality"),
+        "etf_proxy": agg.get("etf_proxy"),
+        "facts_json": json.dumps(agg),
+        "refreshed_at": _now(),
+    }
+    stmt = sqlite_insert(SectorSnapshot).values(row)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["sector_id", "as_of_date"],
+        set_={k: stmt.excluded[k] for k in row if k not in ("sector_id", "as_of_date")},
+    )
+    db.execute(stmt)
+    db.commit()
+    return db.query(SectorSnapshot).filter(
+        SectorSnapshot.sector_id == sector_id, SectorSnapshot.as_of_date == as_of
     ).first()
 
 
@@ -196,6 +274,10 @@ def run_refresh(tickers: Optional[Iterable[str]] = None, fetch_analyst: bool = T
             refresh_analyst_items(universe, db=db)
         for t in universe:
             materialize_ticker(db, t)
+        from ml_engine.sector_analyzer import list_sectors
+
+        for sec in list_sectors(db):
+            materialize_sector(db, sec)
         return {"status": "ok", "tickers": len(universe), "as_of": _today()}
     finally:
         db.close()
