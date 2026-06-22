@@ -30,6 +30,7 @@ class ResearchQueryRequest(BaseModel):
     use_web_search: bool = False
     extra_tickers: Optional[List[str]] = None
     thread_id: Optional[str] = None
+    model_override: Optional[str] = None  # specific model id chosen by the user ("gpt-4o", "gpt-5.5", …)
 
 
 class ResearchMessageRequest(BaseModel):
@@ -61,7 +62,8 @@ def _run_query_job(jid, req_data):
 
     db = SessionLocal()
     try:
-        use_premium = bool(req_data.get("use_premium") or req_data.get("deep_research"))
+        model_override = req_data.get("model_override") or None
+        use_premium = bool(req_data.get("use_premium") or req_data.get("deep_research") or model_override)
         use_web_search = bool(req_data.get("use_web_search") or req_data.get("deep_research"))
         _job_update(jid, progress=5, stage="Routing query")
         routed = route(
@@ -114,7 +116,7 @@ def _run_query_job(jid, req_data):
         facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(
             tickers, db, query=routed.raw_query
         )
-        route_decision = decide(routed, coverage, use_premium=use_premium)
+        route_decision = decide(routed, coverage, use_premium=use_premium, model_override=model_override)
 
         web_items = []
         low_coverage = bool(coverage) and min(coverage.values()) < 0.5
@@ -336,6 +338,82 @@ def premium_estimate(query: str, extra_tickers: Optional[str] = None):
         return {"query": query, "intent": routed.intent, "ticker_count": n, **est}
     finally:
         db.close()
+
+
+@router.get("/models")
+def get_research_models(query: str = ""):
+    """Available synthesis models with per-query cost estimates. Used to populate the model selector."""
+    from app.core.config import OPENAI_API_KEY, OPENAI_MODEL, OPENAI_EXPERT_MODEL
+    from app.core.llm_cost import load_pricing, estimate_cost
+    from ml_engine.research_llm_router import estimate_synthesis_tokens
+
+    # Route the query (if provided) to get a realistic intent + ticker count for cost estimation.
+    intent, ticker_count = "ticker_outlook", 1
+    if query.strip():
+        try:
+            from ml_engine.intent_router import route as _route
+            routed = _route(query.strip(), deep_research=False)
+            intent = routed.intent
+            ticker_count = max(len(routed.tickers), 1)
+        except Exception:
+            pass
+
+    pin, pout = estimate_synthesis_tokens(intent, ticker_count)
+    pricing = load_pricing()
+    openai_ok = bool(OPENAI_API_KEY)
+
+    def _cost(model_id: str):
+        if not openai_ok:
+            return None
+        try:
+            c = estimate_cost(model_id, pin, pout, pricing=pricing)
+            return round(c, 4) if c is not None else None
+        except Exception:
+            return None
+
+    standard_model = OPENAI_MODEL or "gpt-4o-mini"
+    premium_model = OPENAI_EXPERT_MODEL or "gpt-4o"
+
+    models = [
+        {
+            "id": standard_model,
+            "label": "Standard",
+            "display_name": standard_model,
+            "description": "Fast, cheap. Good for most lookups and single-stock analysis.",
+            "tier": "standard",
+            "est_cost_usd": _cost(standard_model),
+            "available": openai_ok,
+        },
+        {
+            "id": premium_model,
+            "label": "Premium",
+            "display_name": premium_model,
+            "description": "Deeper analysis. Recommended for earnings, cross-theme, and complex multi-stock queries.",
+            "tier": "premium",
+            "est_cost_usd": _cost(premium_model),
+            "available": openai_ok,
+        },
+    ]
+    # Always offer gpt-5.5 as an explicit Expert option (distinct from premium when premium != gpt-5.5).
+    expert_model = "gpt-5.5"
+    if expert_model != premium_model:
+        models.append({
+            "id": expert_model,
+            "label": "Expert",
+            "display_name": expert_model,
+            "description": "Most powerful. Use for cross-theme analysis or when Premium results are insufficient.",
+            "tier": "expert",
+            "est_cost_usd": _cost(expert_model),
+            "available": openai_ok,
+        })
+
+    return {
+        "models": models,
+        "intent": intent,
+        "ticker_count": ticker_count,
+        "est_input_tokens": pin,
+        "est_output_tokens": pout,
+    }
 
 
 @router.post("/query")

@@ -137,32 +137,36 @@ def decide(
     coverage_by_ticker: Optional[Dict[str, float]] = None,
     *,
     use_premium: bool = False,
+    model_override: Optional[str] = None,
 ) -> RouteDecision:
     coverage_by_ticker = coverage_by_ticker or {}
 
+    def _use_search():
+        return routed.deep_research and bool(coverage_by_ticker) and min(
+            coverage_by_ticker.values(), default=1
+        ) < 0.6
+
     if is_stub_intent(routed.intent):
-        tier = "premium" if use_premium and _openai_available() else "standard"
+        tier = "premium" if (use_premium or model_override) and _openai_available() else "standard"
         if not _openai_available():
             tier = "local"
-        return RouteDecision(
-            tier, 0.9, f"stub intent {routed.intent}", False, model_for_tier(tier)
-        )
+        m = model_override if model_override and _openai_available() else model_for_tier(tier)
+        return RouteDecision(tier, 0.9, f"stub intent {routed.intent}", False, m)
 
     if is_lookup_query(routed):
         return RouteDecision("lookup", 0.1, "single-ticker fact lookup", False, None)
 
     c = complexity_score(routed, coverage_by_ticker)
 
-    if use_premium and _openai_available():
-        use_search = routed.deep_research and bool(coverage_by_ticker) and min(
-            coverage_by_ticker.values(), default=1
-        ) < 0.6
+    # Explicit model chosen by the user — honour it; treat as premium tier.
+    if model_override and _openai_available():
         return RouteDecision(
-            "premium",
-            c,
-            "user requested premium model",
-            use_search,
-            model_for_tier("premium"),
+            "premium", c, f"user selected {model_override}", _use_search(), model_override
+        )
+
+    if use_premium and _openai_available():
+        return RouteDecision(
+            "premium", c, "user requested premium model", _use_search(), model_for_tier("premium"),
         )
 
     if not _openai_available():
@@ -170,7 +174,7 @@ def decide(
             "local", c, "OPENAI_API_KEY unset — Ollama fallback", False, model_for_tier("local")
         )
 
-    # Premium requires explicit user opt-in (use_premium=True). No auto-escalation by intent or complexity.
+    # No auto-escalation — premium requires explicit user opt-in.
     return RouteDecision(
         "standard",
         c,

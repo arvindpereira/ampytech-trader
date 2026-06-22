@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiUrl } from '../lib/api';
-import { Brain, BookOpen, Search, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Circle, Loader2 } from 'lucide-react';
+import { Brain, BookOpen, Search, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Circle, Loader2, Zap } from 'lucide-react';
 import {
   buildCitationsMap,
   CitationFootnotes,
@@ -34,6 +34,16 @@ function stepState(progress: number, threshold: number, nextThreshold: number) {
   if (progress >= threshold) return 'active';
   return 'pending';
 }
+
+type ModelOption = {
+  id: string;
+  label: string;
+  display_name: string;
+  description: string;
+  tier: 'standard' | 'premium' | 'expert';
+  est_cost_usd: number | null;
+  available: boolean;
+};
 
 type Report = {
   template?: string;
@@ -131,6 +141,9 @@ export default function ResearchAnalystPanel() {
   const [library, setLibrary] = useState<Array<Record<string, unknown>>>([]);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const modelDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const citeMap = useMemo(
     () => (report ? buildCitationsMap(report) : {}),
@@ -140,6 +153,21 @@ export default function ResearchAnalystPanel() {
     () => (report ? collectReportCitationRefs(report) : []),
     [report],
   );
+
+  const fetchModels = useCallback(async (q: string) => {
+    try {
+      const r = await fetch(apiUrl(`/api/research/models?query=${encodeURIComponent(q)}`));
+      if (!r.ok) return;
+      const j = await r.json();
+      const opts: ModelOption[] = j.models || [];
+      setModelOptions(opts);
+      setSelectedModelId((prev) => {
+        if (!prev && opts.length > 0) return opts[0].id;
+        if (prev && opts.find((m) => m.id === prev)) return prev;
+        return opts[0]?.id ?? '';
+      });
+    } catch { /* ignore */ }
+  }, []);
 
   const fetchKb = useCallback(async () => {
     try {
@@ -172,7 +200,15 @@ export default function ResearchAnalystPanel() {
     fetchKb();
     fetchThemes();
     fetchLibrary();
-  }, [fetchKb, fetchThemes, fetchLibrary]);
+    fetchModels('');
+  }, [fetchKb, fetchThemes, fetchLibrary, fetchModels]);
+
+  // Debounce cost re-estimation when the query changes.
+  useEffect(() => {
+    if (modelDebounceRef.current) clearTimeout(modelDebounceRef.current);
+    modelDebounceRef.current = setTimeout(() => fetchModels(query), 700);
+    return () => { if (modelDebounceRef.current) clearTimeout(modelDebounceRef.current); };
+  }, [query, fetchModels]);
 
   const pollJob = async (jobId: string) => {
     for (let i = 0; i < 120; i++) {
@@ -203,13 +239,16 @@ export default function ResearchAnalystPanel() {
     setStage('');
   };
 
-  const runQuery = async (opts?: { usePremium?: boolean }) => {
+  const selectedModel = modelOptions.find((m) => m.id === selectedModelId);
+  const isNonStandard = selectedModel && selectedModel.tier !== 'standard';
+
+  const runQuery = async () => {
     if (!query.trim()) return;
     setLoading(true);
     setReport(null);
     setUpgradeOffer(null);
     setProgress(0);
-    setStage(opts?.usePremium ? 'Upgrading with Premium AI…' : 'Starting…');
+    setStage(isNonStandard ? `Starting with ${selectedModel!.display_name}…` : 'Starting…');
     setError('');
     try {
       const r = await fetch(apiUrl('/api/research/query'), {
@@ -217,9 +256,9 @@ export default function ResearchAnalystPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query,
-          use_premium: Boolean(opts?.usePremium),
+          use_premium: Boolean(isNonStandard),
+          model_override: isNonStandard ? selectedModelId : undefined,
           use_web_search: useWebSearch,
-          thread_id: opts?.usePremium ? threadId : undefined,
         }),
       });
       const j = await r.json();
@@ -373,17 +412,77 @@ export default function ResearchAnalystPanel() {
               rows={4}
               style={{ width: '100%', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-primary)', padding: '10px', fontSize: '13px', resize: 'vertical' }}
             />
+
+            {/* Model selector */}
+            {modelOptions.length > 0 && (
+              <div style={{ margin: '10px 0 0' }}>
+                <div style={{ ...labelStyle, marginBottom: '6px' }}>Model</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  {modelOptions.map((m) => {
+                    const isSelected = m.id === selectedModelId;
+                    const isPremiumTier = m.tier !== 'standard';
+                    return (
+                      <label key={m.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px',
+                        borderRadius: '7px', cursor: 'pointer',
+                        border: `1px solid ${isSelected ? (isPremiumTier ? 'rgba(245,158,11,0.5)' : 'rgba(139,92,246,0.45)') : 'var(--border-glass)'}`,
+                        background: isSelected ? (isPremiumTier ? 'rgba(245,158,11,0.07)' : 'rgba(139,92,246,0.08)') : 'transparent',
+                        transition: 'all 0.15s',
+                      }}>
+                        <input
+                          type="radio"
+                          name="research_model"
+                          value={m.id}
+                          checked={isSelected}
+                          onChange={() => setSelectedModelId(m.id)}
+                          style={{ accentColor: isPremiumTier ? '#fbbf24' : '#a78bfa', flexShrink: 0 }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span style={{ fontWeight: 600, fontSize: '12px', color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                              {m.label}
+                            </span>
+                            <code style={{ fontSize: '10px', color: 'var(--text-secondary)', opacity: 0.75 }}>{m.display_name}</code>
+                            {isPremiumTier && <Zap size={11} color="#fbbf24" />}
+                          </div>
+                          <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '1px', lineHeight: 1.4 }}>
+                            {m.description}
+                          </div>
+                        </div>
+                        <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                          {m.est_cost_usd != null ? (
+                            <span style={{ fontSize: '11px', fontWeight: 600, color: isPremiumTier ? '#fbbf24' : '#10B981' }}>
+                              ~${m.est_cost_usd < 0.001 ? m.est_cost_usd.toFixed(4) : m.est_cost_usd.toFixed(3)}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+                {isNonStandard && selectedModel && (
+                  <div style={{ marginTop: '7px', padding: '7px 10px', borderRadius: '6px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', fontSize: '11px', color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Zap size={12} />
+                    This query will use <strong>{selectedModel.display_name}</strong>
+                    {selectedModel.est_cost_usd != null && <> — estimated cost <strong>${selectedModel.est_cost_usd < 0.001 ? selectedModel.est_cost_usd.toFixed(4) : selectedModel.est_cost_usd.toFixed(3)}</strong></>}.
+                  </div>
+                )}
+              </div>
+            )}
+
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)', margin: '10px 0' }}>
               <input type="checkbox" checked={useWebSearch} onChange={(e) => setUseWebSearch(e.target.checked)} />
               Include web search (uses Tavily/Brave when API key configured; auto-enabled for low KB coverage)
             </label>
             <button onClick={() => runQuery()} disabled={loading || !query.trim()}
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: 'rgba(139,92,246,0.25)', color: 'var(--text-primary)', fontWeight: 600, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: isNonStandard ? 'rgba(245,158,11,0.2)' : 'rgba(139,92,246,0.25)', color: 'var(--text-primary)', fontWeight: 600, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.7 : 1 }}>
               {loading ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                   <RefreshCw size={14} className="animate-spin" /> Analyzing… {progress > 0 ? `${progress}%` : ''}
                 </span>
-              ) : 'Run analysis'}
+              ) : isNonStandard ? `Run with ${selectedModel?.label} AI` : 'Run analysis'}
             </button>
             <div style={{ marginTop: '16px' }}>
               <div style={labelStyle}>Examples</div>
@@ -460,30 +559,14 @@ export default function ResearchAnalystPanel() {
                 {report.generation_note || report.generation?.note}
               </div>
             )}
-            {upgradeOffer?.available && !loading && (
+            {upgradeOffer?.available && !loading && !isNonStandard && (
               <div style={{
-                marginBottom: '14px', padding: '12px', borderRadius: '8px',
-                background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
-                display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px',
+                marginBottom: '14px', padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)',
+                fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5,
               }}>
-                <div style={{ flex: '1 1 200px', fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  Want a deeper analysis? Re-run with{' '}
-                  <strong style={{ color: 'var(--text-primary)' }}>{upgradeOffer.premium_model || 'Premium AI'}</strong>
-                  {upgradeOffer.est_cost_usd != null && (
-                    <span> — estimated <strong style={{ color: '#fbbf24' }}>${upgradeOffer.est_cost_usd.toFixed(3)}</strong> for this query</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => runQuery({ usePremium: true })}
-                  disabled={loading}
-                  style={{
-                    padding: '8px 14px', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.5)',
-                    background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontWeight: 600, fontSize: '12px',
-                    cursor: loading ? 'default' : 'pointer', whiteSpace: 'nowrap',
-                  }}
-                >
-                  Use Premium AI model
-                </button>
+                <Zap size={12} color="#fbbf24" style={{ display: 'inline', marginRight: '5px', verticalAlign: 'middle' }} />
+                Want deeper analysis? Select <strong style={{ color: 'var(--text-primary)' }}>Premium</strong> or <strong style={{ color: 'var(--text-primary)' }}>Expert</strong> in the model selector above and re-run.
               </div>
             )}
             {report.tldr && (
