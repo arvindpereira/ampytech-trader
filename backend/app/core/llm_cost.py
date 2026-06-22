@@ -13,18 +13,21 @@ from datetime import datetime
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 _PRICING_FILE = os.path.join(_DATA_DIR, "llm_pricing.json")
 
-# USD per 1M tokens: (input, output). ESTIMATE entries are refined via calibrate_model() vs real spend.
+# USD per 1M tokens: (input, output). From openai.com/api/pricing (checked 2026-06-22).
 _DEFAULT_PRICING = {
-    "gpt-4o-mini": [0.15, 0.60],   # published
-    "gpt-4o": [2.50, 10.0],        # published
-    "gpt-4.1-mini": [0.40, 1.60],  # published
-    "gpt-4.1-nano": [0.10, 0.40],  # published
-    "gpt-4.1": [2.00, 8.00],       # published
-    # gpt-5.5 (and its dated snapshot id gpt-5_5-2026-04-23) — ESTIMATE, flagship 2026 tier. Calibrate me.
-    "gpt-5.5": [1.25, 10.0],
-    "gpt-5.4": [1.00, 8.0],        # ESTIMATE
-    "gpt-5_5": [1.25, 10.0],
-    "gpt-5": [1.25, 10.0],         # ESTIMATE
+    "gpt-4o-mini": [0.15, 0.60],      # published
+    "gpt-4o": [2.50, 10.0],           # published
+    "gpt-4.1-mini": [0.40, 1.60],     # published
+    "gpt-4.1-nano": [0.10, 0.40],     # published
+    "gpt-4.1": [2.00, 8.00],          # published
+    "gpt-5.5": [5.00, 30.0],          # published — flagship; 3× gpt-4o input, 3× output
+    "gpt-5.5-pro": [30.0, 180.0],     # published
+    "gpt-5_5": [5.00, 30.0],          # snapshot alias for gpt-5.5
+    "gpt-5.4": [2.50, 15.0],          # published
+    "gpt-5.4-mini": [0.75, 4.50],     # published
+    "gpt-5.4-nano": [0.20, 1.25],     # published
+    "gpt-5.4-pro": [30.0, 180.0],     # published
+    "gpt-5": [5.00, 30.0],            # alias — assumed gpt-5.5 tier
 }
 
 
