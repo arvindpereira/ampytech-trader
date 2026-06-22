@@ -119,6 +119,7 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                 "recommendation_key": s.recommendation_key,
                 "held": s.ticker in current_holdings,
                 "in_universe": s.ticker in universe_tickers,
+                "current_price": round(float(s.price), 2) if s.price else None,
             })
             seen_tickers.add(s.ticker)
 
@@ -133,6 +134,7 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
         )
         for r in rows:
             if r.ticker not in seen_tickers:
+                price = _latest_price(db, r.ticker)
                 recs.append({
                     "ticker": r.ticker,
                     "tier": r.tier,
@@ -141,6 +143,7 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                     "recommendation_key": None,
                     "held": r.ticker in current_holdings,
                     "in_universe": r.ticker in universe_tickers,
+                    "current_price": round(price, 2) if price else None,
                 })
                 seen_tickers.add(r.ticker)
                 if len(recs) >= 6:
@@ -159,6 +162,7 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                     for seed in entry.get("seed_tickers", []):
                         t = seed if isinstance(seed, str) else seed.get("ticker", "")
                         if t and t not in seen_tickers:
+                            price = _latest_price(db, t)
                             recs.append({
                                 "ticker": t,
                                 "tier": None,
@@ -167,6 +171,7 @@ def get_sector_recommendations(db, sector: str, current_holdings: set) -> List[d
                                 "recommendation_key": None,
                                 "held": t in current_holdings,
                                 "in_universe": t in universe_tickers,
+                                "current_price": round(price, 2) if price else None,
                                 "source": "catalog",
                             })
                             seen_tickers.add(t)

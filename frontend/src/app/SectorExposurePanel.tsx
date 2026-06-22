@@ -22,6 +22,7 @@ type RecommendationRow = {
   recommendation_key: string | null;
   held: boolean;
   in_universe: boolean;
+  current_price: number | null;
   source?: string;
 };
 
@@ -502,6 +503,11 @@ export default function SectorExposurePanel() {
                                     </span>
                                   </div>
                                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '2px' }}>
+                                    {r.current_price != null && (
+                                      <span style={{ fontSize: '11px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                        ${r.current_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                    )}
                                     {r.upside_pct != null && (
                                       <span style={{ color: '#10B981', fontWeight: 600, fontSize: '11px' }}>
                                         +{(r.upside_pct * 100).toFixed(1)}%
