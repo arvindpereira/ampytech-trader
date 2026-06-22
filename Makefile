@@ -13,6 +13,7 @@
 
 # --- Overridable parameters (e.g. `make train EPOCHS=50`, `make walkforward SPLITS=8`) ---
 EPOCHS ?= 10
+SEQ    ?= 20
 DAYS   ?= 5
 MONTHS ?= 6
 SPLITS ?= 5
@@ -87,7 +88,7 @@ help:
 	@echo "  make news-recent       - Incremental LLM-scoring of the last 7d of news (cached; needs Ollama)"
 	@echo "  make train-core        - Train only the HMM regime + short-term XGBoost models (cached)"
 	@echo "  make swing-train       - Train only the Core + Aggressive swing models (cached) [SWING_HORIZON=5]"
-	@echo "  make train-deep        - Train the optional PyTorch temporal-attention net (not served by default) [EPOCHS=$(EPOCHS)]"
+	@echo "  make train-deep        - Train deep swing model (GRU+Attn, daily+LLM, walk-forward comparable to XGBoost) [EPOCHS=$(EPOCHS) SEQ=$(SEQ)]"
 	@echo "  make crash-refresh     - Refresh crash snapshot + coherent odds IF inputs changed (FORCE=1 to force)"
 	@echo ""
 	@echo "Evaluation & research (auto-fetch fresh data first):"
@@ -314,10 +315,11 @@ train: $(CORE_MODEL_STAMP) $(SWING_MODEL_STAMP) crash-refresh
 	@echo "✅ All served models trained (HMM + short-term XGBoost + swing Core/Aggressive); crash odds refreshed."
 	@echo "   Artifacts in backend/ml_engine/saved_models/"
 
-# Optional, not served by default (SERVED_MODEL=xgboost). Run occasionally.
+# Deep swing model: same daily-bar + LLM-news pipeline as XGBoost swing, GRU+Attention architecture.
+# Run `make train-deep` after `make swing-train` to get comparison data in the Model Evaluation tab.
 train-deep: $(DATA_STAMP)
-	@echo "🧠 Training optional PyTorch temporal-attention net ($(EPOCHS) epochs)..."
-	cd backend && $(VENV_PY) ml_engine/deep_models.py --train --epochs $(EPOCHS)
+	@echo "🧠 Training deep swing model (GRU+Attention, $(EPOCHS) epochs, seq=$(SEQ))..."
+	cd backend && $(VENV_PY) ml_engine/deep_models.py --train --epochs $(EPOCHS) --seq $(SEQ)
 
 walkforward: $(DATA_STAMP)
 	@echo "========================================================================"

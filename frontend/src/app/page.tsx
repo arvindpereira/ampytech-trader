@@ -543,7 +543,7 @@ export default function Home() {
   const [validateRunning, setValidateRunning] = useState<boolean>(false);
   const [validateProgress, setValidateProgress] = useState<{ pct: number; stage: string }>({ pct: 0, stage: '' });
   const [validateData, setValidateData] = useState<any>(null);
-  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean; high_risk: boolean }>({ swing: true, longterm: true, high_risk: false });
+  const [evalStrategies, setEvalStrategies] = useState<{ swing: boolean; longterm: boolean; high_risk: boolean; deep_swing: boolean }>({ swing: true, longterm: true, high_risk: false, deep_swing: false });
   const [evalSplits, setEvalSplits] = useState<number>(4);
   const [evalUseAlloc, setEvalUseAlloc] = useState<boolean>(true);
   const [evalExcludePremium, setEvalExcludePremium] = useState<boolean>(false);
@@ -2170,6 +2170,9 @@ export default function Home() {
                     </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }} title="Aggressive model on speculative-tier names (small high-risk sleeve)">
                       <input type="checkbox" checked={evalStrategies.high_risk} onChange={(e) => setEvalStrategies({ ...evalStrategies, high_risk: e.target.checked })} /> High-risk (aggressive)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }} title="Deep GRU+Attention model trained on same daily bars + LLM news as the XGBoost swing model. Requires make train-deep first.">
+                      <input type="checkbox" checked={evalStrategies.deep_swing} onChange={(e) => setEvalStrategies({ ...evalStrategies, deep_swing: e.target.checked })} /> Deep Swing (GRU+Attn)
                     </label>
                   </div>
                 </div>

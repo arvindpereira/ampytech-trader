@@ -95,6 +95,18 @@ def run_evaluation(strategies, horizon=5, splits=4, allocation=None,
             "the 2022 bear), switch to Walk-forward mode and set \"OOS test starts\" to that date — that "
             f"keeps it look-ahead-free. Swing's LLM-scored news covers {earliest_news or 'recent dates'} onward.")
 
+    if "deep_swing" in strategies and not windowed:
+        report(48, "Deep swing (GRU+Attention) walk-forward…")
+        from ml_engine.deep_models import backtest_deep_swing_curve
+        curve, _ = backtest_deep_swing_curve(
+            horizon=horizon, n_splits=splits, oos_start=oos_start,
+            progress_cb=lambda f: report(48 + int(f * 2), "Deep swing walk-forward…"))
+        if curve:
+            raw["deep_swing"] = _curve_to_daily(curve)
+    elif "deep_swing" in strategies and windowed:
+        caveats.append("Deep swing walk-forward is not available in stress/fixed-window mode. "
+                       "Switch to Walk-forward mode and set 'OOS test starts' to compare it against XGBoost.")
+
     if "high_risk" in strategies and not windowed:
         report(50, "High-risk (aggressive) walk-forward…")
         from ml_engine.swing_alpha import backtest_swing_curve, tickers_for_tiers, HIGH_RISK_TIERS

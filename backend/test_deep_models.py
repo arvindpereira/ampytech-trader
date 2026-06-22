@@ -2,7 +2,10 @@ import os
 import unittest
 import numpy as np
 import torch
-from ml_engine.deep_models import LightTemporalAttentionNet, prepare_sequences
+from ml_engine.deep_models import (
+    LightTemporalAttentionNet, prepare_sequences,
+    _calibrate_threshold, _train_model,
+)
 
 
 class TestDeepModels(unittest.TestCase):
@@ -65,6 +68,49 @@ class TestDeepModels(unittest.TestCase):
         )
         np.testing.assert_array_almost_equal(X, X_eval)
         np.testing.assert_array_almost_equal(y, y_eval)
+
+
+    def test_threshold_calibration(self):
+        """_calibrate_threshold returns a value in [0.25, 0.74] for a small synthetic dataset."""
+        import pandas as pd
+        feature_cols = [f"feat_x{i}" for i in range(4)]
+        np.random.seed(42)
+        num_rows = 20
+        data = {col: np.random.randn(num_rows) for col in feature_cols}
+        data["ticker"] = "AAPL"
+        data["date"] = [f"2026-0{(i//10)+1}-{(i%10)+1:02d}T09:00:00" for i in range(num_rows)]
+        data["target_win"] = (np.random.rand(num_rows) > 0.5).astype(int)
+        df = pd.DataFrame(data)
+        seq_len = 5
+        X, y, w, _ = prepare_sequences(df, feature_cols, seq_len=seq_len, fit_scaler=True)
+        model, device = _train_model(X, y, w, input_dim=len(feature_cols),
+                                     epochs=2, hidden_dim=8)
+        thr = _calibrate_threshold(model, X, y, device)
+        self.assertGreaterEqual(thr, 0.25)
+        self.assertLess(thr, 0.75)
+
+    def test_train_model_helper(self):
+        """_train_model trains a tiny net without error and returns a model + device string."""
+        import pandas as pd
+        feature_cols = [f"feat_x{i}" for i in range(6)]
+        np.random.seed(0)
+        num_rows = 30
+        data = {col: np.random.randn(num_rows) for col in feature_cols}
+        data["ticker"] = "AAPL"
+        data["date"] = [f"2026-01-{i+1:02d}T09:00:00" for i in range(num_rows)]
+        data["target_win"] = (np.random.rand(num_rows) > 0.5).astype(int)
+        df = pd.DataFrame(data)
+        X, y, w, _ = prepare_sequences(df, feature_cols, seq_len=5, fit_scaler=True)
+        model, device = _train_model(X, y, w, input_dim=len(feature_cols),
+                                     epochs=3, hidden_dim=8)
+        self.assertIsInstance(model, LightTemporalAttentionNet)
+        self.assertIn(device, ("cpu", "cuda"))
+        # Model should still produce valid probabilities after training
+        x_t = torch.randn(2, 5, len(feature_cols))
+        with torch.no_grad():
+            out = model(x_t)
+        self.assertEqual(out.shape, (2, 1))
+        self.assertTrue(torch.all(out >= 0.0) and torch.all(out <= 1.0))
 
 
 if __name__ == "__main__":
