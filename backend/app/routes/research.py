@@ -100,8 +100,10 @@ def _run_query_job(jid, req_data):
             except Exception:
                 pass
 
-        _job_update(jid, progress=35, stage="Loading snapshots, news & analyst items")
-        facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(tickers, db)
+        _job_update(jid, progress=35, stage="Loading snapshots, news & retrieval")
+        facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(
+            tickers, db, query=routed.raw_query
+        )
         route_decision = decide(routed, coverage, use_premium=use_premium)
 
         web_items = []
@@ -113,7 +115,7 @@ def _run_query_job(jid, req_data):
                 web_items = fetch_for_research(routed.raw_query, tickers, db=db)
                 if web_items:
                     facts_by_ticker, items_by_ticker, coverage, news_by_ticker = prepare_context(
-                        tickers, db, web_items=web_items
+                        tickers, db, query=routed.raw_query, web_items=web_items
                     )
             except Exception:
                 web_items = []

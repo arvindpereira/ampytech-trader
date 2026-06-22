@@ -193,6 +193,13 @@ SEARCH_API_PROVIDER = os.getenv("SEARCH_API_PROVIDER", "")  # tavily | brave
 SEARCH_API_KEY = os.getenv("SEARCH_API_KEY", "")
 SEARCH_MAX_RESULTS = int(os.getenv("SEARCH_MAX_RESULTS", "8"))
 
+# Phase 2c — semantic / keyword retrieval over news KB
+RESEARCH_RETRIEVAL_ENABLED = os.getenv("RESEARCH_RETRIEVAL_ENABLED", "true").lower() == "true"
+RESEARCH_RETRIEVAL_MODE = os.getenv("RESEARCH_RETRIEVAL_MODE", "hybrid")  # keyword | semantic | hybrid
+RESEARCH_RETRIEVAL_LIMIT = int(os.getenv("RESEARCH_RETRIEVAL_LIMIT", "12"))
+RESEARCH_RETRIEVAL_DAYS = int(os.getenv("RESEARCH_RETRIEVAL_DAYS", "90"))
+RESEARCH_EMBED_MODEL = os.getenv("RESEARCH_EMBED_MODEL", "nomic-embed-text")
+
 # --- Swing (multi-day) strategy ---------------------------------------------------------------
 # The DAILY, multi-day model. Walk-forward + capital-aware portfolio sim showed the LLM-scored news
 # features add a real portfolio-level edge (higher return/Sharpe, lower drawdown) over a technicals-only

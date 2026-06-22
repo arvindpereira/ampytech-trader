@@ -8,5 +8,6 @@ from app.database.models import (
     TradingBlock, CrashRiskSnapshot,
     ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding,
     TickerMetadata, CompanySnapshot, ExternalAnalystItem, ResearchWatchlist,
-    WebSearchCache, SectorSnapshot, InternalPriceTarget, ResearchThread, ResearchMessage,
+    WebSearchCache, SectorSnapshot, InternalPriceTarget, ResearchNewsEmbedding,
+    ResearchThread, ResearchMessage,
 )

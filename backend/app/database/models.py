@@ -643,6 +643,16 @@ class InternalPriceTarget(Base):
     )
 
 
+class ResearchNewsEmbedding(Base):
+    """Cached document embeddings for hybrid news retrieval (Phase 2c)."""
+    __tablename__ = "research_news_embeddings"
+
+    doc_key = Column(String, primary_key=True)
+    model = Column(String, nullable=False)
+    embedding_json = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
+
+
 class ResearchThread(Base):
     __tablename__ = "research_threads"
 

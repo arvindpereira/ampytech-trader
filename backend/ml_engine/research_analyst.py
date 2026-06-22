@@ -148,12 +148,36 @@ def build_report(
     return stub_shell(routed.intent, "Unsupported intent.")
 
 
-def prepare_context(tickers: List[str], db, web_items: Optional[list] = None) -> tuple:
+def prepare_context(
+    tickers: List[str],
+    db,
+    query: str = "",
+    web_items: Optional[list] = None,
+) -> tuple:
     from data_ingestion.analyst_content_fetcher import recent_items
     from ml_engine.context_expander import recent_news_headlines
+    from ml_engine.news_retriever import retrieve_for_query
 
     facts_by_ticker = get_many(tickers, db=db)
     items_by_ticker = {t: recent_items(db, t) for t in tickers}
+    news_by_ticker = {t: recent_news_headlines(db, t) for t in tickers}
+
+    if query.strip():
+        try:
+            retrieval = retrieve_for_query(query, tickers, db=db)
+            for row in retrieval.get("news_rows") or []:
+                tk = (row.ticker or "").upper()
+                if tk in news_by_ticker:
+                    if not any(n.article_id == row.article_id for n in news_by_ticker[tk]):
+                        news_by_ticker[tk].append(row)
+            for it in (retrieval.get("promoted_items") or []) + (retrieval.get("extra_items") or []):
+                tk = (it.ticker or (tickers[0] if tickers else "")).upper()
+                if tk in items_by_ticker:
+                    if not any(x.id == it.id for x in items_by_ticker[tk]):
+                        items_by_ticker[tk].append(it)
+        except Exception:
+            pass
+
     if web_items:
         for it in web_items:
             tk = (it.ticker or "").upper()
@@ -164,6 +188,5 @@ def prepare_context(tickers: List[str], db, web_items: Optional[list] = None) ->
                 primary = tickers[0]
                 if not any(x.id == it.id for x in items_by_ticker.get(primary, [])):
                     items_by_ticker.setdefault(primary, []).append(it)
-    news_by_ticker = {t: recent_news_headlines(db, t) for t in tickers}
     coverage = {t: coverage_pct(facts_by_ticker.get(t, {})) for t in tickers}
     return facts_by_ticker, items_by_ticker, coverage, news_by_ticker
