@@ -314,6 +314,21 @@ def sync_broker_orders(db, api):
         except Exception as e:
             print(f"Error syncing order {order.id}: {e}")
 
+def _has_real_broker_sell(api, ticker, lookback_days=4):
+    """True if Alpaca shows a real filled SELL for `ticker` in the recent window.
+    Used to distinguish a genuine position reduction from a stale/eventually-consistent
+    positions read (which would otherwise spawn a phantom sync-sell and reset tax lots)."""
+    try:
+        from datetime import timedelta
+        after = (datetime.utcnow() - timedelta(days=lookback_days)).strftime("%Y-%m-%dT00:00:00Z")
+        orders = api.list_orders(status="all", side="sell", symbols=[ticker], after=after, limit=50)
+        return any(float(getattr(o, "filled_qty", 0) or 0) > 0 for o in orders)
+    except Exception as e:
+        # Fail SAFE: if we can't verify, assume it's real so we don't silently drop a true sell.
+        print(f"  Could not verify real sells for {ticker} ({e}); treating reduction as real.")
+        return True
+
+
 def sync_broker_positions(db, api):
     """
     Compares local database VirtualPosition values with live positions on Alpaca.
@@ -362,6 +377,15 @@ def sync_broker_positions(db, api):
 
             elif abs(l_pos.quantity - b_qty) > 0.0001:
                 diff = b_qty - l_pos.quantity
+
+                # A decrease (apparent sell) is only trusted when a real broker sell confirms it.
+                # Otherwise it's a stale/eventually-consistent positions read — skip it so we don't
+                # log a phantom sync-sell and reset the FIFO tax-lot acquisition date.
+                if diff < 0 and not _has_real_broker_sell(api, ticker):
+                    print(f"Reconcile: {ticker} broker qty ({b_qty:.4f}) < local ({l_pos.quantity:.4f}) "
+                          f"but no real sell found — treating as a stale read and skipping.")
+                    continue
+
                 print(f"Reconcile: {ticker} quantity mismatch. Local: {l_pos.quantity:.4f}, Broker: {b_qty:.4f}. Diff: {diff:+.4f}.")
 
                 l_pos.quantity = b_qty
@@ -391,6 +415,12 @@ def sync_broker_positions(db, api):
         # 4. Remove local positions closed on broker
         for ticker, l_pos in local_pos_dict.items():
             if ticker not in broker_pos_dict and l_pos.quantity > 0:
+                # Guard against a stale/empty positions read wiping a real holding: only treat a
+                # full close as real when a broker sell confirms it.
+                if not _has_real_broker_sell(api, ticker):
+                    print(f"Reconcile: {ticker} absent from broker but no real sell found — "
+                          f"likely a stale read; keeping local position.")
+                    continue
                 print(f"Reconcile: {ticker} held locally ({l_pos.quantity} shares) but closed on broker. Deleting local position.")
 
                 sync_order_id = f"sync-sell-{ticker}-{int(time.time())}"

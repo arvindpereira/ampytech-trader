@@ -198,6 +198,9 @@ class TestReconciliation(unittest.TestCase):
 
         mock_api = MagicMock()
         mock_api.list_positions.return_value = [] # Closed on broker
+        # A genuine close is confirmed by a real filled SELL on the broker.
+        mock_sell = MagicMock(); mock_sell.filled_qty = "10.0"
+        mock_api.list_orders.return_value = [mock_sell]
 
         mock_account = MagicMock()
         mock_account.cash = "103000.00"
@@ -218,6 +221,31 @@ class TestReconciliation(unittest.TestCase):
         ).first()
         self.assertIsNotNone(sync_order)
         self.assertTrue(sync_order.id.startswith("sync-sell-MSFT-"))
+
+    def test_sync_broker_positions_stale_read_keeps_position(self):
+        # Broker momentarily returns no positions but there's NO real sell — a stale read.
+        # The guard must KEEP the local position and NOT log a phantom sync-sell.
+        local_pos = VirtualPosition(ticker="MSFT", quantity=10.0, entry_price=300.0, policy="rebalance")
+        self.db.add(local_pos)
+        self.db.commit()
+
+        mock_api = MagicMock()
+        mock_api.list_positions.return_value = []      # stale/empty read
+        mock_api.list_orders.return_value = []          # but no real sell exists
+
+        mock_account = MagicMock()
+        mock_account.cash = "100000.00"
+        mock_api.get_account.return_value = mock_account
+
+        sync_broker_positions(self.db, mock_api)
+
+        # Position is preserved, and no phantom sell is logged.
+        pos = self.db.query(VirtualPosition).filter(VirtualPosition.ticker == "MSFT").first()
+        self.assertIsNotNone(pos)
+        self.assertEqual(pos.quantity, 10.0)
+        phantom = self.db.query(VirtualOrder).filter(
+            VirtualOrder.ticker == "MSFT", VirtualOrder.side == "sell").first()
+        self.assertIsNone(phantom)
 
 if __name__ == "__main__":
     unittest.main()
