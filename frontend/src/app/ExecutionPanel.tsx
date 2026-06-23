@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Activity, AlertTriangle, CheckCircle2, PauseCircle } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, PauseCircle, Play } from 'lucide-react';
 import { apiUrl } from '../lib/api';
 import { money } from './TickerDrawer';
 
@@ -56,6 +56,7 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
   const [data, setData] = useState<PlanResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [pipeline, setPipeline] = useState<{ running: boolean; stage: string; progress: number; error?: string | null } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -72,6 +73,43 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
   };
   useEffect(() => { load(); }, []);
 
+  const pollPipeline = (jobId: string) => {
+    const tick = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/jobs'));
+        const jobs = res.ok ? (await res.json()).jobs || [] : [];
+        const job = jobs.find((j: any) => j.id === jobId) || jobs.find((j: any) => j.type === 'pipeline');
+        if (!job) { setPipeline(null); load(); return; }
+        setPipeline({ running: job.status === 'running', stage: job.stage, progress: job.progress, error: job.error });
+        if (job.status === 'running') {
+          setTimeout(tick, 2000);
+        } else {
+          load();                                  // refresh the plan + last-run once done
+          setTimeout(() => setPipeline(null), 6000);
+        }
+      } catch { setTimeout(tick, 3000); }
+    };
+    tick();
+  };
+
+  const runPipeline = async () => {
+    if (pipeline?.running) return;
+    const ok = window.confirm(
+      'Run the full trading pipeline now?\n\nThis will: refresh data + news, retrain models if stale, '
+      + 'regenerate signals, and PLACE/ENQUEUE REAL TRADES on Alpaca (unless auto-trading is paused).'
+    );
+    if (!ok) return;
+    setPipeline({ running: true, stage: 'Starting…', progress: 0 });
+    try {
+      const res = await fetch(apiUrl('/api/pipeline/run'), { method: 'POST' });
+      const j = await res.json();
+      if (j.job_id) pollPipeline(j.job_id);
+      else setPipeline({ running: false, stage: 'Failed to start', progress: 0, error: 'no job id' });
+    } catch (e: any) {
+      setPipeline({ running: false, stage: 'Failed to start', progress: 0, error: e?.message });
+    }
+  };
+
   const plan = data?.live;
   const labels = data?.verdict_labels ?? {};
 
@@ -81,10 +119,35 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
         <div style={labelStyle}>
           <Activity size={13} color="#00F2FE" /> Execution plan — why the bot is / isn&apos;t buying
         </div>
-        <button onClick={load} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-          {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button onClick={runPipeline} disabled={pipeline?.running}
+            style={{ fontSize: '11px', fontWeight: 700, padding: '5px 12px', borderRadius: '6px',
+              border: '1px solid rgba(16,185,129,0.45)', background: 'rgba(16,185,129,0.12)', color: '#10B981',
+              cursor: pipeline?.running ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <Play size={11} /> {pipeline?.running ? 'Running…' : 'Run pipeline now'}
+          </button>
+          <button onClick={load} style={{ fontSize: '11px', padding: '5px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
       </div>
+
+      {/* Pipeline progress */}
+      {pipeline && (
+        <div style={{ margin: '6px 0 12px', padding: '8px 10px', borderRadius: '6px',
+          background: pipeline.error ? 'rgba(244,63,94,0.10)' : 'rgba(16,185,129,0.08)',
+          border: `1px solid ${pipeline.error ? 'rgba(244,63,94,0.4)' : 'rgba(16,185,129,0.3)'}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '5px' }}>
+            <span style={{ color: 'var(--text-primary)' }}>{pipeline.error ? `Pipeline error: ${pipeline.error}` : pipeline.stage}</span>
+            {!pipeline.error && <span style={{ color: 'var(--text-secondary)' }}>{pipeline.progress}%</span>}
+          </div>
+          {!pipeline.error && (
+            <div style={{ height: '5px', borderRadius: '3px', background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+              <div style={{ width: `${pipeline.progress}%`, height: '100%', background: '#10B981', transition: 'width 0.4s' }} />
+            </div>
+          )}
+        </div>
+      )}
 
       {err && <p style={{ fontSize: '12px', color: '#F43F5E', margin: '4px 0' }}>Couldn&apos;t load execution plan: {err}</p>}
       {!plan && !err && <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Loading…</p>}

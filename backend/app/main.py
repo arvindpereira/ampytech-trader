@@ -1852,6 +1852,91 @@ def _run_training_job(jid):
     except Exception as e:
         _job_update(jid, status="error", error=str(e)[:200])
 
+
+_MODEL_FILES = ["short_term_model.json", "hmm_model.pkl", "swing_model.json", "swing_aggressive_model.json"]
+
+
+def _models_stale(max_age_days=7):
+    """True if any served model is missing or older than max_age_days (the weekly retrain cadence)."""
+    import os as _os
+    now = _time.time()
+    for f in _MODEL_FILES:
+        path = _os.path.join(SAVED_MODELS_DIR, f)
+        if not _os.path.exists(path) or (now - _os.path.getmtime(path)) > max_age_days * 86400:
+            return True
+    return False
+
+
+def _run_pipeline_job(jid, retrain_mode):
+    """Full manual pipeline: refresh data + news → (retrain if needed) → regenerate signals →
+    execute/enqueue trades on Alpaca. Outcome surfaces via the ExecutionPanel's 'last run'."""
+    from app.database import SessionLocal
+    try:
+        _job_update(jid, progress=5, stage="Fetching market data + news…")
+        from execution.scheduler import daily_data_fetch_job
+        daily_data_fetch_job()
+
+        _job_update(jid, progress=40, stage="Checking models…")
+        do_retrain = retrain_mode == "always" or (retrain_mode != "never" and _models_stale())
+        if do_retrain:
+            _job_update(jid, progress=45, stage="Retraining models…")
+            from ml_engine.models import train_models
+            train_models()
+            from app.core.config import SWING_ENABLED
+            if SWING_ENABLED:
+                try:
+                    from ml_engine.swing_alpha import train_both
+                    train_both()
+                except Exception as e:
+                    print(f"Swing retrain skipped: {e}")
+
+        _job_update(jid, progress=72, stage="Generating signals…")
+        clear_suggestions_cache()
+        db = SessionLocal()
+        try:
+            get_daily_suggestions(date=None, db=db)
+        finally:
+            db.close()
+
+        _job_update(jid, progress=82, stage="Executing / enqueueing trades…")
+        from execution.executor import run_execution
+        run_execution(trigger="manual")
+
+        # Summarize the outcome from the run we just persisted.
+        placed, market = 0, None
+        try:
+            from app.database import ExecutionRun
+            import json as _j
+            db = SessionLocal()
+            last = db.query(ExecutionRun).order_by(ExecutionRun.id.desc()).first()
+            if last:
+                placed = len(_j.loads(last.orders_json) if last.orders_json else [])
+                market = last.market_open
+            db.close()
+        except Exception:
+            pass
+        retrained = " · models retrained" if do_retrain else ""
+        market_note = "" if market is None else f" · market {'open' if market else 'closed'}"
+        _job_update(jid, progress=100,
+                    stage=f"Done — {placed} order{'' if placed == 1 else 's'} placed{market_note}{retrained}",
+                    status="done")
+    except Exception as e:
+        _job_update(jid, status="error", error=str(e)[:200])
+
+
+@app.post("/api/pipeline/run")
+def run_pipeline(retrain: str = "auto"):
+    """Manually run the whole trading pipeline now: refresh data+news, retrain if needed,
+    regenerate signals, and execute/enqueue trades on Alpaca. Runs in the background and is
+    idempotent (refuses if one is already running). `retrain` = auto | always | never.
+    Honors the kill-switch — run_execution() no-ops if auto-trading is paused."""
+    active = [j for j in _jobs_snapshot() if j["type"] == "pipeline" and j["status"] == "running"]
+    if active:
+        return {"status": "already_running", "job_id": active[0]["id"]}
+    jid = _job_new("pipeline", "Running trading pipeline")
+    threading.Thread(target=_run_pipeline_job, args=(jid, retrain), daemon=True).start()
+    return {"status": "started", "job_id": jid}
+
 @app.post("/api/train/start")
 def start_training():
     """Kick off model retraining in the background (idempotent: refuses if one is already running)."""
