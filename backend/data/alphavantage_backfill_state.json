@@ -1,0 +1,3594 @@
+{
+  "ticker_states": {
+    "AAPL": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": "20251015T1301",
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "ADBE": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "AMAT": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "AMD": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "AMZN": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "ARM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "AVAV": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "AVGO": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "BABA": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "BAC": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "BB": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "BRK.B": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "BYND": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "CAT": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "CRM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "CRWD": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "DASH": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "DELL": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "DKNG": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "FDX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "FSLY": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "GE": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "GEV": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "GOOGL": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "HMC": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "HOOD": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "IBM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "INTC": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "INTU": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "ISRG": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "JKS": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "JPM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "KDK": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "KMX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "LLY": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "LUV": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "META": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "MMM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "MRNA": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "MSFT": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "MU": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "NFLX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "NIO": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "NOK": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "NSANY": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "NVDA": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "ORCL": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "PINS": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "PLTR": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "PYPL": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "QCOM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "RGTI": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "ROKU": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "RTX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "RUN": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "RYCEY": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SHOP": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SMCI": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SNDK": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SNOW": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SNPS": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "TSLA": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "TSM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "UBER": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "WMT": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XYZ": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "GLD": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "IAU": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "IWF": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "PALL": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "QQQ": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "REMX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SPY": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VASGX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VFIAX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VOO": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VSMGX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VTI": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VTSAX": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VUG": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "VXUS": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "ASML": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "CSCO": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "JNJ": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "PG": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "SPACE": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XOM": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XLE": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XLF": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XLK": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XLP": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    },
+    "XLV": {
+      "intervals": [
+        {
+          "name": "Year_1",
+          "start": "20250622T1210",
+          "end": "20260622T1810",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_2",
+          "start": "20240622T0610",
+          "end": "20250622T1210",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_3",
+          "start": "20230623T0010",
+          "end": "20240622T0610",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_4",
+          "start": "20220622T1810",
+          "end": "20230623T0010",
+          "cursor": null,
+          "completed": false
+        },
+        {
+          "name": "Year_5",
+          "start": "20210622T1210",
+          "end": "20220622T1810",
+          "cursor": null,
+          "completed": false
+        }
+      ]
+    }
+  },
+  "daily_request_count": 1,
+  "last_reset_date": "2026-06-22"
+}

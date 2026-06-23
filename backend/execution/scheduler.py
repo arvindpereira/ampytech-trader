@@ -64,6 +64,7 @@ from data_ingestion.price_fetcher import fetch_recent_prices, fetch_daily_histor
 from data_ingestion.macro_fetcher import fetch_macro_indicators
 from data_ingestion.sentiment_fetcher import fetch_sentiment
 from data_ingestion.news_llm import fetch_and_score as score_news_llm
+from data_ingestion.alphavantage_backfill import run_backfill_step as run_alphavantage_backfill_step
 from ml_engine.models import train_models
 from ml_engine.swing_alpha import train_both as train_swing_model
 from execution.executor import run_execution
@@ -200,6 +201,14 @@ def crash_radar_refresh_job():
 
 def heartbeat_job():
     _write_heartbeat()
+
+def alphavantage_backfill_job():
+    print(f"\n[{datetime.now()}] Triggering AlphaVantage historical news backfill step...")
+    try:
+        res = run_alphavantage_backfill_step()
+        print(f"AlphaVantage backfill step completed: {res}")
+    except Exception as e:
+        print(f"Error during AlphaVantage backfill: {e}")
 
 def daily_trade_inference_job():
     print(f"\n[{datetime.now()}] Triggering Daily Trade Inference Job...")
@@ -365,6 +374,14 @@ def main():
     scheduler.add_job(heartbeat_job, trigger=IntervalTrigger(seconds=60),
                       id="heartbeat", name="Scheduler liveness heartbeat")
     _write_heartbeat()
+
+    # 9. AlphaVantage news backfill — runs every 30 minutes to slowly consume our 24 daily calls throughout the day
+    scheduler.add_job(
+        alphavantage_backfill_job,
+        trigger=IntervalTrigger(minutes=30),
+        id="alphavantage_backfill",
+        name="AlphaVantage historical news sentiment backfill"
+    )
 
     print("Starting APScheduler Background Worker Daemon (Blocking Mode)...")
     print("Scheduled jobs:")

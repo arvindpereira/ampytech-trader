@@ -378,8 +378,12 @@ def build_features_for_df(df, sentiment_df=None, macro_df=None,
         'news_sentiment_score', 'reddit_sentiment_score', 'news_mention_count', 'reddit_mention_count',
         'combined_sentiment_decayed', 'sent_sma_3', 'sent_sma_7', 'sent_momentum',
         'fed_funds', 'yield_spread',
-        'insider_net_flow', 'insider_buy_count', 'insider_net_buyers', 'insider_officer_buy', 'insider_cluster',
-        'congress_buying_ratio', 'congress_buying_90d'
+        # Insider / congress features are only non-zero when ALT_DATA_ENABLED=True.
+        # Include them in training only when real data exists; otherwise they are constant
+        # zeros that waste tree splits without contributing signal.
+        *(['insider_net_flow', 'insider_buy_count', 'insider_net_buyers',
+           'insider_officer_buy', 'insider_cluster',
+           'congress_buying_ratio', 'congress_buying_90d'] if (ALT_DATA_ENABLED or (insider_df is not None and not insider_df.empty) or (congress_df is not None and not congress_df.empty)) else []),
     ]
 
     # Keep original unshifted close & date for reference/labeling, but prefix feature names
