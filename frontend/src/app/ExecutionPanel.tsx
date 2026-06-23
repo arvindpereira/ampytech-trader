@@ -13,13 +13,16 @@ interface Candidate {
   ticker: string; sleeve: string; confidence: number | null;
   verdict: string; detail?: string; shares_est?: number | null; value_est?: number | null;
 }
+interface LtCandidate { ticker: string; verdict: string; detail?: string; weight?: number; price_dev?: number; }
+interface Warning { sleeve: string; level: 'warn' | 'info'; message: string; }
 interface Plan {
   paused: boolean; market_open: boolean | null; market_detail: string;
   regime: string; regime_overlay_enabled: boolean; swing_factor: number;
   equity: number; buying_power: number; next_open?: string | null;
   sleeves: Sleeve[]; candidates: Candidate[];
-  longterm_actions: { ticker: string; detail: string }[];
-  summary: { swing_buy_signals: number; high_risk_buy_signals: number; would_execute: number; longterm_buys: number };
+  longterm_candidates: LtCandidate[]; warnings: Warning[];
+  summary: { swing_buy_signals: number; high_risk_buy_signals: number; would_execute: number;
+             longterm_will_buy: number; longterm_waiting: number };
 }
 interface PlanResponse {
   live: Plan; verdict_labels: Record<string, string>;
@@ -30,6 +33,8 @@ const VERDICT_COLOR: Record<string, string> = {
   buy: '#10B981', already_held: '#64748b', not_assigned: '#F59E0B',
   blocked: '#F43F5E', locked: '#F43F5E', no_brackets: '#F59E0B',
   budget_exhausted: '#F43F5E', position_too_small: '#64748b',
+  would_open: '#10B981', would_add_dip: '#10B981', wait_for_dip: '#F59E0B',
+  would_trim: '#00F2FE', at_target: '#64748b',
 };
 
 const SLEEVE_COLOR: Record<string, string> = { swing: '#00F2FE', high_risk: '#F59E0B', longterm: '#a78bfa' };
@@ -93,7 +98,7 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
               {plan.summary.would_execute} would execute now
             </Pill>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-              {plan.summary.swing_buy_signals} swing + {plan.summary.high_risk_buy_signals} high-risk BUY signals · {plan.summary.longterm_buys} long-term targets
+              {plan.summary.swing_buy_signals} swing + {plan.summary.high_risk_buy_signals} high-risk BUY signals · MPT {plan.summary.longterm_will_buy} buying / {plan.summary.longterm_waiting} waiting
             </span>
             {data?.last_run && (
               <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
@@ -101,6 +106,22 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
               </span>
             )}
           </div>
+
+          {/* Warnings */}
+          {plan.warnings?.length > 0 && (
+            <div style={{ display: 'grid', gap: '6px', marginBottom: '14px' }}>
+              {plan.warnings.map((w, i) => {
+                const c = w.level === 'warn' ? '#F43F5E' : '#F59E0B';
+                return (
+                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12px',
+                    padding: '8px 10px', borderRadius: '6px', background: `${c}14`, border: `1px solid ${c}40`, color: 'var(--text-primary)' }}>
+                    <AlertTriangle size={13} color={c} style={{ flexShrink: 0, marginTop: '1px' }} />
+                    <span>{w.message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Sleeve budget bars */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginBottom: '16px' }}>
@@ -162,8 +183,30 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
             </div>
           ) : (
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-              {plan.paused ? 'Auto-trading is paused — no candidates evaluated.' : 'No model BUY signals to evaluate right now.'}
+              {plan.paused ? 'Auto-trading is paused — no candidates evaluated.' : 'No swing/high-risk model BUY signals to evaluate right now.'}
             </p>
+          )}
+
+          {/* Long-term MPT grid */}
+          {plan.longterm_candidates?.length > 0 && (
+            <div style={{ marginTop: '16px' }}>
+              <div style={labelStyle}>Long-term (MPT) grid — adds only on new names or 3%+ dips</div>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {plan.longterm_candidates.map((c) => {
+                  const vc = VERDICT_COLOR[c.verdict] ?? '#64748b';
+                  return (
+                    <button key={c.ticker} onClick={() => onTickerClick?.(c.ticker)}
+                      title={c.detail}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
+                        padding: '5px 9px', borderRadius: '14px', cursor: onTickerClick ? 'pointer' : 'default',
+                        background: `${vc}14`, border: `1px solid ${vc}40`, color: 'var(--text-primary)' }}>
+                      <strong>{c.ticker}</strong>
+                      <span style={{ color: vc, fontWeight: 600 }}>{labels[c.verdict] ?? c.verdict}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </>
       )}

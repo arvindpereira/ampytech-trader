@@ -220,6 +220,10 @@ SWING_STOP_MAX = float(os.getenv("SWING_STOP_MAX", "0.12"))
 SWING_TOP_N = int(os.getenv("SWING_TOP_N", "10"))
 # Small high-risk sleeve (aggressive model on speculative-tier names) — hard cap as a fraction of equity.
 HIGH_RISK_CAP = float(os.getenv("HIGH_RISK_CAP", "0.05"))
+HIGH_RISK_TOP_N = int(os.getenv("HIGH_RISK_TOP_N", "3"))
+# When True, each swing/high-risk position is sized as (sleeve allocation ÷ top-N) so position size
+# auto-scales with the bucket you pick (no size-vs-cap mismatch). When False, uses fixed SWING_POSITION_PCT.
+SWING_AUTOSIZE = os.getenv("SWING_AUTOSIZE", "True").lower() in ("true", "1", "yes")
 # Fixed fraction of equity per swing position. The portfolio sim that validated the edge used fixed 10%
 # allocations (NOT Kelly) — the model's win-prob is a ranking score, not a calibrated Kelly input, so
 # Kelly sizing would zero most positions. Keep this in lock-step with that sim.

@@ -21,6 +21,12 @@ VERDICT_LABELS = {
     "no_brackets": "Missing stop/target",
     "budget_exhausted": "Sleeve budget exhausted",
     "position_too_small": "Position too small (<$100)",
+    # Long-term MPT grid verdicts
+    "would_open": "Would open (new)",
+    "would_add_dip": "Would add (3%+ dip)",
+    "wait_for_dip": "Waiting for a dip",
+    "would_trim": "Would trim (overweight)",
+    "at_target": "At target weight",
 }
 
 
@@ -67,12 +73,94 @@ def _replay_sleeve(buys, allowed, budget, held, db, equity, position_pct, vol_ma
     return out, remaining
 
 
+def _replay_longterm(allocations, longterm_set, positions, equity, budget_fraction):
+    """Replay the MPT grid's real entry rule: open a new position, add a tranche only on a
+    3%+ dip below cost, otherwise wait. Mirrors executor.execute_long_term_grid_trades."""
+    weights = {a["ticker"]: a.get("weight", 0.0) for a in allocations}
+    price_hint = {a["ticker"]: a.get("current_price") for a in allocations}
+    out = []
+    for tk in sorted(longterm_set):
+        if tk not in weights:
+            continue
+        pos = positions.get(tk)
+        current = pos["qty"] if pos else 0.0
+        price = (pos["price"] if pos else None) or price_hint.get(tk)
+        if not price or price <= 0:
+            continue
+        entry = pos["avg_entry"] if pos else 0.0
+        target = (equity * weights[tk] * budget_fraction) / price
+        diff = target - current
+        dev = ((price - entry) / entry) if entry > 0 else 0.0
+        cand = {"ticker": tk, "sleeve": "longterm", "weight": weights[tk],
+                "price_dev": round(dev * 100, 1)}
+        if diff > 0.01:
+            if current == 0.0:
+                cand["verdict"] = "would_open"
+            elif dev <= -0.03:
+                cand["verdict"] = "would_add_dip"
+            else:
+                cand["verdict"] = "wait_for_dip"
+            cand["detail"] = f"{current:.1f}→{target:.1f} sh · {dev*100:+.1f}% vs cost"
+        elif diff < -0.01 and current > 0.0 and dev >= 0.05:
+            cand["verdict"] = "would_trim"
+            cand["detail"] = f"overweight {current:.1f}→{target:.1f} sh · {dev*100:+.1f}% (if tax-eligible)"
+        else:
+            cand["verdict"] = "at_target"
+            cand["detail"] = f"{current:.1f}/{target:.1f} sh"
+        out.append(cand)
+    return out
+
+
+def _build_warnings(sleeves, candidates, lt_candidates, regime, swing_factor,
+                    sw_buy_sig, hr_buy_sig, paused, market_open):
+    """Flag conditions where a sleeve can't actually deploy its allocation."""
+    w = []
+    if paused:
+        w.append({"sleeve": "all", "level": "warn", "message": "Auto-trading is PAUSED — nothing will trade until you resume it."})
+        return w
+    by_key = {s["key"]: s for s in sleeves}
+
+    def over(key, label):
+        s = by_key.get(key)
+        if s and s["cap"] > 0 and s["deployed"] > s["cap"] * 1.001:
+            w.append({"sleeve": key, "level": "warn",
+                      "message": f"{label} is over its cap (${s['deployed']:,.0f} deployed vs ${s['cap']:,.0f}). "
+                                 f"No new {label.lower()} buys until positions exit and free up budget."})
+
+    over("swing", "Swing"); over("high_risk", "High-risk")
+
+    if swing_factor < 1.0:
+        sw = by_key.get("swing", {})
+        w.append({"sleeve": "swing", "level": "info",
+                  "message": f"Regime '{regime}' is shrinking swing capital ×{swing_factor} "
+                             f"(cap {sw.get('weight',0)*100:.0f}% → {sw.get('effective_weight',0)*100:.0f}% of equity)."})
+
+    sw_exec = sum(1 for c in candidates if c["sleeve"] == "swing" and c["verdict"] == "buy")
+    if sw_buy_sig > 0 and sw_exec == 0:
+        w.append({"sleeve": "swing", "level": "warn",
+                  "message": f"{sw_buy_sig} swing BUY signal(s) today but none can execute "
+                             f"(already held / not assigned to swing / budget exhausted)."})
+    hr_exec = sum(1 for c in candidates if c["sleeve"] == "high_risk" and c["verdict"] == "buy")
+    if hr_buy_sig > 0 and hr_exec == 0:
+        w.append({"sleeve": "high_risk", "level": "warn",
+                  "message": f"{hr_buy_sig} high-risk BUY signal(s) today but none can execute."})
+
+    lt = by_key.get("longterm", {})
+    lt_will = sum(1 for c in lt_candidates if c["verdict"] in ("would_open", "would_add_dip"))
+    if lt.get("available", 0) > 0.03 * (lt.get("cap", 0) or 1) and lt_will == 0 and lt_candidates:
+        w.append({"sleeve": "longterm", "level": "info",
+                  "message": f"MPT has ${lt.get('available',0):,.0f} of its allocation free, but every target is at weight "
+                             f"or waiting for a 3%+ dip — the grid only adds on dips or new names, so it's holding."})
+    return w
+
+
 def build_execution_plan(db, api=None, suggestions_data=None) -> dict:
     """Compute the full execution plan (status, sleeves, candidate verdicts) read-only."""
     from app.main import (get_daily_suggestions, get_strategy_buckets, get_strategy_assignments)
     from execution.executor import get_alpaca_api, auto_trading_paused
     from app.core.config import (SWING_POSITION_PCT, SWING_VOL_TARGET, HIGH_RISK_CAP,
-                                 REGIME_SWING_FACTORS, REGIME_OVERLAY_ENABLED, HEDGE_MODE)
+                                 REGIME_SWING_FACTORS, REGIME_OVERLAY_ENABLED, HEDGE_MODE,
+                                 SWING_AUTOSIZE, SWING_TOP_N, HIGH_RISK_TOP_N)
 
     now = datetime.now()
     plan: dict = {"as_of": now.isoformat(), "paused": auto_trading_paused(db)}
@@ -112,6 +200,7 @@ def build_execution_plan(db, api=None, suggestions_data=None) -> dict:
     core_swing_set = swing_set - spec_set
 
     equity, buying_power, held = 0.0, 0.0, set()
+    positions = {}  # symbol -> {qty, mv, avg_entry, price}
     deployed = {"swing": 0.0, "longterm": 0.0, "hold": 0.0, "short_term": 0.0}
     deployed_spec = 0.0
     if api:
@@ -120,6 +209,8 @@ def build_execution_plan(db, api=None, suggestions_data=None) -> dict:
             equity = float(acct.equity); buying_power = float(acct.buying_power)
             for p in api.list_positions():
                 held.add(p.symbol)
+                positions[p.symbol] = {"qty": float(p.qty), "mv": float(p.market_value),
+                                       "avg_entry": float(p.avg_entry_price), "price": float(p.current_price)}
                 strat = assignments.get(p.symbol, "swing")
                 deployed[strat] = deployed.get(strat, 0.0) + float(p.market_value)
                 if p.symbol in spec_set:
@@ -152,26 +243,26 @@ def build_execution_plan(db, api=None, suggestions_data=None) -> dict:
     lt_cap = lt_w * equity
     lt_budget = max(0.0, lt_cap - deployed.get("longterm", 0.0))
 
+    # Position size auto-scales with the chosen allocation (nominal weight ÷ top-N), matching the executor.
+    swing_pos_pct = (swing_w / max(1, SWING_TOP_N)) if SWING_AUTOSIZE else SWING_POSITION_PCT
+    hr_pos_pct = (hr_w / max(1, HIGH_RISK_TOP_N)) if SWING_AUTOSIZE else SWING_POSITION_PCT
+
     # Replay swing + high-risk entry gates.
     candidates = []
     if not plan["paused"]:
         swing_buys = [s for s in suggestions_data.get("swing_suggestions", []) if s.get("action") == "BUY"]
         sw_cands, _ = _replay_sleeve(swing_buys, core_swing_set, swing_budget, held, db,
-                                     equity, SWING_POSITION_PCT, vol_map, "swing", SWING_VOL_TARGET)
+                                     equity, swing_pos_pct, vol_map, "swing", SWING_VOL_TARGET)
         candidates += sw_cands
         if hr_w > 0 and spec_set:
             hr_buys = [s for s in suggestions_data.get("high_risk_suggestions", []) if s.get("action") == "BUY"]
             hr_cands, _ = _replay_sleeve(hr_buys, spec_set, hr_budget, held, db,
-                                         equity, SWING_POSITION_PCT, vol_map, "high_risk", SWING_VOL_TARGET)
+                                         equity, hr_pos_pct, vol_map, "high_risk", SWING_VOL_TARGET)
             candidates += hr_cands
 
-    # Long-term: surface the grid's actionable targets (it buys on dips, so many are "wait").
-    lt_actions = []
-    for a in suggestions_data.get("long_term_allocation", []):
-        act = (a.get("suggested_action") or "")
-        if act.startswith("BUY"):
-            lt_actions.append({"ticker": a["ticker"], "sleeve": "longterm",
-                               "weight": a.get("weight"), "detail": act})
+    # Long-term: replay the MPT grid's REAL rules (open new / add on 3%+ dip / wait / trim).
+    lt_candidates = _replay_longterm(suggestions_data.get("long_term_allocation", []),
+                                     longterm_set, positions, equity, lt_w) if not plan["paused"] else []
 
     plan["sleeves"] = [
         {"key": "swing", "label": "Swing", "weight": swing_w, "effective_weight": swing_w_eff,
@@ -186,11 +277,19 @@ def build_execution_plan(db, api=None, suggestions_data=None) -> dict:
     ]
     candidates.sort(key=lambda c: (c["verdict"] != "buy", -(c.get("confidence") or 0)))
     plan["candidates"] = candidates
-    plan["longterm_actions"] = lt_actions
+    lt_candidates.sort(key=lambda c: (c["verdict"] not in ("would_open", "would_add_dip"), c["ticker"]))
+    plan["longterm_candidates"] = lt_candidates
+
+    sw_buy_sig = sum(1 for s in suggestions_data.get("swing_suggestions", []) if s.get("action") == "BUY")
+    hr_buy_sig = sum(1 for s in suggestions_data.get("high_risk_suggestions", []) if s.get("action") == "BUY")
+    lt_will = sum(1 for c in lt_candidates if c["verdict"] in ("would_open", "would_add_dip"))
     plan["summary"] = {
-        "swing_buy_signals": sum(1 for s in suggestions_data.get("swing_suggestions", []) if s.get("action") == "BUY"),
-        "high_risk_buy_signals": sum(1 for s in suggestions_data.get("high_risk_suggestions", []) if s.get("action") == "BUY"),
+        "swing_buy_signals": sw_buy_sig,
+        "high_risk_buy_signals": hr_buy_sig,
         "would_execute": sum(1 for c in candidates if c["verdict"] == "buy"),
-        "longterm_buys": len(lt_actions),
+        "longterm_will_buy": lt_will,
+        "longterm_waiting": sum(1 for c in lt_candidates if c["verdict"] == "wait_for_dip"),
     }
+    plan["warnings"] = _build_warnings(plan["sleeves"], candidates, lt_candidates, regime,
+                                       swing_factor, sw_buy_sig, hr_buy_sig, plan["paused"], plan["market_open"])
     return plan

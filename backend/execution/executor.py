@@ -657,7 +657,7 @@ def close_aged_swing_positions(api, db, mode="real", horizon_days=None, allowed_
 
 
 def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_tickers=None, budget=None,
-                               suggestions_key="swing_suggestions", label="swing"):
+                               suggestions_key="swing_suggestions", label="swing", position_pct=None):
     """Places swing (multi-day) bracket trades on Alpaca paper from `swing_suggestions`.
 
     Sizing is a FIXED fraction of equity (SWING_POSITION_PCT), matching the capital-aware portfolio
@@ -740,7 +740,10 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
         vol_scale = 1.0
         if SWING_VOL_TARGET > 0 and vol_map.get(ticker):
             vol_scale = min(1.0, SWING_VOL_TARGET / vol_map[ticker])   # high-vol → smaller position
-        trade_value = min(portfolio_equity * SWING_POSITION_PCT * vol_scale, remaining_budget)
+        # Position size auto-scales with the sleeve's allocation (position_pct ≈ alloc ÷ top-N);
+        # falls back to the fixed SWING_POSITION_PCT when no per-sleeve size is supplied.
+        size_pct = position_pct if position_pct and position_pct > 0 else SWING_POSITION_PCT
+        trade_value = min(portfolio_equity * size_pct * vol_scale, remaining_budget)
         shares = int(trade_value / entry_price)
         if shares < 1 or trade_value < 100.0:
             print(f"Skipping {ticker}: position too small (${trade_value:.0f}).")
@@ -1117,10 +1120,17 @@ def run_execution(trigger="scheduled"):
                   f"longterm {longterm_frac*100:.0f}% | regime {regime} | assigned swing={len(swing_set)} longterm={len(longterm_set)}")
 
             # Swing bucket: horizon exits, then budget-capped entries (CORE names only — excl. speculative).
+            # Position size auto-scales to the chosen allocation: (nominal sleeve weight ÷ top-N).
+            # The regime overlay still shrinks the BUDGET, so defensive regimes hold fewer names
+            # rather than smaller ones.
+            from app.core.config import SWING_AUTOSIZE, SWING_TOP_N, HIGH_RISK_TOP_N
+            swing_pos_pct = (buckets.get("swing", 0.0) / max(1, SWING_TOP_N)) if SWING_AUTOSIZE else None
+
             close_aged_swing_positions(api, db, allowed_tickers=core_swing_set if core_swing_set else None)
             if buckets.get("swing", 0.0) > 0:
                 submitted_orders += execute_swing_paper_trades(api, db, suggestions_data,
-                                           allowed_tickers=core_swing_set, budget=swing_budget) or []
+                                           allowed_tickers=core_swing_set, budget=swing_budget,
+                                           position_pct=swing_pos_pct) or []
 
             # High-risk sleeve: AGGRESSIVE model on speculative names, hard-capped at HIGH_RISK_CAP of equity.
             from app.core.config import HIGH_RISK_CAP
@@ -1131,9 +1141,10 @@ def run_execution(trigger="scheduled"):
                 print(f"High-risk sleeve: {hr_frac*100:.1f}% cap (avail ${hr_budget:.0f}) over {len(spec_set)} speculative names")
                 close_aged_swing_positions(api, db, allowed_tickers=spec_set)
                 if hr_budget >= 100.0:
+                    hr_pos_pct = (hr_frac / max(1, HIGH_RISK_TOP_N)) if SWING_AUTOSIZE else None
                     submitted_orders += execute_swing_paper_trades(api, db, suggestions_data, allowed_tickers=spec_set,
                                                budget=hr_budget, suggestions_key="high_risk_suggestions",
-                                               label="high-risk") or []
+                                               label="high-risk", position_pct=hr_pos_pct) or []
 
             # Long-term bucket: MPT grid restricted to longterm-assigned tickers, scaled to the bucket.
             if longterm_frac > 0 and longterm_set:
