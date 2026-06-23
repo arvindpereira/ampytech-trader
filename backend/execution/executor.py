@@ -690,10 +690,12 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
                                suggestions_key="swing_suggestions", label="swing", position_pct=None):
     """Places swing (multi-day) bracket trades on Alpaca paper from `swing_suggestions`.
 
-    Sizing is a FIXED fraction of equity (SWING_POSITION_PCT), matching the capital-aware portfolio
-    simulation that validated the edge — deliberately NOT Kelly, whose input would be the model's
-    low ranking-prob and would zero most positions. Entries are bracket orders (stop + take-profit);
-    the time-based horizon exit is handled separately by close_aged_swing_positions().
+    Sizing is a fixed fraction of equity per position — `position_pct` when supplied (auto-scaled to
+    the sleeve allocation as weight÷top-N), else SWING_POSITION_PCT. Deliberately NOT Kelly, whose
+    input would be the model's low ranking-prob and would zero most positions. Entries are bracket
+    orders (stop + take-profit); the time-based horizon exit is handled by close_aged_swing_positions().
+    Each entry's fill is recorded against the local position (_poll_and_record_fill) so reconciliation
+    doesn't invent a duplicate sync-buy lot.
 
     `allowed_tickers` (set) restricts buys to stocks assigned the swing strategy; `budget` (float, $)
     is a SOFT cap on total NEW capital deployed this run (the swing bucket's remaining allocation)."""
@@ -799,11 +801,15 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
             db.commit()
             buying_power -= shares * entry_price
             remaining_budget -= shares * entry_price
+            # Record the entry fill against the local position so sync doesn't invent a sync-buy
+            # lot for this swing name (the bracket's stop/take-profit legs sell on the broker and
+            # are reconciled via the real-sell guard).
+            filled = _poll_and_record_fill(api, db, order.id, ticker, "buy")
             submitted.append({"ticker": ticker, "sleeve": label, "side": "buy", "shares": int(shares),
                               "price": round(entry_price, 2), "value": round(shares * entry_price, 2),
                               "stop": round(stop_loss, 2), "target": round(take_profit, 2),
                               "order_id": str(order.id), "tif": "gtc",
-                              "status": str(getattr(order, "status", "") or "submitted")})
+                              "status": "filled" if filled else str(getattr(order, "status", "") or "submitted")})
             print(f"  Order submitted. ID: {order.id}")
         except Exception as e:
             print(f"Failed to submit swing order for {ticker}: {e}")
