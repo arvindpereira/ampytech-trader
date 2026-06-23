@@ -1,0 +1,172 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import { Activity, AlertTriangle, CheckCircle2, PauseCircle } from 'lucide-react';
+import { apiUrl } from '../lib/api';
+import { money } from './TickerDrawer';
+
+interface Sleeve {
+  key: string; label: string; weight: number; effective_weight: number;
+  cap: number; deployed: number; available: number; assigned: number;
+}
+interface Candidate {
+  ticker: string; sleeve: string; confidence: number | null;
+  verdict: string; detail?: string; shares_est?: number | null; value_est?: number | null;
+}
+interface Plan {
+  paused: boolean; market_open: boolean | null; market_detail: string;
+  regime: string; regime_overlay_enabled: boolean; swing_factor: number;
+  equity: number; buying_power: number; next_open?: string | null;
+  sleeves: Sleeve[]; candidates: Candidate[];
+  longterm_actions: { ticker: string; detail: string }[];
+  summary: { swing_buy_signals: number; high_risk_buy_signals: number; would_execute: number; longterm_buys: number };
+}
+interface PlanResponse {
+  live: Plan; verdict_labels: Record<string, string>;
+  last_run: { run_at: string; trigger: string; orders: any[] } | null;
+}
+
+const VERDICT_COLOR: Record<string, string> = {
+  buy: '#10B981', already_held: '#64748b', not_assigned: '#F59E0B',
+  blocked: '#F43F5E', locked: '#F43F5E', no_brackets: '#F59E0B',
+  budget_exhausted: '#F43F5E', position_too_small: '#64748b',
+};
+
+const SLEEVE_COLOR: Record<string, string> = { swing: '#00F2FE', high_risk: '#F59E0B', longterm: '#a78bfa' };
+
+const labelStyle: React.CSSProperties = {
+  fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+  color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px',
+};
+
+const Pill = ({ color, children }: { color: string; children: React.ReactNode }) => (
+  <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '12px', background: `${color}22`, border: `1px solid ${color}55`, color }}>{children}</span>
+);
+
+export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: string) => void }) {
+  const [data, setData] = useState<PlanResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(apiUrl('/api/execution/plan'));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setData(await res.json());
+      setErr(null);
+    } catch (e: any) {
+      setErr(e?.message || 'failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const plan = data?.live;
+  const labels = data?.verdict_labels ?? {};
+
+  return (
+    <div className="glass-card" style={{ padding: '16px', gridColumn: '1 / -1' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={labelStyle}>
+          <Activity size={13} color="#00F2FE" /> Execution plan — why the bot is / isn&apos;t buying
+        </div>
+        <button onClick={load} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {err && <p style={{ fontSize: '12px', color: '#F43F5E', margin: '4px 0' }}>Couldn&apos;t load execution plan: {err}</p>}
+      {!plan && !err && <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Loading…</p>}
+
+      {plan && (
+        <>
+          {/* Status row */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+            {plan.paused
+              ? <Pill color="#F43F5E"><PauseCircle size={11} style={{ verticalAlign: '-1px' }} /> Auto-trading PAUSED</Pill>
+              : <Pill color="#10B981"><CheckCircle2 size={11} style={{ verticalAlign: '-1px' }} /> Auto-trading on</Pill>}
+            <Pill color={plan.market_open ? '#10B981' : '#64748b'}>Market {plan.market_open ? 'open' : 'closed'}</Pill>
+            <Pill color="#a78bfa">Regime: {plan.regime}{plan.regime_overlay_enabled && plan.swing_factor < 1 ? ` · swing ×${plan.swing_factor}` : ''}</Pill>
+            <Pill color={plan.summary.would_execute > 0 ? '#10B981' : '#F59E0B'}>
+              {plan.summary.would_execute} would execute now
+            </Pill>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+              {plan.summary.swing_buy_signals} swing + {plan.summary.high_risk_buy_signals} high-risk BUY signals · {plan.summary.longterm_buys} long-term targets
+            </span>
+            {data?.last_run && (
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                Last run: {new Date(data.last_run.run_at).toLocaleString()} ({data.last_run.trigger}) · {data.last_run.orders.length} order{data.last_run.orders.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </div>
+
+          {/* Sleeve budget bars */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+            {plan.sleeves.map((s) => {
+              const frac = s.cap > 0 ? Math.min(1, s.deployed / s.cap) : (s.deployed > 0 ? 1 : 0);
+              const over = s.cap > 0 && s.deployed > s.cap;
+              const color = SLEEVE_COLOR[s.key] ?? '#64748b';
+              return (
+                <div key={s.key} style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color }}>{s.label}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      {(s.effective_weight * 100).toFixed(0)}% cap{s.effective_weight !== s.weight ? ` (${(s.weight * 100).toFixed(0)}%×regime)` : ''}
+                    </span>
+                  </div>
+                  <div style={{ height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.07)', overflow: 'hidden', marginBottom: '6px' }}>
+                    <div style={{ width: `${frac * 100}%`, height: '100%', background: over ? '#F43F5E' : color }} />
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    {money(s.deployed)} / {money(s.cap)} deployed
+                    {' · '}
+                    <strong style={{ color: s.available > 0 ? '#10B981' : '#F43F5E' }}>
+                      {s.available > 0 ? `${money(s.available)} free` : (over ? 'over cap — $0 free' : '$0 free')}
+                    </strong>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Candidate verdict table */}
+          {plan.candidates.length > 0 ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                    {['Ticker', 'Sleeve', 'Conf', 'Verdict', 'Detail'].map((h) => (
+                      <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Conf' ? 'right' : 'left', fontWeight: 600, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.candidates.map((c) => {
+                    const vc = VERDICT_COLOR[c.verdict] ?? '#64748b';
+                    return (
+                      <tr key={`${c.sleeve}-${c.ticker}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                        <td onClick={() => onTickerClick?.(c.ticker)} style={{ padding: '8px', fontWeight: 700, color: 'var(--text-primary)', cursor: onTickerClick ? 'pointer' : 'default' }}>{c.ticker}</td>
+                        <td style={{ padding: '8px', color: SLEEVE_COLOR[c.sleeve] ?? 'var(--text-secondary)' }}>{c.sleeve}</td>
+                        <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-secondary)' }}>{c.confidence != null ? `${(c.confidence * 100).toFixed(0)}%` : '—'}</td>
+                        <td style={{ padding: '8px' }}><span style={{ color: vc, fontWeight: 600 }}>{labels[c.verdict] ?? c.verdict}</span></td>
+                        <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>
+                          {c.verdict === 'buy' && c.shares_est ? `${c.shares_est} sh · ${money(c.value_est ?? 0)}` : (c.detail ?? '')}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+              {plan.paused ? 'Auto-trading is paused — no candidates evaluated.' : 'No model BUY signals to evaluate right now.'}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

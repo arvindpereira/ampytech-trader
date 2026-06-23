@@ -7,7 +7,7 @@ from app.database.models import (
     TaxProfile, AnalystForecast,
     TradingBlock, CrashRiskSnapshot,
     ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding,
-    TickerMetadata, CompanySnapshot, ExternalAnalystItem, ResearchWatchlist,
+    TickerMetadata, CompanySnapshot, ExecutionRun, ExternalAnalystItem, ResearchWatchlist,
     WebSearchCache, SectorSnapshot, InternalPriceTarget, ResearchNewsEmbedding,
     EarningsTranscript, EarningsEstimateSnapshot, EarningsSurprise,
     ResearchThread, ResearchMessage,

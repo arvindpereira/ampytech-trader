@@ -140,7 +140,7 @@ def intraday_news_scoring_job():
                 api = get_alpaca_api()
                 if api and api.get_clock().is_open:
                     print("Market open — running intraday swing re-execution...")
-                    run_execution()
+                    run_execution(trigger="intraday")
                 else:
                     print("Market closed — skipping intraday execution.")
             except Exception as e:

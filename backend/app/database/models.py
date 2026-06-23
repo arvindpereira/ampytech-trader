@@ -542,6 +542,21 @@ class TickerMetadata(Base):
     updated_at = Column(String, nullable=True)
 
 
+class ExecutionRun(Base):
+    """One row per run_execution() pass — the decision snapshot (plan) plus the orders
+    actually submitted. Powers the dashboard 'last actual run' view."""
+    __tablename__ = "execution_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(String, nullable=False)        # ISO timestamp
+    trigger = Column(String, nullable=True)        # 'scheduled' | 'intraday' | 'manual'
+    regime = Column(String, nullable=True)
+    paused = Column(Boolean, default=False)
+    market_open = Column(Boolean, nullable=True)
+    plan_json = Column(Text, nullable=True)        # build_execution_plan() snapshot
+    orders_json = Column(Text, nullable=True)      # orders actually submitted this run
+
+
 class CompanySnapshot(Base):
     """Denormalized daily company state for the research knowledge base."""
     __tablename__ = "company_snapshots"

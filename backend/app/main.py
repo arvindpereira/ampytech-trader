@@ -914,6 +914,33 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     _suggestions_cache[cache_key] = res
     return res
 
+@app.get("/api/execution/plan")
+def get_execution_plan(db=Depends(get_db)):
+    """Explains the bot's trading decisions: a live dry-run of the exact gates run_execution()
+    applies (kill-switch, market, regime overlay, per-sleeve cap/deployed/available, and a
+    per-candidate verdict for every model BUY) — plus the last actually-executed run.
+    Computes nothing destructive; places no orders."""
+    from execution.plan import build_execution_plan, VERDICT_LABELS
+    from app.database import ExecutionRun
+    import json as _json
+
+    try:
+        live = build_execution_plan(db)
+    except Exception as e:
+        live = {"error": str(e)}
+
+    last = db.query(ExecutionRun).order_by(ExecutionRun.id.desc()).first()
+    last_run = None
+    if last:
+        last_run = {
+            "run_at": last.run_at, "trigger": last.trigger, "regime": last.regime,
+            "paused": last.paused, "market_open": last.market_open,
+            "orders": _json.loads(last.orders_json) if last.orders_json else [],
+            "plan": _json.loads(last.plan_json) if last.plan_json else None,
+        }
+    return {"live": live, "last_run": last_run, "verdict_labels": VERDICT_LABELS}
+
+
 @app.get("/api/sentiment")
 def get_sentiment_aggregates(mode: str = "real", db=Depends(get_db)):
     """Exposes current sentiment indicators and scores for all tickers."""

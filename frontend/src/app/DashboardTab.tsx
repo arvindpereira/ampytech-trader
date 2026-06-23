@@ -7,6 +7,7 @@ import { money, pct, TIER_COLOR, TIER_LABEL } from './TickerDrawer';
 import type {
   SwingSuggestion, Allocation, PriceSummaryRow, TickerInfo, Classification,
 } from './TickerDrawer';
+import ExecutionPanel from './ExecutionPanel';
 
 // ─── types ──────────────────────────────────────────────────────────────────
 
@@ -215,6 +216,9 @@ export default function DashboardTab({
           {date && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Signals as of {date}</div>}
         </div>
       </div>
+
+      {/* ── Execution plan / Why ────────────────────────────────────────── */}
+      <ExecutionPanel onTickerClick={onTickerClick} />
 
       {/* ── Two-column: Signals + Holdings ──────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: '16px', alignItems: 'start' }}>

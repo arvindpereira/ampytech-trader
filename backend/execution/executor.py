@@ -674,9 +674,10 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
     buys = [s for s in swing_sugs if s.get("action") == "BUY"]
     if allowed_tickers is not None:
         buys = [s for s in buys if s["ticker"] in allowed_tickers]
+    submitted = []
     if not buys:
         print(f"No {label} BUY signals for assigned tickers today.")
-        return
+        return submitted
 
     account = api.get_account()
     portfolio_equity = float(account.equity)
@@ -765,12 +766,17 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
             db.commit()
             buying_power -= shares * entry_price
             remaining_budget -= shares * entry_price
+            submitted.append({"ticker": ticker, "sleeve": label, "shares": int(shares),
+                              "price": round(entry_price, 2), "value": round(shares * entry_price, 2),
+                              "stop": round(stop_loss, 2), "target": round(take_profit, 2),
+                              "order_id": str(order.id)})
             print(f"  Order submitted. ID: {order.id}")
         except Exception as e:
             print(f"Failed to submit swing order for {ticker}: {e}")
             db.rollback()
 
     print("Swing paper executions complete.\n")
+    return submitted
 
 
 def get_long_term_available_shares(db, ticker, current_date_str):
@@ -868,13 +874,14 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
     allocations = suggestions_data.get("long_term_allocation", [])
     target_weights = {a["ticker"]: a["weight"] for a in allocations}
 
+    submitted = []
     try:
         account = api.get_account()
         portfolio_equity = float(account.equity)
         buying_power = float(account.buying_power)
     except Exception as e:
         print(f"Failed to get account for long-term rebalance: {e}")
-        return
+        return submitted
 
     positions_db = {p.ticker: p for p in db.query(VirtualPosition).all()}
 
@@ -951,6 +958,9 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                             db.add(v_order)
                         db.commit()
                         buying_power -= (n_shares * current_price)
+                        submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "buy",
+                                          "shares": round(float(n_shares), 4), "price": round(current_price, 2),
+                                          "value": round(n_shares * current_price, 2), "order_id": str(lt_order.id)})
                     except Exception as e:
                         print(f"Failed to submit long-term buy order for {ticker}: {e}")
 
@@ -986,15 +996,39 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                             )
                             db.add(v_order)
                         db.commit()
+                        submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "sell",
+                                          "shares": round(float(m_shares), 4), "price": round(current_price, 2),
+                                          "value": round(m_shares * current_price, 2), "order_id": str(lt_order.id)})
                     except Exception as e:
                         print(f"Failed to submit long-term sell order for {ticker}: {e}")
                 else:
                     if abs(diff_shares) >= 0.01:
                         print(f"Long-Term Grid SELL skipped for {ticker}: Price is up {price_dev*100:+.1f}%, but no shares qualify as long-term (> 365 days held). Tax-eligible: {tax_eligible_shares:.2f} shares.")
 
-def run_execution():
+    return submitted
+
+def run_execution(trigger="scheduled"):
     init_db()
     db = SessionLocal()
+    plan_snapshot, submitted_orders = None, []
+
+    def _persist_run(paused):
+        """Record this pass (decision plan + orders actually submitted) for the dashboard."""
+        try:
+            from app.database import ExecutionRun
+            import json as _json
+            db.add(ExecutionRun(
+                run_at=datetime.now().isoformat(), trigger=trigger,
+                regime=(plan_snapshot or {}).get("regime"),
+                paused=bool(paused),
+                market_open=(plan_snapshot or {}).get("market_open"),
+                plan_json=_json.dumps(plan_snapshot) if plan_snapshot else None,
+                orders_json=_json.dumps(submitted_orders),
+            ))
+            db.commit()
+        except Exception as e:
+            print(f"Could not persist execution run: {e}")
+            db.rollback()
 
     # Global kill-switch: when auto-trading is paused, do nothing at all (no buys, no sells,
     # no broker sync side effects). Lets the user freeze the bot while harvesting losses in a
@@ -1004,6 +1038,12 @@ def run_execution():
         print("⏸  AUTO-TRADING IS PAUSED — skipping execution entirely.")
         print("   Resume from the Equity Advisor tab (or POST /api/execution/auto-trading).")
         print("=" * 60 + "\n")
+        try:
+            from execution.plan import build_execution_plan
+            plan_snapshot = build_execution_plan(db)
+        except Exception as e:
+            print(f"Plan snapshot (paused) failed: {e}")
+        _persist_run(paused=True)
         db.close()
         return
 
@@ -1026,6 +1066,13 @@ def run_execution():
             # 3. Retrieve daily recommendations (with hedge plan attached when hedging is enabled)
             print("Retrieving daily trade recommendations...")
             suggestions_data = get_daily_suggestions(date=None, hedge_mode=HEDGE_MODE, db=db)
+
+            # Snapshot the pre-trade decision plan (why each candidate will/won't trade) for the dashboard.
+            try:
+                from execution.plan import build_execution_plan
+                plan_snapshot = build_execution_plan(db, api=api, suggestions_data=suggestions_data)
+            except Exception as e:
+                print(f"Execution plan snapshot failed: {e}")
 
             # 4. Bucket-aware, per-ticker-strategy execution. Each strategy trades only the tickers
             #    assigned to it and deploys at most its bucket's share of equity (soft cap: never opens
@@ -1072,8 +1119,8 @@ def run_execution():
             # Swing bucket: horizon exits, then budget-capped entries (CORE names only — excl. speculative).
             close_aged_swing_positions(api, db, allowed_tickers=core_swing_set if core_swing_set else None)
             if buckets.get("swing", 0.0) > 0:
-                execute_swing_paper_trades(api, db, suggestions_data,
-                                           allowed_tickers=core_swing_set, budget=swing_budget)
+                submitted_orders += execute_swing_paper_trades(api, db, suggestions_data,
+                                           allowed_tickers=core_swing_set, budget=swing_budget) or []
 
             # High-risk sleeve: AGGRESSIVE model on speculative names, hard-capped at HIGH_RISK_CAP of equity.
             from app.core.config import HIGH_RISK_CAP
@@ -1084,15 +1131,15 @@ def run_execution():
                 print(f"High-risk sleeve: {hr_frac*100:.1f}% cap (avail ${hr_budget:.0f}) over {len(spec_set)} speculative names")
                 close_aged_swing_positions(api, db, allowed_tickers=spec_set)
                 if hr_budget >= 100.0:
-                    execute_swing_paper_trades(api, db, suggestions_data, allowed_tickers=spec_set,
+                    submitted_orders += execute_swing_paper_trades(api, db, suggestions_data, allowed_tickers=spec_set,
                                                budget=hr_budget, suggestions_key="high_risk_suggestions",
-                                               label="high-risk")
+                                               label="high-risk") or []
 
             # Long-term bucket: MPT grid restricted to longterm-assigned tickers, scaled to the bucket.
             if longterm_frac > 0 and longterm_set:
-                execute_long_term_grid_trades(db, api, suggestions_data,
+                submitted_orders += execute_long_term_grid_trades(db, api, suggestions_data,
                                               get_sim_date() or datetime.now().strftime("%Y-%m-%d"),
-                                              allowed_tickers=longterm_set, budget_fraction=longterm_frac)
+                                              allowed_tickers=longterm_set, budget_fraction=longterm_frac) or []
 
             # 5. Final sync to capture immediate fills
             print("Running final synchronization post-trade...")
@@ -1107,6 +1154,7 @@ def run_execution():
     except Exception as e:
         print(f"Execution run failed: {e}")
     finally:
+        _persist_run(paused=False)
         db.close()
 
 def evaluate_virtual_broker_daily(db, sim_date=None, mode="live"):
