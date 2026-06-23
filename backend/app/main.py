@@ -566,8 +566,17 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
                         st_model.load_model(model_path)
                     last_idx = t_feat.index[-1]
                     inference_row = t_feat.loc[[last_idx]]
-                    if not inference_row[feature_cols].isna().any().any():
-                        prob = float(st_model.predict_proba(inference_row[feature_cols])[:, 1][0])
+                    model_features = st_model.get_booster().feature_names
+                    if model_features:
+                        input_df = inference_row.copy()
+                        for col in model_features:
+                            if col not in input_df.columns:
+                                input_df[col] = 0.0
+                        input_data = input_df[model_features]
+                    else:
+                        input_data = inference_row[feature_cols]
+                    if not input_data.isna().any().any():
+                        prob = float(st_model.predict_proba(input_data)[:, 1][0])
 
         # If PyTorch was not used, fallback to standard XGBoost
         if prob is None:
@@ -578,8 +587,17 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
             if st_model is not None:
                 last_idx = t_feat.index[-1]
                 inference_row = t_feat.loc[[last_idx]]
-                if not inference_row[feature_cols].isna().any().any():
-                    prob = float(st_model.predict_proba(inference_row[feature_cols])[:, 1][0])
+                model_features = st_model.get_booster().feature_names
+                if model_features:
+                    input_df = inference_row.copy()
+                    for col in model_features:
+                        if col not in input_df.columns:
+                            input_df[col] = 0.0
+                    input_data = input_df[model_features]
+                else:
+                    input_data = inference_row[feature_cols]
+                if not input_data.isna().any().any():
+                    prob = float(st_model.predict_proba(input_data)[:, 1][0])
 
         if prob is None:
             continue  # No inference possible for this ticker
