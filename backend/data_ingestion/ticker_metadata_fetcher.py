@@ -1,12 +1,18 @@
 """Fetch sector, industry, and market cap into ticker_metadata."""
 from __future__ import annotations
 
+import os
+import sys
 import time
 from datetime import date, datetime, timedelta
 from typing import Iterable, List, Optional
 
 import requests
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+# Allow running as a script (`python data_ingestion/ticker_metadata_fetcher.py`):
+# put the backend root on the path so `app`/`ml_engine` import.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import FINNHUB_API_KEY, RESEARCH_KB_FINNHUB_SLEEP
 from app.database import SessionLocal, TickerMetadata, init_db

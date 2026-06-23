@@ -17,6 +17,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
+    # Wait up to 30s for a write lock instead of failing fast — avoids
+    # "database is locked" when a background job writes while the server does.
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
