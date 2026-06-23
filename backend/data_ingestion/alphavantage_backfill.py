@@ -218,6 +218,14 @@ def run_backfill_step() -> dict:
             print(f"Interval {t_inv['name']} for {ticker} starts after end date due to IPO filter ({time_from} >= {t_inv['end']}). Marking completed.")
             t_inv["completed"] = True
             t_inv["cursor"] = None
+            state["last_processed"] = {
+                "ticker": ticker,
+                "interval": t_inv["name"],
+                "timestamp": datetime.now().isoformat(),
+                "feed_size": 0,
+                "new_inserted": 0,
+                "status": "skipped_ipo"
+            }
             save_state(state)
             return {
                 "status": "success",
@@ -315,6 +323,14 @@ def run_backfill_step() -> dict:
             print(f"Interval has more data. Setting next cursor to: {next_cursor}")
             t_inv["cursor"] = next_cursor
 
+        state["last_processed"] = {
+            "ticker": ticker,
+            "interval": t_inv["name"],
+            "timestamp": datetime.now().isoformat(),
+            "feed_size": len(feed),
+            "new_inserted": inserted_rows,
+            "status": "success"
+        }
         save_state(state)
         return {
             "status": "success",

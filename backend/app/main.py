@@ -1653,6 +1653,76 @@ def backfill_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     jid = _start_backfill(ticker)
     return {"status": "started", "ticker": ticker, "job_id": jid}
 
+@app.get("/api/alphavantage/backfill/status")
+def get_alphavantage_backfill_status():
+    from data_ingestion.alphavantage_backfill import STATE_FILE
+    import json
+    import os
+    if not os.path.exists(STATE_FILE):
+        return {
+            "progress_pct": 0,
+            "completed_intervals": 0,
+            "total_intervals": 0,
+            "completed_tickers_count": 0,
+            "total_tickers_count": 0,
+            "last_processed": None,
+            "eta_days": None,
+            "eta_date": None
+        }
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading backfill state: {e}")
+
+    ticker_states = state.get("ticker_states", {})
+    total_intervals = 0
+    completed_intervals = 0
+    completed_tickers = 0
+
+    for ticker, t_state in ticker_states.items():
+        intervals = t_state.get("intervals", [])
+        if not intervals:
+            continue
+        total_intervals += len(intervals)
+        ticker_completed = True
+        for inv in intervals:
+            if inv.get("completed"):
+                completed_intervals += 1
+            else:
+                ticker_completed = False
+        if ticker_completed:
+            completed_tickers += 1
+
+    total_tickers = len(ticker_states)
+    progress_pct = round((completed_intervals / total_intervals * 100), 2) if total_intervals > 0 else 0
+
+    # Calculate ETA:
+    # 24 requests per day limit.
+    # Each incomplete interval is assumed to need 1.2 requests on average.
+    incomplete_intervals = total_intervals - completed_intervals
+    eta_days = None
+    eta_date = None
+    if incomplete_intervals > 0:
+        estimated_calls = incomplete_intervals * 1.2
+        eta_days = round(estimated_calls / 24.0, 1)
+        from datetime import datetime, timedelta
+        target_dt = datetime.now() + timedelta(days=eta_days)
+        eta_date = target_dt.strftime("%Y-%m-%d")
+
+    return {
+        "progress_pct": progress_pct,
+        "completed_intervals": completed_intervals,
+        "total_intervals": total_intervals,
+        "completed_tickers_count": completed_tickers,
+        "total_tickers_count": total_tickers,
+        "last_processed": state.get("last_processed"),
+        "eta_days": eta_days,
+        "eta_date": eta_date,
+        "daily_request_count": state.get("daily_request_count", 0),
+        "last_reset_date": state.get("last_reset_date")
+    }
+
 @app.post("/api/universe/remove")
 def remove_universe_ticker(req: TickerRequest, db=Depends(get_db)):
     """Stop monitoring a ticker (remove from the universe). Intended for tickers with no open position."""

@@ -531,6 +531,7 @@ export default function Home() {
   const [refreshingPortfolio, setRefreshingPortfolio] = useState<boolean>(false);
   const [jobs, setJobs] = useState<any[]>([]);
   const [trainStatus, setTrainStatus] = useState<any>(null);
+  const [avBackfillStatus, setAvBackfillStatus] = useState<any>(null);
   const [liquidateModal, setLiquidateModal] = useState<any>(null);
   const [addStockOpen, setAddStockOpen] = useState<boolean>(false);
   const [addStockTicker, setAddStockTicker] = useState<string>('');
@@ -1264,12 +1265,14 @@ export default function Home() {
 
   const fetchJobsAndTraining = async () => {
     try {
-      const [jr, tr] = await Promise.all([
+      const [jr, tr, avr] = await Promise.all([
         fetch(apiUrl(`/api/jobs`)),
         fetch(apiUrl(`/api/train/status`)),
+        fetch(apiUrl(`/api/alphavantage/backfill/status`)),
       ]);
       if (jr.ok) setJobs((await jr.json()).jobs || []);
       if (tr.ok) setTrainStatus(await tr.json());
+      if (avr.ok) setAvBackfillStatus(await avr.json());
     } catch (err) { /* backend offline */ }
   };
 
@@ -3108,6 +3111,88 @@ export default function Home() {
                   ))}
                 </div>
 
+              </div>
+
+              {/* AlphaVantage News Sentiment Backfill Status */}
+              <div className="glass-card" style={{ marginBottom: '24px' }}>
+                <h2>
+                  <RotateCcw size={20} color="#10B981" />
+                  AlphaVantage News Backfill Status
+                </h2>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                  Incremental background news sentiment accumulator using your AlphaVantage API key.
+                </p>
+
+                {avBackfillStatus ? (
+                  <div>
+                    {/* Progress Bar */}
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '6px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Overall Progress</span>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{avBackfillStatus.progress_pct}%</span>
+                      </div>
+                      <div style={{ height: '8px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px', overflow: 'hidden', marginBottom: '8px' }}>
+                        <div style={{ width: `${avBackfillStatus.progress_pct}%`, height: '100%', background: 'linear-gradient(90deg, #10B981, #00F2FE)', transition: 'width 0.4s' }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        <span>{avBackfillStatus.completed_intervals} / {avBackfillStatus.total_intervals} intervals completed</span>
+                        <span>{avBackfillStatus.completed_tickers_count} / {avBackfillStatus.total_tickers_count} tickers fully done</span>
+                      </div>
+                    </div>
+
+                    {/* ETA Section */}
+                    {avBackfillStatus.eta_days !== null && (
+                      <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '8px', padding: '10px 12px', marginBottom: '16px', fontSize: '13px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Estimated Time Remaining:</span>
+                          <span style={{ fontWeight: 600, color: '#10B981' }}>~{avBackfillStatus.eta_days} days</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Estimated Completion Date:</span>
+                          <span style={{ fontWeight: 600, color: '#10B981' }}>{avBackfillStatus.eta_date}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* API Usage & Throttling */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '8px 0', borderTop: '1px solid var(--border-glass)', borderBottom: '1px solid var(--border-glass)', marginBottom: '16px' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Daily API Calls Used Today:</span>
+                      <span style={{ fontWeight: 500, color: avBackfillStatus.daily_request_count >= 24 ? 'var(--color-sell)' : 'var(--text-primary)' }}>
+                        {avBackfillStatus.daily_request_count} / 24 calls
+                      </span>
+                    </div>
+
+                    {/* Last Processed Step */}
+                    {avBackfillStatus.last_processed ? (
+                      <div style={{ fontSize: '13px' }}>
+                        <span style={{ color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>Last Completed Step:</span>
+                        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '10px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{avBackfillStatus.last_processed.ticker}</span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{avBackfillStatus.last_processed.interval}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                            <span>
+                              {avBackfillStatus.last_processed.status === 'skipped_ipo'
+                                ? 'Skipped (Pre-IPO)'
+                                : `Fetched ${avBackfillStatus.last_processed.feed_size} articles (${avBackfillStatus.last_processed.new_inserted} new)`
+                              }
+                            </span>
+                            <span>{new Date(avBackfillStatus.last_processed.timestamp).toLocaleTimeString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                        Waiting for first backfill run...
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    Loading backfill status...
+                  </div>
+                )}
               </div>
 
               {/* Universe Ticker Checklist */}
