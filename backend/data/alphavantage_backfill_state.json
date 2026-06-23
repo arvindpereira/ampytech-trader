@@ -6,7 +6,7 @@
           "name": "Year_1",
           "start": "20250622T1210",
           "end": "20260622T1810",
-          "cursor": "20251015T1301",
+          "cursor": "20251019T1038",
           "completed": false
         },
         {
@@ -3589,6 +3589,6 @@
       ]
     }
   },
-  "daily_request_count": 1,
+  "daily_request_count": 2,
   "last_reset_date": "2026-06-22"
 }

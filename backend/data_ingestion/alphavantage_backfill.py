@@ -59,6 +59,17 @@ def get_dynamic_priority_tickers(db) -> list:
     return [t for t in priority_list if t] or PRIORITY_TICKERS
 
 
+def load_ipo_dates() -> dict:
+    ipo_path = os.path.join(BASE_DIR, "data", "ipo_markers.json")
+    if os.path.exists(ipo_path):
+        try:
+            with open(ipo_path) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading ipo_markers.json: {e}")
+    return {}
+
+
 def get_intervals(today=None):
     if today is None:
         today = datetime.now()
@@ -129,19 +140,39 @@ def run_backfill_step() -> dict:
     db = SessionLocal()
     try:
         priority_tickers = get_dynamic_priority_tickers(db)
+        ipo_dates = load_ipo_dates()
 
         # 1. Initialize states for tickers if missing
         for t in priority_tickers:
             t_state = ticker_states.setdefault(t, {})
             t_intervals = t_state.setdefault("intervals", [])
+
+            ipo_date_str = ipo_dates.get(t)
+            ipo_dt = None
+            if ipo_date_str:
+                try:
+                    ipo_dt = datetime.strptime(ipo_date_str, "%Y-%m-%d")
+                except Exception:
+                    pass
+
             if not t_intervals:
                 for inv in intervals:
+                    try:
+                        inv_end_dt = datetime.strptime(inv["end"][:8], "%Y%m%d")
+                    except Exception:
+                        inv_end_dt = None
+
+                    completed = False
+                    if ipo_dt and inv_end_dt and ipo_dt > inv_end_dt:
+                        completed = True
+                        print(f"Ticker {t} IPO date ({ipo_date_str}) is after interval {inv['name']} ({inv['end']}). Marking completed.")
+
                     t_intervals.append({
                         "name": inv["name"],
                         "start": inv["start"],
                         "end": inv["end"],
                         "cursor": None,
-                        "completed": False
+                        "completed": completed
                     })
 
         # 2. Find next task (outer loop by interval index, inner loop by priority tickers)
@@ -171,6 +202,32 @@ def run_backfill_step() -> dict:
         # 3. Call AlphaVantage API
         url = "https://www.alphavantage.co/query"
         time_from = t_inv["cursor"] if t_inv["cursor"] else t_inv["start"]
+
+        # Adjust time_from to the IPO date if the interval starts before the IPO date
+        ipo_date_str = ipo_dates.get(ticker)
+        if ipo_date_str:
+            try:
+                ipo_ts = ipo_date_str.replace("-", "") + "T0000"
+                if time_from < ipo_ts:
+                    print(f"Adjusting time_from for {ticker} from {time_from} to IPO date {ipo_ts}")
+                    time_from = ipo_ts
+            except Exception:
+                pass
+
+        if time_from >= t_inv["end"]:
+            print(f"Interval {t_inv['name']} for {ticker} starts after end date due to IPO filter ({time_from} >= {t_inv['end']}). Marking completed.")
+            t_inv["completed"] = True
+            t_inv["cursor"] = None
+            save_state(state)
+            return {
+                "status": "success",
+                "ticker": ticker,
+                "interval": t_inv["name"],
+                "feed_size": 0,
+                "new_inserted": 0,
+                "message": "Skipped due to IPO date filter"
+            }
+
         params = {
             "function": "NEWS_SENTIMENT",
             "tickers": ticker,
