@@ -45,6 +45,34 @@ def get_strategy_buckets(db):
 def get_strategy_assignments(db):
     """Map of ticker -> assigned strategy ('swing' | 'longterm' | 'hold')."""
     return {t.ticker: (t.strategy or "swing") for t in db.query(UniverseTicker).all()}
+
+
+_LT_HOLD_DAYS = 365   # IRS long-term capital-gains holding period
+
+
+def _lt_eligibility(date_share_pairs, total_shares, lt_days=_LT_HOLD_DAYS):
+    """Given (acquisition_date, shares) lots, how many shares qualify for long-term capital-gains
+    treatment now (held > lt_days) and when the next chunk becomes eligible. Used to show whether a
+    take-profit trim is actually actionable yet."""
+    from datetime import datetime as _dt, timedelta as _td
+    today = _dt.now()
+    eligible, next_date = 0.0, None
+    for acq_str, sh in date_share_pairs:
+        try:
+            acq = _dt.strptime(str(acq_str)[:10], "%Y-%m-%d")
+        except Exception:
+            continue
+        if (today - acq).days > lt_days:
+            eligible += sh
+        else:
+            ed = acq + _td(days=lt_days + 1)
+            next_date = ed if (next_date is None or ed < next_date) else next_date
+    eligible = min(eligible, total_shares)
+    return {
+        "lt_eligible_shares": round(eligible, 4),
+        "lt_eligible": total_shares > 0 and eligible >= total_shares - 1e-6,
+        "next_eligible_date": next_date.strftime("%Y-%m-%d") if next_date else None,
+    }
 from ml_engine.features import build_features_for_df, build_all_features
 from ml_engine.models import PortfolioOptimizer
 
@@ -2812,6 +2840,7 @@ def get_external_positions(account_label: str, db=Depends(get_db)):
             # MPT-style accumulate/take-profit targets off the average cost basis.
             "buy_target": round(avg_cost * (1 - GRID_BUY_DIP), 2) if avg_cost else None,
             "take_profit": round(avg_cost * (1 + GRID_TP_GAIN), 2) if avg_cost else None,
+            **_lt_eligibility([(l.acquisition_date, l.shares) for l in ticker_lots], total_shares),
             "lots": lots_list
         })
     return results
@@ -4160,6 +4189,14 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
 
     assignments = get_strategy_assignments(db)
     from app.core.config import GRID_BUY_DIP, GRID_TP_GAIN
+    lt_tickers = [h["ticker"] for h in holdings if assignments.get(h["ticker"], "swing") == "longterm"]
+    # FIFO buy lots (filled) per long-term ticker → long-term tax eligibility.
+    lots_by_tk: dict = {}
+    if lt_tickers:
+        for o in db.query(VirtualOrder).filter(VirtualOrder.mode == "real", VirtualOrder.side == "buy",
+                                               VirtualOrder.status == "filled",
+                                               VirtualOrder.ticker.in_(lt_tickers)).all():
+            lots_by_tk.setdefault(o.ticker, []).append((o.created_at, float(o.qty or 0)))
     for h in holdings:
         h["strategy"] = assignments.get(h["ticker"], "swing")
         # Long-term (MPT) grid targets off the cost basis: add on a dip, take profit on a gain.
@@ -4167,6 +4204,7 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
         if h["strategy"] == "longterm" and cb:
             h["buy_target"] = round(cb * (1 - GRID_BUY_DIP), 2)
             h["take_profit"] = round(cb * (1 + GRID_TP_GAIN), 2)
+            h.update(_lt_eligibility(lots_by_tk.get(h["ticker"], []), h.get("shares", 0)))
     holdings.sort(key=lambda x: -x["market_value"])
     if cash is None:
         acc = db.query(VirtualAccount).filter(VirtualAccount.id == (2 if mode == "real" else 1)).first()

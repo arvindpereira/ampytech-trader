@@ -16,6 +16,7 @@ interface HoldingRow {
   ticker: string; shares: number; price: number; value: number;
   pl: number | null; plPct: number | null;
   buyTarget?: number | null; takeProfit?: number | null;
+  ltEligible?: boolean; ltEligibleShares?: number | null; nextEligibleDate?: string | null;
 }
 interface AccountGroup {
   label: string; rows: HoldingRow[]; totalValue: number; totalPl: number;
@@ -125,6 +126,7 @@ export default function DashboardTab({
         ticker: tk, shares: h.shares ?? 0, price: h.current_price ?? 0, value,
         pl, plPct: h.unrealized_pl_pct ?? null,
         buyTarget: h.buy_target ?? null, takeProfit: h.take_profit ?? null,
+        ltEligible: h.lt_eligible, ltEligibleShares: h.lt_eligible_shares ?? null, nextEligibleDate: h.next_eligible_date ?? null,
       });
       g.totalValue += value;
       if (pl != null) g.totalPl += pl;
@@ -140,7 +142,8 @@ export default function DashboardTab({
         let row = g.rows.find((r) => r.ticker === tk);
         if (!row) {
           row = { ticker: tk, shares: 0, price, value: 0, pl: 0, plPct: null,
-                  buyTarget: pos.buy_target ?? null, takeProfit: pos.take_profit ?? null };
+                  buyTarget: pos.buy_target ?? null, takeProfit: pos.take_profit ?? null,
+                  ltEligible: pos.lt_eligible, ltEligibleShares: pos.lt_eligible_shares ?? null, nextEligibleDate: pos.next_eligible_date ?? null };
           g.rows.push(row);
         }
         const shares = lot.shares ?? 0;
@@ -382,7 +385,19 @@ export default function DashboardTab({
                                   {r.buyTarget != null || r.takeProfit != null ? (
                                     <span style={{ fontSize: '10px' }} title="Add a tranche on a dip to the buy price; take profit at the upper price (relative to cost basis)">
                                       {r.buyTarget != null && <span style={{ color: '#10B981' }}>↓{money(r.buyTarget)}</span>}
-                                      {r.takeProfit != null && <span style={{ color: '#F59E0B', marginLeft: '4px' }}>↑{money(r.takeProfit)}</span>}
+                                      {r.takeProfit != null && (
+                                        <span style={{ marginLeft: '4px' }}
+                                          title={r.ltEligible
+                                            ? 'Long-term tax-eligible — take-profit trim is actionable now'
+                                            : `Take-profit waits for long-term tax eligibility (held >1yr). Eligible: ${(r.ltEligibleShares ?? 0).toFixed(1)}/${r.shares.toFixed(1)} sh${r.nextEligibleDate ? ` · next ${r.nextEligibleDate}` : ''}`}>
+                                          <span style={{ color: '#F59E0B' }}>↑{money(r.takeProfit)}</span>
+                                          {r.ltEligible === false && (
+                                            <span style={{ color: 'var(--text-secondary)', marginLeft: '2px' }}>
+                                              🔒{r.nextEligibleDate ? <span style={{ fontSize: '9px', marginLeft: '2px' }}>{r.nextEligibleDate.slice(2)}</span> : ''}
+                                            </span>
+                                          )}
+                                        </span>
+                                      )}
                                     </span>
                                   ) : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
                                 </td>
