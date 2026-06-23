@@ -799,10 +799,11 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
             db.commit()
             buying_power -= shares * entry_price
             remaining_budget -= shares * entry_price
-            submitted.append({"ticker": ticker, "sleeve": label, "shares": int(shares),
+            submitted.append({"ticker": ticker, "sleeve": label, "side": "buy", "shares": int(shares),
                               "price": round(entry_price, 2), "value": round(shares * entry_price, 2),
                               "stop": round(stop_loss, 2), "target": round(take_profit, 2),
-                              "order_id": str(order.id)})
+                              "order_id": str(order.id), "tif": "gtc",
+                              "status": str(getattr(order, "status", "") or "submitted")})
             print(f"  Order submitted. ID: {order.id}")
         except Exception as e:
             print(f"Failed to submit swing order for {ticker}: {e}")
@@ -895,6 +896,62 @@ def get_long_term_available_shares(db, ticker, current_date_str):
                 long_term_qty += lot["qty"]
 
     return min(long_term_qty, total_owned)
+
+def _poll_and_record_fill(api, db, order_id, ticker, side, mode="real", max_wait=3.0):
+    """After submitting an order, briefly poll the broker for the actual fill and record it
+    locally: update the VirtualPosition (weighted-avg cost on buys) and mark the VirtualOrder
+    'filled'. This lets the order book reflect its OWN fills, so sync_broker_positions no longer
+    has to invent redundant sync-buy lots. Returns True if a fill was recorded.
+
+    Only updates local state on a CONFIRMED fill, so local can never exceed the broker (which,
+    with the reduction guard, would otherwise be unrecoverable). Unfilled orders are left for the
+    normal reconciliation path."""
+    import time as _t
+    filled_qty, filled_price = 0.0, None
+    deadline = _t.time() + max_wait
+    while _t.time() < deadline:
+        try:
+            o = api.get_order(order_id)
+        except Exception:
+            break
+        st = getattr(o, "status", "")
+        fq = float(getattr(o, "filled_qty", 0) or 0)
+        if st == "filled" and fq > 0:
+            filled_qty = fq
+            filled_price = float(getattr(o, "filled_avg_price", 0) or 0) or None
+            break
+        if st in ("canceled", "rejected", "expired"):
+            break
+        _t.sleep(0.4)
+    if filled_qty <= 0:
+        return False
+
+    pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker,
+                                           VirtualPosition.mode == mode).first()
+    px = filled_price or 0.0
+    if side == "buy":
+        if pos:
+            new_qty = pos.quantity + filled_qty
+            if px and new_qty:
+                pos.entry_price = (pos.entry_price * pos.quantity + px * filled_qty) / new_qty
+            pos.quantity = new_qty
+        else:
+            db.add(VirtualPosition(ticker=ticker, mode=mode, quantity=filled_qty,
+                                   entry_price=px or 0.0, policy="rebalance"))
+    else:  # sell
+        if pos:
+            pos.quantity = max(0.0, pos.quantity - filled_qty)
+            if pos.quantity <= 0.0001:
+                db.delete(pos)
+
+    vo = db.query(VirtualOrder).filter(VirtualOrder.id == str(order_id)).first()
+    if vo:
+        vo.status = "filled"
+        if px:
+            vo.filled_price = px
+    db.commit()
+    return True
+
 
 def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_tickers=None, budget_fraction=1.0):
     """
@@ -991,9 +1048,11 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                             db.add(v_order)
                         db.commit()
                         buying_power -= (n_shares * current_price)
+                        filled = _poll_and_record_fill(api, db, lt_order.id, ticker, "buy")
                         submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "buy",
                                           "shares": round(float(n_shares), 4), "price": round(current_price, 2),
-                                          "value": round(n_shares * current_price, 2), "order_id": str(lt_order.id)})
+                                          "value": round(n_shares * current_price, 2), "order_id": str(lt_order.id),
+                                          "tif": "day", "status": "filled" if filled else "submitted"})
                     except Exception as e:
                         print(f"Failed to submit long-term buy order for {ticker}: {e}")
 
@@ -1029,9 +1088,11 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                             )
                             db.add(v_order)
                         db.commit()
+                        filled = _poll_and_record_fill(api, db, lt_order.id, ticker, "sell")
                         submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "sell",
                                           "shares": round(float(m_shares), 4), "price": round(current_price, 2),
-                                          "value": round(m_shares * current_price, 2), "order_id": str(lt_order.id)})
+                                          "value": round(m_shares * current_price, 2), "order_id": str(lt_order.id),
+                                          "tif": "day", "status": "filled" if filled else "submitted"})
                     except Exception as e:
                         print(f"Failed to submit long-term sell order for {ticker}: {e}")
                 else:

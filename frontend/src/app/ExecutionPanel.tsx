@@ -24,9 +24,13 @@ interface Plan {
   summary: { swing_buy_signals: number; high_risk_buy_signals: number; would_execute: number;
              longterm_will_buy: number; longterm_waiting: number };
 }
+interface LastOrder {
+  ticker: string; sleeve: string; side?: string; shares: number; value?: number;
+  tif?: string; status?: string;
+}
 interface PlanResponse {
   live: Plan; verdict_labels: Record<string, string>;
-  last_run: { run_at: string; trigger: string; orders: any[] } | null;
+  last_run: { run_at: string; trigger: string; market_open?: boolean | null; orders: LastOrder[] } | null;
 }
 
 const VERDICT_COLOR: Record<string, string> = {
@@ -100,11 +104,6 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
               {plan.summary.swing_buy_signals} swing + {plan.summary.high_risk_buy_signals} high-risk BUY signals · MPT {plan.summary.longterm_will_buy} buying / {plan.summary.longterm_waiting} waiting
             </span>
-            {data?.last_run && (
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: 'auto' }}>
-                Last run: {new Date(data.last_run.run_at).toLocaleString()} ({data.last_run.trigger}) · {data.last_run.orders.length} order{data.last_run.orders.length === 1 ? '' : 's'}
-              </span>
-            )}
           </div>
 
           {/* Warnings */}
@@ -206,6 +205,39 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Last run — what was actually submitted (market orders fill same-day; they don't queue) */}
+          {data?.last_run && (
+            <div style={{ marginTop: '16px' }}>
+              <div style={labelStyle}>
+                Last run — {new Date(data.last_run.run_at).toLocaleString()} ({data.last_run.trigger}) · market {data.last_run.market_open ? 'open' : 'closed'}
+              </div>
+              {data.last_run.orders.length === 0 ? (
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>No orders were submitted on the last run.</p>
+              ) : (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {data.last_run.orders.map((o, i) => {
+                    const filled = (o.status || '').toLowerCase() === 'filled';
+                    const sideC = o.side === 'sell' ? '#F43F5E' : '#10B981';
+                    return (
+                      <button key={i} onClick={() => onTickerClick?.(o.ticker)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
+                          padding: '5px 9px', borderRadius: '14px', cursor: onTickerClick ? 'pointer' : 'default',
+                          background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', color: 'var(--text-primary)' }}>
+                        <span style={{ color: sideC, fontWeight: 700 }}>{(o.side || 'buy').toUpperCase()}</span>
+                        <strong>{o.ticker}</strong>
+                        <span style={{ color: 'var(--text-secondary)' }}>{o.shares} sh{o.value ? ` · ${money(o.value)}` : ''}</span>
+                        <span style={{ color: filled ? '#10B981' : '#F59E0B', fontWeight: 600 }}>
+                          {filled ? 'filled' : (o.status || 'pending')}
+                        </span>
+                        {o.tif && <span style={{ color: 'var(--text-secondary)', opacity: 0.7 }}>{o.tif.toUpperCase()}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </>
