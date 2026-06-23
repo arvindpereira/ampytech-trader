@@ -57,6 +57,7 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [pipeline, setPipeline] = useState<{ running: boolean; stage: string; progress: number; error?: string | null } | null>(null);
+  const [forceRetrain, setForceRetrain] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -101,7 +102,7 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
     if (!ok) return;
     setPipeline({ running: true, stage: 'Starting…', progress: 0 });
     try {
-      const res = await fetch(apiUrl('/api/pipeline/run'), { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/pipeline/run?retrain=${forceRetrain ? 'always' : 'auto'}`), { method: 'POST' });
       const j = await res.json();
       if (j.job_id) pollPipeline(j.job_id);
       else setPipeline({ running: false, stage: 'Failed to start', progress: 0, error: 'no job id' });
@@ -120,6 +121,11 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
           <Activity size={13} color="#00F2FE" /> Execution plan — why the bot is / isn&apos;t buying
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <label title="Retrain the models even if no new data has arrived. Otherwise retraining happens automatically when fresh daily data is available."
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none' }}>
+            <input type="checkbox" checked={forceRetrain} onChange={(e) => setForceRetrain(e.target.checked)} disabled={pipeline?.running} />
+            Force retrain
+          </label>
           <button onClick={runPipeline} disabled={pipeline?.running}
             style={{ fontSize: '11px', fontWeight: 700, padding: '5px 12px', borderRadius: '6px',
               border: '1px solid rgba(16,185,129,0.45)', background: 'rgba(16,185,129,0.12)', color: '#10B981',

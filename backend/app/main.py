@@ -1867,6 +1867,25 @@ def _models_stale(max_age_days=7):
     return False
 
 
+def _data_newer_than_models(db):
+    """True if fresh daily price data has arrived since the models were last trained, so the
+    learned patterns should be refreshed. Compares by DATE, so a manual run only retrains once
+    per trading day even if invoked repeatedly (inference already uses the latest data each run)."""
+    import os as _os
+    from datetime import date as _date, datetime as _dt
+    paths = [_os.path.join(SAVED_MODELS_DIR, f) for f in _MODEL_FILES]
+    if any(not _os.path.exists(p) for p in paths):
+        return True
+    model_date = _date.fromtimestamp(min(_os.path.getmtime(p) for p in paths))
+    latest = db.query(DailyPrice.date).order_by(DailyPrice.date.desc()).first()
+    if not (latest and latest[0]):
+        return False
+    try:
+        return _dt.strptime(latest[0][:10], "%Y-%m-%d").date() > model_date
+    except Exception:
+        return False
+
+
 def _run_pipeline_job(jid, retrain_mode):
     """Full manual pipeline: refresh data + news → (retrain if needed) → regenerate signals →
     execute/enqueue trades on Alpaca. Outcome surfaces via the ExecutionPanel's 'last run'."""
@@ -1877,9 +1896,19 @@ def _run_pipeline_job(jid, retrain_mode):
         daily_data_fetch_job()
 
         _job_update(jid, progress=40, stage="Checking models…")
-        do_retrain = retrain_mode == "always" or (retrain_mode != "never" and _models_stale())
+        retrain_reason = "forced" if retrain_mode == "always" else ""
+        do_retrain = retrain_mode == "always"
+        if not do_retrain and retrain_mode != "never":
+            _db = SessionLocal()
+            try:
+                if _models_stale():
+                    do_retrain, retrain_reason = True, "stale >7d"
+                elif _data_newer_than_models(_db):
+                    do_retrain, retrain_reason = True, "new data"
+            finally:
+                _db.close()
         if do_retrain:
-            _job_update(jid, progress=45, stage="Retraining models…")
+            _job_update(jid, progress=45, stage=f"Retraining models ({retrain_reason})…")
             from ml_engine.models import train_models
             train_models()
             from app.core.config import SWING_ENABLED
@@ -1915,7 +1944,7 @@ def _run_pipeline_job(jid, retrain_mode):
             db.close()
         except Exception:
             pass
-        retrained = " · models retrained" if do_retrain else ""
+        retrained = f" · models retrained ({retrain_reason})" if do_retrain else ""
         market_note = "" if market is None else f" · market {'open' if market else 'closed'}"
         _job_update(jid, progress=100,
                     stage=f"Done — {placed} order{'' if placed == 1 else 's'} placed{market_note}{retrained}",
