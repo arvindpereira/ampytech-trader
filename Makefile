@@ -116,6 +116,7 @@ help:
 	@echo "  make fetch-market-stress - Fetch only credit spreads / financial-conditions / EBP"
 	@echo "  make popular-tickers   - Find trending, active, gainer, and loser stocks"
 	@echo "  make add-ticker TICKER=SYMBOL - Add a new symbol to your trading universe"
+	@echo "  make refresh-metadata  - Backfill company profiles (name, CEO, sector, website…) [TICKERS=NVDA,AAPL FORCE=1]"
 	@echo "  make llm-usage         - Show OpenAI token usage + est cost per model"
 	@echo ""
 	@echo "Crash Radar:"
@@ -209,6 +210,14 @@ fetch-forecasts:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run.py fetch-forecasts --tickers $(if $(TICKERS),$(TICKERS),ADBE,PINS)
 	@echo "✅ Forecast refresh complete."
+
+refresh-metadata:
+	@echo "========================================================================"
+	@echo "🏷️  Backfilling company profiles (name, CEO, sector, website…) for universe + held tickers"
+	@echo "    [TICKERS=$(if $(TICKERS),$(TICKERS),all) FORCE=$(if $(FORCE),1,0)]"
+	@echo "========================================================================"
+	cd backend && $(VENV_PY) data_ingestion/ticker_metadata_fetcher.py $(if $(TICKERS),--tickers $(TICKERS),) $(if $(FORCE),--force,)
+	@echo "✅ Metadata backfill complete."
 
 research-kb-refresh:
 	cd backend && $(VENV_PY) data_ingestion/research_kb_refresh.py

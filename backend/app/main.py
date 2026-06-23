@@ -4205,34 +4205,32 @@ def get_price_summary(db=Depends(get_db)):
 
 @app.get("/api/tickers/info")
 def get_tickers_info(tickers: str, db=Depends(get_db)):
-    """Company name, description, sector, industry for a comma-separated ticker list.
-    Serves from ticker_metadata; lazily fetches any missing entries via yfinance."""
+    """Full company profile (name, description, CEO, sector, industry, website, country,
+    employees, exchange, market cap, logo) for a comma-separated ticker list.
+    Serves from ticker_metadata; lazily fetches the full profile for any ticker that is
+    missing or has no company_name yet."""
     from app.database import TickerMetadata
-    from data_ingestion.ticker_metadata_fetcher import _yfinance_company_info, _now
+    from data_ingestion.ticker_metadata_fetcher import fetch_metadata, upsert_metadata
 
     requested = [t.strip().upper() for t in tickers.split(",") if t.strip()]
     rows = {r.ticker: r for r in db.query(TickerMetadata).filter(TickerMetadata.ticker.in_(requested)).all()}
 
-    # Lazily backfill company_name/description for any ticker that's missing them
+    # Lazily backfill the full profile for any ticker missing it (no row, or no name yet).
+    dirty = False
     for tk in requested:
         row = rows.get(tk)
-        if row and (row.company_name or row.description):
+        if row and row.company_name:
             continue
-        info = _yfinance_company_info(tk)
-        if info.get("company_name") or info.get("description"):
-            if row:
-                row.company_name = info["company_name"]
-                row.description = info["description"]
-                row.updated_at = _now()
-            else:
-                new_row = TickerMetadata(ticker=tk, company_name=info["company_name"],
-                                         description=info["description"], updated_at=_now())
-                db.add(new_row)
-                rows[tk] = new_row
-    try:
-        db.commit()
-    except Exception:
-        pass
+        profile = fetch_metadata(tk)
+        if profile:
+            upsert_metadata(db, profile)
+            dirty = True
+    if dirty:
+        try:
+            db.commit()
+            rows = {r.ticker: r for r in db.query(TickerMetadata).filter(TickerMetadata.ticker.in_(requested)).all()}
+        except Exception:
+            db.rollback()
 
     result = {}
     for tk in requested:
@@ -4240,11 +4238,30 @@ def get_tickers_info(tickers: str, db=Depends(get_db)):
         result[tk] = {
             "company_name": r.company_name if r else None,
             "description": r.description if r else None,
+            "ceo": r.ceo if r else None,
             "sector": r.sector if r else None,
             "industry": r.industry if r else None,
+            "website": r.website if r else None,
+            "country": r.country if r else None,
+            "employees": r.employees if r else None,
+            "exchange": r.exchange if r else None,
             "market_cap": r.market_cap if r else None,
+            "logo_url": r.logo_url if r else None,
         }
     return {"tickers": result}
+
+
+@app.post("/api/tickers/metadata/refresh")
+def refresh_ticker_metadata(force: bool = False, db=Depends(get_db)):
+    """Backfill/refresh company profiles for every ticker the app cares about — the
+    monitored universe plus all held tickers (internal bot account + external accounts).
+    Safe to re-run as new tickers get added: existing complete rows are skipped unless
+    `force=true`. Returns per-stage counts."""
+    from data_ingestion.ticker_metadata_fetcher import refresh_tickers, _app_tickers
+
+    tickers = _app_tickers(db)
+    stats = refresh_tickers(tickers, db=db, force=force)
+    return {"tickers": len(tickers), **stats}
 
 
 # Short-term chart cache: {f"{ticker}:{range}": {"series": [...], "expires": datetime}}

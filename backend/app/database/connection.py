@@ -174,6 +174,12 @@ def init_db():
         meta_migrations = {
             "company_name": "ALTER TABLE ticker_metadata ADD COLUMN company_name VARCHAR",
             "description":  "ALTER TABLE ticker_metadata ADD COLUMN description VARCHAR",
+            "ceo":          "ALTER TABLE ticker_metadata ADD COLUMN ceo VARCHAR",
+            "website":      "ALTER TABLE ticker_metadata ADD COLUMN website VARCHAR",
+            "country":      "ALTER TABLE ticker_metadata ADD COLUMN country VARCHAR",
+            "employees":    "ALTER TABLE ticker_metadata ADD COLUMN employees INTEGER",
+            "exchange":     "ALTER TABLE ticker_metadata ADD COLUMN exchange VARCHAR",
+            "logo_url":     "ALTER TABLE ticker_metadata ADD COLUMN logo_url VARCHAR",
         }
         for col, stmt in meta_migrations.items():
             if col not in _meta_cols:

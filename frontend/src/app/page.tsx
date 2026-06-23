@@ -49,6 +49,7 @@ import GrantTimeline from './GrantTimeline';
 import ResearchAnalystPanel from './ResearchAnalystPanel';
 import SectorExposurePanel from './SectorExposurePanel';
 import DashboardTab from './DashboardTab';
+import { TickerDrawerHost } from './TickerDrawer';
 
 interface HedgePlan {
   mode: string;
@@ -628,6 +629,13 @@ export default function Home() {
   const [selectedAccount, setSelectedAccount] = useState<string>('Robinhood');
   const [cashFocused, setCashFocused] = useState<boolean>(false);
   const [externalPositions, setExternalPositions] = useState<any[]>([]);
+  // Consolidated external positions for the Dashboard tab — kept separate from the
+  // external-tab `externalPositions` so the 90s dashboard poll can't clobber the
+  // external tab's per-account view (and vice-versa).
+  const [dashExternalPositions, setDashExternalPositions] = useState<any[]>([]);
+  // Globally-shared stock-details drawer: any tab calls openTicker(ticker) to open it.
+  const [drawerTicker, setDrawerTicker] = useState<string | null>(null);
+  const openTicker = (t: string) => setDrawerTicker((t || '').toUpperCase());
   const [expandedPositions, setExpandedPositions] = useState<Record<string, boolean>>({});
   const [externalSuggestions, setExternalSuggestions] = useState<any[]>([]);
   const [externalStrategyResult, setExternalStrategyResult] = useState<any>(null);
@@ -1702,6 +1710,13 @@ export default function Home() {
         setPortfolio(await portRes.json());
       }
 
+      // 8b. Consolidated external accounts so the Dashboard can show ALL holdings
+      // grouped by account (internal bot account + every real brokerage account).
+      try {
+        const extRes = await fetch(apiUrl('/api/external/positions?account_label=consolidated'));
+        setDashExternalPositions(extRes.ok ? await extRes.json() : []);
+      } catch { setDashExternalPositions([]); }
+
       // 9. Fetch strategy assignments + bucket allocations
       fetchStrategyConfig();
 
@@ -1722,6 +1737,7 @@ export default function Home() {
       setSentimentList([]);
       setPriceSummary([]);
       setPortfolio(null);
+      setDashExternalPositions([]);
     } finally {
       setLoading(false);
     }
@@ -2144,7 +2160,9 @@ export default function Home() {
             allocations={allocations}
             priceSummary={priceSummary}
             portfolio={portfolio}
+            externalPositions={dashExternalPositions}
             classification={classification}
+            onTickerClick={openTicker}
           />
         )}
 
@@ -2931,7 +2949,7 @@ export default function Home() {
                           ) : (
                             rows.map((h: any, idx: number) => (
                               <tr key={idx} style={h.monitored ? { opacity: 0.72 } : undefined}>
-                                <td style={{ fontWeight: 600 }}>{h.ticker}</td>
+                                <td onClick={() => openTicker(h.ticker)} style={{ fontWeight: 600, cursor: 'pointer' }}>{h.ticker}</td>
                                 <td>{h.monitored ? '0' : h.shares.toFixed(2)}</td>
                                 <td>{h.monitored ? '—' : sharePrice(h.entry_price)}</td>
                                 <td>{h.current_price > 0 ? sharePrice(h.current_price) : '—'}</td>
@@ -3555,7 +3573,7 @@ export default function Home() {
                     <tbody>
                       {equityAggregate.map((a: any) => (
                         <tr key={a.ticker}>
-                          <td><strong>{a.ticker}</strong>{a.tier_label && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{a.tier_label} · {pct(a.weight)} · {a.universe_strategy || 'hold'}</div>}</td>
+                          <td onClick={() => openTicker(a.ticker)} style={{ cursor: 'pointer' }}><strong>{a.ticker}</strong>{a.tier_label && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{a.tier_label} · {pct(a.weight)} · {a.universe_strategy || 'hold'}</div>}</td>
                           <td>{Math.round(a.shares).toLocaleString()}</td>
                           <td>{sharePrice(a.avg_cost_basis)}</td>
                           <td>{money(a.market_value)}</td>
@@ -3610,7 +3628,7 @@ export default function Home() {
                           </div>
                         )}
                       </td>
-                      <td>{lot.ticker}<div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{lot.acquisition_date}{lot.account_label ? ` · ${lot.account_label}` : ''}{lot.lot_type ? ` · ${String(lot.lot_type).toUpperCase()}` : ''}</div></td>
+                      <td onClick={() => openTicker(lot.ticker)} style={{ cursor: 'pointer' }}>{lot.ticker}<div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{lot.acquisition_date}{lot.account_label ? ` · ${lot.account_label}` : ''}{lot.lot_type ? ` · ${String(lot.lot_type).toUpperCase()}` : ''}</div></td>
                       <td>{lot.shares.toFixed(2)}</td>
                       <td>{sharePrice(lot.cost_basis_per_share)}</td>
                       <td>{sharePrice(lot.current_price)}</td>
@@ -3806,7 +3824,7 @@ export default function Home() {
                         <tbody>
                           {conc.map((r: any) => (
                             <tr key={r.ticker}>
-                              <td><strong>{r.ticker}</strong></td>
+                              <td onClick={() => openTicker(r.ticker)} style={{ cursor: 'pointer' }}><strong>{r.ticker}</strong></td>
                               <td style={{ color: r.weight > 0.25 ? '#F59E0B' : 'inherit' }}>{pct(r.weight)}{r.weight > 0.25 ? ' ⚠' : ''}</td>
                               <td>{money(r.market_value)}</td>
                               <td style={{ color: (r.unrealized_gain || 0) >= 0 ? 'var(--color-buy)' : 'var(--color-sell)' }}>{pct(r.unrealized_pct)}</td>
@@ -3840,7 +3858,7 @@ export default function Home() {
                     <tbody>{(equityPlan.recommendation?.picks || []).map((p: any) => (
                       <tr key={`${p.id}-${p.sell_shares}`} style={{ background: 'rgba(245, 158, 11, 0.07)' }}>
                         <td style={{ fontFamily: 'monospace', fontWeight: 600, color: '#F59E0B' }}>#{p.id}</td>
-                        <td>{p.ticker}</td>
+                        <td onClick={() => openTicker(p.ticker)} style={{ cursor: 'pointer' }}>{p.ticker}</td>
                         <td>{p.sell_shares.toFixed(2)}</td><td>{money(p.sale_proceeds)}</td><td>{money(p.gain)}</td><td>{money(p.estimated_tax)}</td><td>{p.wait_flag || ''}</td></tr>
                     ))}</tbody>
                   </table>
@@ -5272,7 +5290,7 @@ export default function Home() {
                                     {isExpanded ? '▼' : '▶'}
                                   </button>
                                 </td>
-                                <td><strong style={{ color: 'var(--text-primary)' }}>{pos.ticker}</strong></td>
+                                <td onClick={() => openTicker(pos.ticker)} style={{ cursor: 'pointer' }}><strong style={{ color: 'var(--text-primary)' }}>{pos.ticker}</strong></td>
                                 <td>{pos.total_shares.toFixed(4)}</td>
                                 <td>{sharePrice(pos.average_cost)}</td>
                                 <td>{sharePrice(pos.current_price)}</td>
@@ -5535,7 +5553,7 @@ export default function Home() {
                             <tbody>
                               {g.holdings.map((h: any) => (
                                 <tr key={h.ticker}>
-                                  <td style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{h.ticker}</td>
+                                  <td onClick={() => openTicker(h.ticker)} style={{ fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}>{h.ticker}</td>
                                   <td style={{ textAlign: 'right', color: 'var(--text-primary)' }}>{h.shares.toFixed(4)}</td>
                                   <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
                                     {h.avg_cost > 0 ? sharePrice(h.avg_cost) : '—'}
@@ -5642,8 +5660,18 @@ export default function Home() {
           </section>
         )}
 
-        {activeTab === 'research' && <ResearchAnalystPanel />}
+        {activeTab === 'research' && <ResearchAnalystPanel onTickerClick={openTicker} />}
       </main>
+
+      {/* Globally-shared stock-details drawer — opened from any tab via openTicker() */}
+      <TickerDrawerHost
+        ticker={drawerTicker}
+        onClose={() => setDrawerTicker(null)}
+        priceSummary={priceSummary}
+        swingSuggestions={swingSuggestions}
+        allocations={allocations}
+        classification={classification}
+      />
 
       {/* Account Deletion Warning Modal */}
       {accountToDelete && (

@@ -125,7 +125,7 @@ type Report = {
   }>;
 };
 
-export default function ResearchAnalystPanel() {
+export default function ResearchAnalystPanel({ onTickerClick }: { onTickerClick?: (ticker: string) => void } = {}) {
   const [subTab, setSubTab] = useState<'query' | 'library'>('query');
   const [query, setQuery] = useState('');
   const [useWebSearch, setUseWebSearch] = useState(false);
@@ -584,7 +584,9 @@ export default function ResearchAnalystPanel() {
                   <tbody>
                     {report.ranked_companies.map((r) => (
                       <tr key={r.ticker}>
-                        <td>{r.rank}</td><td>{r.ticker}</td><td>{r.score}</td><td>{r.coverage_pct ?? '—'}</td>
+                        <td>{r.rank}</td>
+                        <td onClick={() => onTickerClick?.(r.ticker)} style={onTickerClick ? { cursor: 'pointer', color: '#00F2FE' } : undefined}>{r.ticker}</td>
+                        <td>{r.score}</td><td>{r.coverage_pct ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -601,7 +603,7 @@ export default function ResearchAnalystPanel() {
                   <tbody>
                     {report.related_holdings.map((h) => (
                       <tr key={h.ticker}>
-                        <td>{h.ticker}</td>
+                        <td onClick={() => onTickerClick?.(h.ticker)} style={onTickerClick ? { cursor: 'pointer', color: '#00F2FE' } : undefined}>{h.ticker}</td>
                         <td>{h.momentum_3m != null ? `${(h.momentum_3m * 100).toFixed(1)}%` : '—'}</td>
                         <td>{h.news_score_30d != null ? h.news_score_30d.toFixed(2) : '—'}</td>
                         <td style={{ maxWidth: '240px', fontSize: '12px', lineHeight: 1.5 }}>

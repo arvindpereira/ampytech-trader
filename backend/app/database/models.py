@@ -532,6 +532,12 @@ class TickerMetadata(Base):
     market_cap = Column(Float, nullable=True)
     company_name = Column(String, nullable=True)   # e.g. "NVIDIA Corporation"
     description = Column(String, nullable=True)    # short business description from yfinance
+    ceo = Column(String, nullable=True)            # current CEO / chief executive
+    website = Column(String, nullable=True)        # company homepage URL
+    country = Column(String, nullable=True)        # HQ country
+    employees = Column(Integer, nullable=True)     # full-time employee count
+    exchange = Column(String, nullable=True)       # listing exchange (e.g. NASDAQ)
+    logo_url = Column(String, nullable=True)       # company logo image URL
     source = Column(String, nullable=True)
     updated_at = Column(String, nullable=True)
 
