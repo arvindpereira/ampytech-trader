@@ -26,6 +26,15 @@ export interface TickerInfo {
   employees?: number | null; exchange?: string | null; logo_url?: string | null;
 }
 export interface Classification { tier?: string; quality?: number; volatility?: number; }
+export interface QuoteStats {
+  ticker: string; price: number | null; open: number | null;
+  day_high: number | null; day_low: number | null;
+  volume: number | null; avg_volume: number | null;
+  week52_high: number | null; week52_low: number | null;
+  market_cap: number | null; pe_ratio: number | null; dividend_yield: number | null;
+  short_shares: number | null; short_pct_float: number | null; short_ratio: number | null;
+  borrow_rate: number | null;
+}
 
 // ─── shared helpers ───────────────────────────────────────────────────────────
 
@@ -38,6 +47,14 @@ export const money = (n: number) =>
 export const pct = (n: number | null | undefined, decimals = 1) =>
   n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(decimals)}%`;
 
+// Compact share/volume counts: 5.74M, 1.2B (no currency sign).
+const num = (n: number | null | undefined) =>
+  n == null ? '—'
+  : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B`
+  : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M`
+  : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K`
+  : `${n}`;
+
 export const TIER_COLOR: Record<string, string> = {
   quality_growth: '#10B981', core: '#00F2FE', speculative: '#F59E0B', value_trap: '#6B7280',
 };
@@ -48,11 +65,11 @@ export const TIER_LABEL: Record<string, string> = {
 // ─── Ticker Drawer ────────────────────────────────────────────────────────────
 
 export function TickerDrawer({
-  ticker, info, classification, priceRow, swing, allocation, onClose,
+  ticker, info, classification, priceRow, swing, allocation, quote, onClose,
 }: {
   ticker: string; info: TickerInfo | null; classification: Classification | null;
   priceRow: PriceSummaryRow | null; swing: SwingSuggestion | null;
-  allocation: Allocation | null; onClose: () => void;
+  allocation: Allocation | null; quote?: QuoteStats | null; onClose: () => void;
 }) {
   const tier = classification?.tier;
   const price = priceRow?.price;
@@ -137,6 +154,34 @@ export function TickerDrawer({
           </div>
         )}
 
+        {/* Stats */}
+        {quote && (
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', marginBottom: '8px' }}>Stats</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', background: 'var(--border-glass)', border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden' }}>
+              {([
+                ['Volume', num(quote.volume)],
+                ['Avg volume', num(quote.avg_volume)],
+                ['Open', quote.open != null ? money(quote.open) : '—'],
+                ["Today's high", quote.day_high != null ? money(quote.day_high) : '—'],
+                ["Today's low", quote.day_low != null ? money(quote.day_low) : '—'],
+                ['Market cap', quote.market_cap != null ? money(quote.market_cap) : '—'],
+                ['52-wk high', quote.week52_high != null ? money(quote.week52_high) : '—'],
+                ['52-wk low', quote.week52_low != null ? money(quote.week52_low) : '—'],
+                ['P/E ratio', quote.pe_ratio != null ? quote.pe_ratio.toFixed(1) : '—'],
+                ['Div yield', quote.dividend_yield != null ? `${quote.dividend_yield.toFixed(2)}%` : '—'],
+                ['Short % float', quote.short_pct_float != null ? `${quote.short_pct_float.toFixed(1)}%` : '—'],
+                ['Borrow rate', quote.borrow_rate != null ? `${quote.borrow_rate.toFixed(2)}%` : '—'],
+              ] as [string, string][]).map(([label, val]) => (
+                <div key={label} style={{ background: 'var(--bg-card)', padding: '8px 10px' }}>
+                  <div style={{ fontSize: '9px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px', whiteSpace: 'nowrap' }}>{label}</div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Price chart */}
         <div style={{ marginBottom: '20px' }}>
           <PriceChart ticker={ticker} height={200} />
@@ -212,6 +257,8 @@ export function TickerDrawerHost({
 }) {
   // Company-profile cache, fetched lazily per ticker from the metadata API.
   const [infoCache, setInfoCache] = useState<Record<string, TickerInfo>>({});
+  // Live quote stats, fetched fresh each time a ticker opens (not cached client-side).
+  const [quote, setQuote] = useState<QuoteStats | null>(null);
 
   useEffect(() => {
     if (!ticker || infoCache[ticker]) return;
@@ -227,6 +274,22 @@ export function TickerDrawerHost({
     })();
     return () => { cancelled = true; };
   }, [ticker, infoCache]);
+
+  useEffect(() => {
+    setQuote(null);
+    if (!ticker) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(apiUrl(`/api/tickers/quote?tickers=${encodeURIComponent(ticker)}`));
+        if (res.ok && !cancelled) {
+          const j = await res.json();
+          setQuote(j.quotes?.[ticker] ?? null);
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [ticker]);
 
   if (!ticker) return null;
 
@@ -244,6 +307,7 @@ export function TickerDrawerHost({
         priceRow={priceRow}
         swing={swing}
         allocation={allocation}
+        quote={quote}
         onClose={onClose}
       />
     </>

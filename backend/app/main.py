@@ -4264,6 +4264,33 @@ def refresh_ticker_metadata(force: bool = False, db=Depends(get_db)):
     return {"tickers": len(tickers), **stats}
 
 
+# Live quote stats cache: {ticker: {"data": {...}, "expires": datetime}}
+_quote_cache: dict = {}
+_QUOTE_TTL = 45  # seconds — quote stats move fast but the drawer reopens often
+
+
+@app.get("/api/tickers/quote")
+def get_tickers_quote(tickers: str, db=Depends(get_db)):
+    """On-demand live quote stats for the stock-details drawer: current price, open,
+    today's high/low, volume, average volume, 52-week high/low, market cap, P/E,
+    dividend yield, and short interest. Borrow rate is a placeholder (no free source).
+    Cached per ticker for 45s. Not stored — these values move every tick."""
+    from data_ingestion.quote_fetcher import fetch_quote_stats
+
+    requested = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    now = datetime.now()
+    result = {}
+    for tk in requested:
+        cached = _quote_cache.get(tk)
+        if cached and cached["expires"] > now:
+            result[tk] = cached["data"]
+            continue
+        data = fetch_quote_stats(db, tk)
+        _quote_cache[tk] = {"data": data, "expires": now + timedelta(seconds=_QUOTE_TTL)}
+        result[tk] = data
+    return {"quotes": result}
+
+
 # Short-term chart cache: {f"{ticker}:{range}": {"series": [...], "expires": datetime}}
 _chart_cache: dict = {}
 _CHART_TTL = {
