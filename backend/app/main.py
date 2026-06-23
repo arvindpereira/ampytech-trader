@@ -2763,6 +2763,7 @@ def get_pending_external_orders(db=Depends(get_db)):
 
 @app.get("/api/external/positions")
 def get_external_positions(account_label: str, db=Depends(get_db)):
+    from app.core.config import GRID_BUY_DIP, GRID_TP_GAIN
     if account_label == "consolidated":
         all_lots = db.query(EquityLot).order_by(EquityLot.ticker.asc(), EquityLot.acquisition_date.asc()).all()
         external_labels = {acct.account_label for acct in db.query(ExternalAccount).all()}
@@ -2808,6 +2809,9 @@ def get_external_positions(account_label: str, db=Depends(get_db)):
             "market_value": round(mkt_val, 2),
             "unrealized_gain": round(gain, 2),
             "unrealized_gain_pct": round(gain_pct, 2),
+            # MPT-style accumulate/take-profit targets off the average cost basis.
+            "buy_target": round(avg_cost * (1 - GRID_BUY_DIP), 2) if avg_cost else None,
+            "take_profit": round(avg_cost * (1 + GRID_TP_GAIN), 2) if avg_cost else None,
             "lots": lots_list
         })
     return results
@@ -4155,8 +4159,14 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
             })
 
     assignments = get_strategy_assignments(db)
+    from app.core.config import GRID_BUY_DIP, GRID_TP_GAIN
     for h in holdings:
         h["strategy"] = assignments.get(h["ticker"], "swing")
+        # Long-term (MPT) grid targets off the cost basis: add on a dip, take profit on a gain.
+        cb = h.get("entry_price")
+        if h["strategy"] == "longterm" and cb:
+            h["buy_target"] = round(cb * (1 - GRID_BUY_DIP), 2)
+            h["take_profit"] = round(cb * (1 + GRID_TP_GAIN), 2)
     holdings.sort(key=lambda x: -x["market_value"])
     if cash is None:
         acc = db.query(VirtualAccount).filter(VirtualAccount.id == (2 if mode == "real" else 1)).first()

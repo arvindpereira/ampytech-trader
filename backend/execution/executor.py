@@ -17,6 +17,9 @@ from app.core.config import (
     EXECUTION_STRATEGY,
     SWING_POSITION_PCT,
     SWING_HORIZON_DAYS,
+    GRID_BUY_DIP,
+    GRID_TP_GAIN,
+    GRID_TRANCHE_PCT,
     LONGTERM_GRID_ENABLED,
     REGIME_OVERLAY_ENABLED,
     REGIME_SWING_FACTORS,
@@ -1014,12 +1017,12 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
         if entry_price > 0.0:
             price_dev = (current_price - entry_price) / entry_price
 
-        tranche_cap_equity = portfolio_equity * 0.02
+        tranche_cap_equity = portfolio_equity * GRID_TRANCHE_PCT
         tranche_cap_shares = tranche_cap_equity / current_price
 
         # Grid Buy: underweight AND (new position OR price fell at least 3% below entry price)
         if diff_shares > 0.01:
-            should_buy = (current_shares == 0.0) or (price_dev <= -0.03)
+            should_buy = (current_shares == 0.0) or (price_dev <= -GRID_BUY_DIP)
 
             if should_buy:
                 n_shares = min(diff_shares, tranche_cap_shares)
@@ -1064,7 +1067,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
 
         # Grid Sell: overweight AND price increased at least 5% above cost basis
         elif diff_shares < -0.01 and current_shares > 0.0:
-            if price_dev >= 0.05:
+            if price_dev >= GRID_TP_GAIN:
                 m_shares = min(abs(diff_shares), tranche_cap_shares)
 
                 # Verify age using FIFO holding period checker (must be held > 365 days)

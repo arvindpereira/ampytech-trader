@@ -228,6 +228,14 @@ SWING_AUTOSIZE = os.getenv("SWING_AUTOSIZE", "True").lower() in ("true", "1", "y
 # allocations (NOT Kelly) — the model's win-prob is a ranking score, not a calibrated Kelly input, so
 # Kelly sizing would zero most positions. Keep this in lock-step with that sim.
 SWING_POSITION_PCT = float(os.getenv("SWING_POSITION_PCT", "0.10"))
+# Long-term (MPT) grid thresholds, relative to a position's cost basis: add a tranche when price is
+# this far BELOW cost, take profit when this far ABOVE cost. Also used to surface buy/sell target
+# prices on holdings in the dashboard.
+GRID_BUY_DIP = float(os.getenv("GRID_BUY_DIP", "0.03"))
+GRID_TP_GAIN = float(os.getenv("GRID_TP_GAIN", "0.05"))
+# Max size of a single grid tranche, as a fraction of equity — keeps buys small so a continued
+# drop just means more (cheaper) tranches on later runs rather than one big buy at the first dip.
+GRID_TRANCHE_PCT = float(os.getenv("GRID_TRANCHE_PCT", "0.02"))
 # Per-name volatility cap: scale each position by min(1, target/name_vol) so high-beta names get
 # smaller allocations. Set SWING_VOL_TARGET=0 to disable.
 SWING_VOL_TARGET = float(os.getenv("SWING_VOL_TARGET", "0.35"))

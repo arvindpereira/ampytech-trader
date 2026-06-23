@@ -75,7 +75,9 @@ def _replay_sleeve(buys, allowed, budget, held, db, equity, position_pct, vol_ma
 
 def _replay_longterm(allocations, longterm_set, positions, equity, budget_fraction):
     """Replay the MPT grid's real entry rule: open a new position, add a tranche only on a
-    3%+ dip below cost, otherwise wait. Mirrors executor.execute_long_term_grid_trades."""
+    dip below cost, otherwise wait. Mirrors executor.execute_long_term_grid_trades. Also surfaces
+    the concrete buy (dip-below-cost) and take-profit (gain-above-cost) target prices."""
+    from app.core.config import GRID_BUY_DIP, GRID_TP_GAIN
     weights = {a["ticker"]: a.get("weight", 0.0) for a in allocations}
     price_hint = {a["ticker"]: a.get("current_price") for a in allocations}
     out = []
@@ -92,16 +94,19 @@ def _replay_longterm(allocations, longterm_set, positions, equity, budget_fracti
         diff = target - current
         dev = ((price - entry) / entry) if entry > 0 else 0.0
         cand = {"ticker": tk, "sleeve": "longterm", "weight": weights[tk],
-                "price_dev": round(dev * 100, 1)}
+                "price_dev": round(dev * 100, 1),
+                # Concrete grid targets relative to cost basis (new names buy at market).
+                "buy_target": round(entry * (1 - GRID_BUY_DIP), 2) if entry > 0 else round(price, 2),
+                "take_profit": round(entry * (1 + GRID_TP_GAIN), 2) if entry > 0 else None}
         if diff > 0.01:
             if current == 0.0:
                 cand["verdict"] = "would_open"
-            elif dev <= -0.03:
+            elif dev <= -GRID_BUY_DIP:
                 cand["verdict"] = "would_add_dip"
             else:
                 cand["verdict"] = "wait_for_dip"
             cand["detail"] = f"{current:.1f}→{target:.1f} sh · {dev*100:+.1f}% vs cost"
-        elif diff < -0.01 and current > 0.0 and dev >= 0.05:
+        elif diff < -0.01 and current > 0.0 and dev >= GRID_TP_GAIN:
             cand["verdict"] = "would_trim"
             cand["detail"] = f"overweight {current:.1f}→{target:.1f} sh · {dev*100:+.1f}% (if tax-eligible)"
         else:

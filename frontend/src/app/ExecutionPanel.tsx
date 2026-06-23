@@ -13,7 +13,7 @@ interface Candidate {
   ticker: string; sleeve: string; confidence: number | null;
   verdict: string; detail?: string; shares_est?: number | null; value_est?: number | null;
 }
-interface LtCandidate { ticker: string; verdict: string; detail?: string; weight?: number; price_dev?: number; }
+interface LtCandidate { ticker: string; verdict: string; detail?: string; weight?: number; price_dev?: number; buy_target?: number | null; take_profit?: number | null; }
 interface Warning { sleeve: string; level: 'warn' | 'info'; message: string; }
 interface Plan {
   paused: boolean; market_open: boolean | null; market_detail: string;
@@ -264,12 +264,14 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
                   const vc = VERDICT_COLOR[c.verdict] ?? '#64748b';
                   return (
                     <button key={c.ticker} onClick={() => onTickerClick?.(c.ticker)}
-                      title={c.detail}
+                      title={`${c.detail || ''}${c.buy_target ? ` · buy ≤ ${money(c.buy_target)}` : ''}${c.take_profit ? ` · take profit ${money(c.take_profit)}` : ''}`}
                       style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
                         padding: '5px 9px', borderRadius: '14px', cursor: onTickerClick ? 'pointer' : 'default',
                         background: `${vc}14`, border: `1px solid ${vc}40`, color: 'var(--text-primary)' }}>
                       <strong>{c.ticker}</strong>
                       <span style={{ color: vc, fontWeight: 600 }}>{labels[c.verdict] ?? c.verdict}</span>
+                      {c.buy_target != null && <span style={{ color: '#10B981' }}>↓{money(c.buy_target)}</span>}
+                      {c.take_profit != null && <span style={{ color: '#F59E0B' }}>↑{money(c.take_profit)}</span>}
                     </button>
                   );
                 })}

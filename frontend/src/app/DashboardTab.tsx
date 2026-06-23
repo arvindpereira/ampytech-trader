@@ -15,6 +15,7 @@ import ExecutionPanel from './ExecutionPanel';
 interface HoldingRow {
   ticker: string; shares: number; price: number; value: number;
   pl: number | null; plPct: number | null;
+  buyTarget?: number | null; takeProfit?: number | null;
 }
 interface AccountGroup {
   label: string; rows: HoldingRow[]; totalValue: number; totalPl: number;
@@ -123,6 +124,7 @@ export default function DashboardTab({
       g.rows.push({
         ticker: tk, shares: h.shares ?? 0, price: h.current_price ?? 0, value,
         pl, plPct: h.unrealized_pl_pct ?? null,
+        buyTarget: h.buy_target ?? null, takeProfit: h.take_profit ?? null,
       });
       g.totalValue += value;
       if (pl != null) g.totalPl += pl;
@@ -136,7 +138,11 @@ export default function DashboardTab({
         const label = lot.account_label || 'External Account';
         const g = ensure(label);
         let row = g.rows.find((r) => r.ticker === tk);
-        if (!row) { row = { ticker: tk, shares: 0, price, value: 0, pl: 0, plPct: null }; g.rows.push(row); }
+        if (!row) {
+          row = { ticker: tk, shares: 0, price, value: 0, pl: 0, plPct: null,
+                  buyTarget: pos.buy_target ?? null, takeProfit: pos.take_profit ?? null };
+          g.rows.push(row);
+        }
         const shares = lot.shares ?? 0;
         const cost = shares * (lot.cost_basis_per_share ?? 0);
         const value = shares * price;
@@ -326,7 +332,7 @@ export default function DashboardTab({
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                         <thead>
                           <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                            {['Ticker', 'Name', 'Price', '1D', '1M', 'Shares', 'Value', 'P&L', 'Signal'].map((h) => (
+                            {['Ticker', 'Name', 'Price', '1D', '1M', 'Shares', 'Value', 'P&L', 'Targets', 'Signal'].map((h) => (
                               <th key={h} style={{ padding: '6px 8px', textAlign: h === 'Ticker' || h === 'Name' ? 'left' : 'right', fontWeight: 600, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{h}</th>
                             ))}
                           </tr>
@@ -371,6 +377,14 @@ export default function DashboardTab({
                                 <td style={{ padding: '9px 8px', textAlign: 'right', color: r.pl == null ? 'var(--text-secondary)' : r.pl >= 0 ? '#10B981' : '#F43F5E' }}>
                                   {r.pl != null ? `${r.pl >= 0 ? '+' : ''}${money(Math.abs(r.pl))}` : '—'}
                                   {r.plPct != null && <span style={{ fontSize: '10px', marginLeft: '3px' }}>({pct(r.plPct)})</span>}
+                                </td>
+                                <td style={{ padding: '9px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                  {r.buyTarget != null || r.takeProfit != null ? (
+                                    <span style={{ fontSize: '10px' }} title="Add a tranche on a dip to the buy price; take profit at the upper price (relative to cost basis)">
+                                      {r.buyTarget != null && <span style={{ color: '#10B981' }}>↓{money(r.buyTarget)}</span>}
+                                      {r.takeProfit != null && <span style={{ color: '#F59E0B', marginLeft: '4px' }}>↑{money(r.takeProfit)}</span>}
+                                    </span>
+                                  ) : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
                                 </td>
                                 <td style={{ padding: '9px 8px', textAlign: 'right' }}>
                                   {swing ? (
