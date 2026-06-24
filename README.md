@@ -85,6 +85,33 @@ npm run dev -- -p 3002
 ```
 Now, open your web browser and navigate to: **`http://localhost:3002`**
 
+### 3. (Optional) Alpaca Accounts & the Approval Gate
+The bot runs against **two Alpaca accounts** — a **paper** account and a **live** (real-money) account — each with its own credentials and its own local book. With no credentials at all, the paper account transparently uses the built-in **Virtual Alpaca Broker** mock, so you can run everything offline.
+
+Credentials are read from the environment / `.env` (never the database, which is backed up off-box). The `ALPACA_*` set is the **paper** account; the `ALPACA_LIVE_*` set is the **live** account:
+
+```bash
+# Paper account (defaults to Alpaca's paper endpoint; omit entirely to use the offline mock)
+ALPACA_API_KEY=...
+ALPACA_SECRET_KEY=...
+ALPACA_BASE_URL=https://paper-api.alpaca.markets
+
+# Live / real-money account (leave UNSET until you've verified the approval gate below)
+ALPACA_LIVE_API_KEY=...
+ALPACA_LIVE_SECRET_KEY=...
+ALPACA_LIVE_BASE_URL=https://api.alpaca.markets
+```
+
+A live account with no credentials shows as **"Not configured"** in the UI and is **never traded** — the bot will not fall back to the mock or the paper account for it.
+
+**The approval gate.** Each account has a per-account gate toggle on the dashboard (the **Approval gates** panel under the execution plan). Defaults: **live ON**, **paper OFF**.
+- **Gate OFF** (paper default): the bot places calculated trades immediately, as before.
+- **Gate ON** (live default): the bot calculates and *queues* every trade (buys **and** sells) in a **Pending approval** list instead of placing it. You then approve or reject each one. On approval you choose, per trade, to place it as the bot's **market-bracket** order (its take-profit/stop) or a **limit** order with an editable price. Unapproved trades **expire at end of trading day** (16:05 ET), so each run starts fresh.
+
+The global **auto-trading kill-switch** (Equity Advisor tab) still wins over everything — when it's paused, nothing runs for any account.
+
+Recommended first run: leave `ALPACA_LIVE_*` unset, flip the **paper** gate ON, click **Run pipeline now**, and walk a trade through approve/reject against the paper account before enabling live.
+
 ---
 
 ## ⚙️ CLI Reference Table
