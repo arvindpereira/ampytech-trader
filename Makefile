@@ -5,7 +5,7 @@
         longterm-eval longterm-tilt swing-eval exec-timing stop-opt horizon-opt backtest \
         crash-refresh crash-forecast crash-backfill \
         simulate backtest-virtual \
-        serve serve-all serve-backend serve-frontend schedule \
+        serve serve-all serve-backend serve-frontend schedule stop \
         popular-tickers add-ticker lint test clean-cache _expire \
         db-backup db-backup-list db-verify db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit \
@@ -75,6 +75,7 @@ help:
 	@echo "  make train             - Train ALL served models (HMM + XGBoost + Core/Aggressive swing); depends on data"
 	@echo "  make serve-all         - Just launch backend + frontend + scheduler (no pipeline)"
 	@echo "  make serve             - Just launch backend (:8008) + frontend (:3002, LAN-friendly)"
+	@echo "  make stop              - Stop the running backend + frontend + scheduler (by port + command)"
 	@echo "  Cache knobs: FORCE=1 (rebuild everything) · DATA_TTL/MODEL_TTL=<minutes> · make clean-cache"
 	@echo ""
 	@echo "Setup:"
@@ -542,6 +543,36 @@ schedule:
 	@echo "========================================================================"
 	@pkill -f "run.py schedule" 2>/dev/null || true; pkill -f "execution/scheduler.py" 2>/dev/null || true; sleep 1
 	cd backend && $(VENV_PY) run.py schedule
+
+# Stop the running stack: backend (:$(BACKEND_PORT)), frontend (:$(FRONTEND_PORT)), and the scheduler.
+# Finds whatever is actually running — by listening port AND by command pattern — and terminates it
+# (children too), escalating to SIGKILL for anything stubborn. Safe to run anytime: it never errors if
+# nothing is up, and it only touches our ports, so unrelated services (e.g. the wiki on :$(WIKI_PORT))
+# are left alone.
+stop:
+	@echo "========================================================================"
+	@echo "🛑 Stopping Ampytech Trader stack (backend :$(BACKEND_PORT), frontend :$(FRONTEND_PORT), scheduler)..."
+	@echo "========================================================================"
+	@# Scheduler daemon + launcher (no listening port of their own → match by command)
+	@pkill -f "run.py schedule" 2>/dev/null && echo "  • stopped run.py schedule" || true
+	@pkill -f "execution/scheduler.py" 2>/dev/null && echo "  • stopped scheduler worker" || true
+	@pkill -f "run.py serve" 2>/dev/null && echo "  • stopped run.py serve launcher" || true
+	@# Terminate whatever is bound to our ports, plus each listener's child processes.
+	@for port in $(BACKEND_PORT) $(FRONTEND_PORT); do \
+		for pid in $$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null); do \
+			echo "  • :$$port → terminating PID $$pid (and children)"; \
+			pkill -TERM -P $$pid 2>/dev/null || true; kill -TERM $$pid 2>/dev/null || true; \
+		done; \
+	done
+	@sleep 2
+	@# Escalate to SIGKILL for anything still listening.
+	@for port in $(BACKEND_PORT) $(FRONTEND_PORT); do \
+		for pid in $$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null); do \
+			echo "  • :$$port → force-killing PID $$pid (and children)"; \
+			pkill -KILL -P $$pid 2>/dev/null || true; kill -KILL $$pid 2>/dev/null || true; \
+		done; \
+	done
+	@echo "✅ Stop complete. (Unrelated services such as the wiki on :$(WIKI_PORT) are left running.)"
 
 lint:
 	@echo "========================================================================"
