@@ -2822,7 +2822,9 @@ def get_external_positions(account_label: str, db=Depends(get_db)):
 
         lots_list = [{
             "id": l.id,
+            "ticker": l.ticker.upper(),
             "account_label": l.account_label,
+            "lot_type": l.lot_type,
             "acquisition_date": l.acquisition_date,
             "shares": l.shares,
             "cost_basis_per_share": l.cost_basis_per_share,

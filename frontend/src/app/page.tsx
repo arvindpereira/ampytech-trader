@@ -637,6 +637,12 @@ export default function Home() {
   const [drawerTicker, setDrawerTicker] = useState<string | null>(null);
   const openTicker = (t: string) => setDrawerTicker((t || '').toUpperCase());
   const [expandedPositions, setExpandedPositions] = useState<Record<string, boolean>>({});
+  // Inline lot edits for the external-positions expander, keyed by lot id; draft new lots keyed by ticker.
+  const [lotEdits, setLotEdits] = useState<Record<number, any>>({});
+  const [newLotDraft, setNewLotDraft] = useState<Record<string, any>>({});
+  const [lotConfirmDelete, setLotConfirmDelete] = useState<number | null>(null);
+  const [lotBusy, setLotBusy] = useState(false);
+  const [lotEditError, setLotEditError] = useState('');
   const [externalSuggestions, setExternalSuggestions] = useState<any[]>([]);
   const [externalStrategyResult, setExternalStrategyResult] = useState<any>(null);
   const [externalStrategySaving, setExternalStrategySaving] = useState<boolean>(false);
@@ -1167,6 +1173,89 @@ export default function Home() {
       body: JSON.stringify(schedule),
     });
     fetchEquityAdvisor();
+  };
+
+  // ── External-account lot editing (expand a ticker → edit / add / remove its cost-basis lots) ──
+  // Reuses the equity-lot upsert/delete endpoints; lots in pos.lots are the same EquityLot rows.
+  const refreshExternalPositions = async () => {
+    if (!selectedAccount) return;
+    const res = await fetch(apiUrl(`/api/external/positions?account_label=${encodeURIComponent(selectedAccount)}`));
+    if (res.ok) setExternalPositions(await res.json());
+  };
+
+  const lotField = (lot: any, field: string) => lotEdits[lot.id]?.[field] ?? lot[field];
+  const lotDirty = (lot: any) => {
+    const e = lotEdits[lot.id];
+    if (!e) return false;
+    return ['acquisition_date', 'shares', 'cost_basis_per_share', 'notes'].some(
+      (f) => e[f] !== undefined && String(e[f] ?? '') !== String(lot[f] ?? '')
+    );
+  };
+
+  const saveExternalLot = async (pos: any, lot: any) => {
+    const e = lotEdits[lot.id] || {};
+    const shares = Number(e.shares ?? lot.shares);
+    const basis = Number(e.cost_basis_per_share ?? lot.cost_basis_per_share);
+    const acqDate = (e.acquisition_date ?? lot.acquisition_date ?? '').slice(0, 10);
+    if (!(shares > 0) || basis < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(acqDate)) {
+      setLotEditError('Need shares > 0, a non-negative basis, and a valid date (YYYY-MM-DD).');
+      return;
+    }
+    setLotBusy(true);
+    setLotEditError('');
+    try {
+      await fetch(apiUrl('/api/equity/lots'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: lot.id, ticker: pos.ticker, account_label: lot.account_label,
+          lot_type: lot.lot_type || 'other', shares, cost_basis_per_share: basis,
+          acquisition_date: acqDate, notes: e.notes ?? lot.notes ?? '',
+        }),
+      });
+      setLotEdits((prev) => { const n = { ...prev }; delete n[lot.id]; return n; });
+      await refreshExternalPositions();
+    } finally {
+      setLotBusy(false);
+    }
+  };
+
+  const deleteExternalLot = async (id?: number) => {
+    if (!id) return;
+    setLotBusy(true);
+    try {
+      await fetch(apiUrl(`/api/equity/lots/${id}`), { method: 'DELETE' });
+      setLotConfirmDelete(null);
+      await refreshExternalPositions();
+    } finally {
+      setLotBusy(false);
+    }
+  };
+
+  const addExternalLot = async (pos: any) => {
+    const d = newLotDraft[pos.ticker] || {};
+    const shares = Number(d.shares);
+    const basis = Number(d.cost_basis_per_share || 0);
+    const acqDate = (d.acquisition_date || '').slice(0, 10);
+    if (!(shares > 0) || basis < 0 || !/^\d{4}-\d{2}-\d{2}$/.test(acqDate)) {
+      setLotEditError('New lot needs shares > 0, a non-negative basis, and a valid date (YYYY-MM-DD).');
+      return;
+    }
+    const accountLabel = pos.lots?.[0]?.account_label ?? (selectedAccount !== 'consolidated' ? selectedAccount : null);
+    setLotBusy(true);
+    setLotEditError('');
+    try {
+      await fetch(apiUrl('/api/equity/lots'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticker: pos.ticker, account_label: accountLabel, lot_type: 'other',
+          shares, cost_basis_per_share: basis, acquisition_date: acqDate, notes: d.notes || '',
+        }),
+      });
+      setNewLotDraft((prev) => ({ ...prev, [pos.ticker]: {} }));
+      await refreshExternalPositions();
+    } finally {
+      setLotBusy(false);
+    }
   };
 
   const editEquityLot = (lot: EquityLot) => {
@@ -5308,21 +5397,80 @@ export default function Home() {
                                           <tr style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>
                                             <th style={{ padding: '6px 8px' }}>Acquisition Date</th>
                                             <th style={{ padding: '6px 8px' }}>Shares</th>
-                                            <th style={{ padding: '6px 8px' }}>Cost Basis</th>
+                                            <th style={{ padding: '6px 8px' }}>Basis / share</th>
                                             <th style={{ padding: '6px 8px' }}>Notes</th>
+                                            <th style={{ padding: '6px 8px', textAlign: 'right' }}></th>
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          {pos.lots.map((lot: any) => (
+                                          {pos.lots.map((lot: any) => {
+                                            const editStyle: React.CSSProperties = { background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '5px', padding: '5px 6px', fontSize: '11.5px', width: '100%' };
+                                            return (
                                             <tr key={lot.id} style={{ borderTop: '1px solid var(--border-glass)', color: 'var(--text-secondary)' }}>
-                                              <td style={{ padding: '6px 8px' }}>{lot.acquisition_date}</td>
-                                              <td style={{ padding: '6px 8px', color: 'var(--text-primary)', fontWeight: 500 }}>{lot.shares.toFixed(4)}</td>
-                                              <td style={{ padding: '6px 8px' }}>{sharePrice(lot.cost_basis_per_share)}</td>
-                                              <td style={{ padding: '6px 8px', fontStyle: 'italic', fontSize: '11px' }}>{lot.notes}</td>
+                                              <td style={{ padding: '5px 8px', width: '150px' }}>
+                                                <input type="date" value={(lotField(lot, 'acquisition_date') || '').slice(0, 10)} disabled={lotBusy}
+                                                  onChange={(e) => setLotEdits((p) => ({ ...p, [lot.id]: { ...p[lot.id], acquisition_date: e.target.value } }))} style={editStyle} />
+                                              </td>
+                                              <td style={{ padding: '5px 8px', width: '110px' }}>
+                                                <input type="number" step="any" value={lotField(lot, 'shares') ?? ''} disabled={lotBusy}
+                                                  onChange={(e) => setLotEdits((p) => ({ ...p, [lot.id]: { ...p[lot.id], shares: e.target.value } }))} style={editStyle} />
+                                              </td>
+                                              <td style={{ padding: '5px 8px', width: '110px' }}>
+                                                <input type="number" step="any" value={lotField(lot, 'cost_basis_per_share') ?? ''} disabled={lotBusy}
+                                                  onChange={(e) => setLotEdits((p) => ({ ...p, [lot.id]: { ...p[lot.id], cost_basis_per_share: e.target.value } }))} style={editStyle} />
+                                              </td>
+                                              <td style={{ padding: '5px 8px' }}>
+                                                <input type="text" placeholder="—" value={lotField(lot, 'notes') ?? ''} disabled={lotBusy}
+                                                  onChange={(e) => setLotEdits((p) => ({ ...p, [lot.id]: { ...p[lot.id], notes: e.target.value } }))} style={editStyle} />
+                                              </td>
+                                              <td style={{ padding: '5px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                {lotConfirmDelete === lot.id ? (
+                                                  <>
+                                                    <span style={{ color: 'var(--text-secondary)', fontSize: '11px', marginRight: '6px' }}>Delete this lot?</span>
+                                                    <button onClick={() => deleteExternalLot(lot.id)} disabled={lotBusy} style={{ background: '#EF4444', border: '1px solid #EF4444', color: '#fff', borderRadius: '5px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer', marginRight: '6px' }}>Confirm</button>
+                                                    <button onClick={() => setLotConfirmDelete(null)} disabled={lotBusy} style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', borderRadius: '5px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer' }}>Cancel</button>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    {lotDirty(lot) && (
+                                                      <button onClick={() => saveExternalLot(pos, lot)} disabled={lotBusy} className="toggle-btn" style={{ padding: '3px 8px', fontSize: '11px', marginRight: '6px' }}>Save</button>
+                                                    )}
+                                                    <button onClick={() => setLotConfirmDelete(lot.id)} disabled={lotBusy} title="Remove lot" style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: '#EF4444', borderRadius: '5px', padding: '3px 8px', fontSize: '11px', cursor: 'pointer' }}>Remove</button>
+                                                  </>
+                                                )}
+                                              </td>
                                             </tr>
-                                          ))}
+                                            );
+                                          })}
+                                          {(() => {
+                                            const d = newLotDraft[pos.ticker] || {};
+                                            const addStyle: React.CSSProperties = { background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', borderRadius: '5px', padding: '5px 6px', fontSize: '11.5px', width: '100%' };
+                                            const setD = (patch: any) => setNewLotDraft((p) => ({ ...p, [pos.ticker]: { ...p[pos.ticker], ...patch } }));
+                                            return (
+                                              <tr style={{ borderTop: '1px solid var(--border-glass)', background: 'rgba(255,255,255,0.02)' }}>
+                                                <td style={{ padding: '5px 8px' }}>
+                                                  <input type="date" value={d.acquisition_date || ''} disabled={lotBusy} onChange={(e) => setD({ acquisition_date: e.target.value })} style={addStyle} />
+                                                </td>
+                                                <td style={{ padding: '5px 8px' }}>
+                                                  <input type="number" step="any" placeholder="Shares" value={d.shares || ''} disabled={lotBusy} onChange={(e) => setD({ shares: e.target.value })} style={addStyle} />
+                                                </td>
+                                                <td style={{ padding: '5px 8px' }}>
+                                                  <input type="number" step="any" placeholder="Basis/share" value={d.cost_basis_per_share || ''} disabled={lotBusy} onChange={(e) => setD({ cost_basis_per_share: e.target.value })} style={addStyle} />
+                                                </td>
+                                                <td style={{ padding: '5px 8px' }}>
+                                                  <input type="text" placeholder="Notes (optional)" value={d.notes || ''} disabled={lotBusy} onChange={(e) => setD({ notes: e.target.value })} style={addStyle} />
+                                                </td>
+                                                <td style={{ padding: '5px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                  <button onClick={() => addExternalLot(pos)} disabled={lotBusy} className="toggle-btn" style={{ padding: '3px 8px', fontSize: '11px' }}>+ Add lot</button>
+                                                </td>
+                                              </tr>
+                                            );
+                                          })()}
                                         </tbody>
                                       </table>
+                                      {lotEditError && (
+                                        <div style={{ padding: '6px 8px', color: '#EF4444', fontSize: '11px' }}>{lotEditError}</div>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
