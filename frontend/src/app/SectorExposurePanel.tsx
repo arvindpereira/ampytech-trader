@@ -78,7 +78,7 @@ const SCOPE_LABEL: Record<Scope, string> = {
   external: 'External accounts (Robinhood / Vanguard)',
 };
 
-export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }) {
+export default function SectorExposurePanel({ scope = 'all', accountMode = 'paper' }: { scope?: Scope; accountMode?: string }) {
   const [data, setData] = useState<ExposureData | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -89,7 +89,7 @@ export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }
     setLoading(true);
     try {
       const [expRes, uniRes] = await Promise.all([
-        fetch(apiUrl(`/api/portfolio/sector-exposure?mode=real&scope=${scope}`)),
+        fetch(apiUrl(`/api/portfolio/sector-exposure?mode=${accountMode}&scope=${scope}`)),
         fetch(apiUrl('/api/universe')),
       ]);
       if (expRes.ok) setData(await expRes.json());
@@ -102,7 +102,7 @@ export default function SectorExposurePanel({ scope = 'all' }: { scope?: Scope }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope, accountMode]);
 
   useEffect(() => { load(); }, [load]);
 

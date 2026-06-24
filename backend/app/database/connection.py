@@ -244,7 +244,14 @@ def init_db():
             account = models.VirtualAccount(id=2, cash=100000.0, buying_power=100000.0, equity=100000.0)
             db.add(account)
             db.commit()
-            print("Seeded default real/live account ($100k, ID 2).")
+            print("Seeded default paper account ($100k, ID 2).")
+
+        # ID 3 = the live (real-money) Alpaca account. Seed at $0 — broker sync fills it from Alpaca.
+        if db.query(models.VirtualAccount).filter(models.VirtualAccount.id == 3).first() is None:
+            account = models.VirtualAccount(id=3, cash=0.0, buying_power=0.0, equity=0.0)
+            db.add(account)
+            db.commit()
+            print("Seeded live account (ID 3).")
     except Exception as e:
         db.rollback()
         print(f"Error seeding database: {e}")

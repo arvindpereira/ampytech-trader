@@ -16,6 +16,13 @@ from app.database import SessionLocal, init_db, PendingTrade, VirtualOrder, AppS
 import execution.executor as ex
 import execution.accounts as accounts
 
+# Tests must NEVER touch a real Alpaca account, even if the dev .env supplies live/paper credentials.
+# Force the registry creds-free: paper → in-process mock, live → unconfigured (None).
+accounts.ACCOUNTS["paper"] = accounts.AccountDef(
+    "paper", "Alpaca Paper", "", "", "https://paper-api.alpaca.markets", is_live=False, default_gate=False)
+accounts.ACCOUNTS["live"] = accounts.AccountDef(
+    "live", "Alpaca Live", "", "", "https://api.alpaca.markets", is_live=True, default_gate=True)
+
 
 class FakeOrder:
     def __init__(self, oid="ord-1", status="filled", filled_avg_price=101.0, filled_qty=None):

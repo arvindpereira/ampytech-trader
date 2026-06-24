@@ -207,7 +207,9 @@ def collect_consolidated_positions(db, mode: str = "real", scope: str = "all") -
     from app.database import EquityLot, ExternalAccount, VirtualPosition
 
     merged: Dict[str, dict] = {}
-    pos_mode = "real" if mode == "real" else "replay"
+    # Map the requested account to its local VirtualPosition.mode book. "real" is the legacy alias for
+    # the paper account; "live" is its own book; anything else is the sim/replay book.
+    pos_mode = "paper" if mode in (None, "real", "paper") else (mode if mode == "live" else "replay")
 
     def add(ticker: str, shares: float, price: float, source: str, account: str = ""):
         tk = ticker.upper().strip()

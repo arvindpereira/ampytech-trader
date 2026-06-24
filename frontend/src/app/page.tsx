@@ -494,7 +494,15 @@ export default function Home() {
   };
 
   const [activeStrategy, setActiveStrategy] = useState<'short_term' | 'swing' | 'long_term'>('short_term');
-  const appMode = 'real';
+  // Which Alpaca account the dashboard targets. Sent as ?mode=; the backend resolves paper/live to its
+  // local book. Both are live broker accounts (the sim/replay engine is separate), so the "real" UI
+  // branches below always apply.
+  const [account, setAccount] = useState<'paper' | 'live'>('paper');
+  const appMode = account;
+  // Available Alpaca accounts (label + whether credentials are configured) for the global selector.
+  const [accountOptions, setAccountOptions] = useState<{ key: string; label: string; configured: boolean; is_live: boolean }[]>([]);
+  const liveConfigured = accountOptions.find((a) => a.key === 'live')?.configured ?? false;
+  const isLiveAccount = account === 'live';
   const [hedgeMode, setHedgeMode] = useState<'none' | 'beta_neutral' | 'pair_trade'>('none');
   const [loading, setLoading] = useState<boolean>(true);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
@@ -1676,6 +1684,10 @@ export default function Home() {
         const e = await res.json();
         alert(`Liquidation failed: ${e.detail || 'unknown error'}`);
       } else {
+        const data = await res.json().catch(() => ({}));
+        if (data.status === 'queued_for_approval') {
+          alert('Sell queued for approval — review it in the Pending-approval panel on the dashboard.');
+        }
         setLiquidateModal(null);
         setTimeout(fetchData, 1200);
       }
@@ -1744,7 +1756,8 @@ export default function Home() {
       }
 
       // 2. Fetch Performance Curve based on mode
-      const perfRes = await fetch(apiUrl(`/api/performance?mode=${appMode === 'real' ? 'live' : perfMode}`));
+      // Performance curve is the model/backtest 'live' curve (per-account equity curve is a follow-up).
+      const perfRes = await fetch(apiUrl(`/api/performance?mode=live`));
       if (perfRes.ok) {
         const perfData = await perfRes.json();
         setPerfCurve(perfData.equity_curve || []);
@@ -1842,6 +1855,14 @@ export default function Home() {
   useEffect(() => {
     fetchData();
   }, [perfMode, appMode, hedgeMode]);
+
+  // Load the Alpaca account list (paper/live + configured flags) for the global account selector.
+  useEffect(() => {
+    fetch(apiUrl('/api/execution/accounts'))
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setAccountOptions(Array.isArray(data) ? data : []))
+      .catch(() => { });
+  }, [backendOnline]);
 
   // Poll service health (30s) and refresh signals/prices (90s) so the dashboard stays current.
   useEffect(() => {
@@ -2029,7 +2050,7 @@ export default function Home() {
     }
   };
 
-  const realThemeStyles = (appMode === 'real' ? {
+  const realThemeStyles = (true ? {
     '--color-buy': '#10B981',
     '--color-buy-bg': 'rgba(16, 185, 129, 0.1)',
     '--color-accent': '#0D9488',
@@ -2237,6 +2258,30 @@ export default function Home() {
           </button>
         </div>
       </div>
+
+      {/* Account selector — which Alpaca account the dashboard/editor views target. */}
+      {(activeTab === 'dashboard' || activeTab === 'editor') && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'rgba(0,0,0,0.12)', borderBottom: '1px solid var(--border-glass)' }}>
+          <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Account</span>
+          <div className="toggle-group" style={{ margin: 0 }}>
+            <button className={`toggle-btn ${account === 'paper' ? 'active' : ''}`} onClick={() => setAccount('paper')}>
+              Alpaca Paper
+            </button>
+            <button className={`toggle-btn ${account === 'live' ? 'active' : ''}`}
+              onClick={() => liveConfigured && setAccount('live')}
+              disabled={!liveConfigured}
+              title={liveConfigured ? 'Real-money account' : 'Live account not configured (set ALPACA_LIVE_* env vars)'}
+              style={{ opacity: liveConfigured ? 1 : 0.45, cursor: liveConfigured ? 'pointer' : 'not-allowed' }}>
+              Alpaca Live{liveConfigured ? '' : ' (n/a)'}
+            </button>
+          </div>
+          {isLiveAccount && (
+            <span style={{ fontSize: '11px', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Lock size={12} /> Read-only — trades route through the approval queue
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="dashboard-grid">
@@ -2658,7 +2703,13 @@ export default function Home() {
           <>
             {/* Left Column: Holdings Policies Editor */}
             <section>
-              {/* Cash Balance Editor */}
+              {/* Cash Balance Editor — hidden for the live account (broker is the source of truth). */}
+              {isLiveAccount ? (
+                <div className="glass-card" style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  <Lock size={16} color="#F59E0B" />
+                  Cash and holdings for the live account are reconciled from Alpaca and can&apos;t be edited here. Trade it via the approval queue on the dashboard.
+                </div>
+              ) : (
               <div className="glass-card" style={{ marginBottom: '24px' }}>
                 <h2>
                   <DollarSign size={20} color="var(--color-buy)" />
@@ -2701,6 +2752,7 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+              )}
 
               {/* Strategy capital allocation buckets */}
               <div className="glass-card" style={{ marginBottom: '24px' }}>
@@ -2925,7 +2977,8 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Form to add a position */}
+                {/* Form to add a position — paper only; live holdings come from the broker. */}
+                {!isLiveAccount && (
                 <form onSubmit={handleSaveHolding} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', background: 'rgba(0,0,0,0.15)', padding: '16px', borderRadius: '10px', border: '1px solid var(--border-glass)', marginBottom: '20px' }}>
                   <div style={{ flex: 1, minWidth: '120px' }}>
                     <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Ticker</label>
@@ -2993,6 +3046,7 @@ export default function Home() {
                     </button>
                   </div>
                 </form>
+                )}
 
                 {/* Table listing holdings with live value + P&L */}
                 <div style={{ overflowX: 'auto' }}>
@@ -3393,7 +3447,7 @@ export default function Home() {
                     <Play size={20} color="var(--color-buy)" />
                     Replay & Simulation Engine
                   </h2>
-                  {appMode === 'real' ? (
+                  {true ? (
                     <div style={{
                       display: 'flex',
                       flexDirection: 'column',
@@ -3501,7 +3555,7 @@ export default function Home() {
               )}
             </aside>
             <div style={{ gridColumn: '1 / -1' }}>
-              <SectorExposurePanel scope="internal" />
+              <SectorExposurePanel scope="internal" accountMode={account} />
             </div>
           </>
         )}
@@ -6191,6 +6245,11 @@ export default function Home() {
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
               You hold <strong style={{ color: 'var(--text-primary)' }}>{liquidateModal.held}</strong> shares. How many do you want to sell?
             </p>
+            {isLiveAccount && (
+              <p style={{ fontSize: '12px', color: '#F59E0B', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Lock size={13} /> Live account — this sell will be <strong>queued for your approval</strong>, not placed immediately.
+              </p>
+            )}
             <input
               type="number" min="0" max={liquidateModal.held} value={liquidateModal.shares}
               onChange={(e) => setLiquidateModal({ ...liquidateModal, shares: e.target.value })}
@@ -6208,7 +6267,7 @@ export default function Home() {
                 style={{ background: 'transparent', border: '1px solid var(--border-glass)', borderRadius: '8px', color: 'var(--text-secondary)', padding: '8px 16px', fontSize: '13px', cursor: 'pointer' }}>Cancel</button>
               <button onClick={handleLiquidate} disabled={actionBusy || !(parseFloat(liquidateModal.shares) > 0)}
                 style={{ background: 'var(--color-sell)', border: 'none', borderRadius: '8px', color: 'white', padding: '8px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', opacity: actionBusy ? 0.6 : 1 }}>
-                {actionBusy ? 'Selling…' : `Sell ${liquidateModal.shares || 0} shares`}
+                {actionBusy ? 'Submitting…' : `${isLiveAccount ? 'Queue sell of' : 'Sell'} ${liquidateModal.shares || 0} shares`}
               </button>
             </div>
           </div>
