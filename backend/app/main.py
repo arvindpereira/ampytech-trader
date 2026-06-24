@@ -261,7 +261,7 @@ def get_latest_data(db, end_date=None, mode="real"):
     sent_query = db.query(TickerSentiment).filter(TickerSentiment.date >= start_date)
     if end_date:
         sent_query = sent_query.filter(TickerSentiment.date <= end_date)
-    if mode == "real":
+    if _is_broker_account(mode):
         sent_query = sent_query.filter(TickerSentiment.is_mock != True)
     sent = sent_query.all()
 
@@ -372,13 +372,15 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     if effective_hedge_mode not in VALID_MODES:
         effective_hedge_mode = "none"
 
-    # Reconcile positions/cash with Alpaca broker if in real mode and not viewing historical date
-    if mode == "real" and not date:
+    # Reconcile positions/cash with the selected account's Alpaca broker (paper or live), not on a
+    # historical replay date.
+    if _is_broker_account(mode) and not date:
         from execution.executor import get_alpaca_api, sync_broker_positions
         try:
-            api = get_alpaca_api()
+            acct_key = _resolve_book(mode)[1]
+            api = get_alpaca_api(acct_key)
             if api:
-                sync_broker_positions(db, api)
+                sync_broker_positions(db, api, mode=acct_key)
         except Exception as e:
             print(f"Failed to reconcile Alpaca positions during suggestions fetch: {e}")
 
@@ -409,8 +411,8 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     latest_price = db.query(RecentPrice).order_by(RecentPrice.date.desc()).first()
     latest_price_date = latest_price.date if latest_price else "none"
 
-    # Check if we should trigger an on-demand background fetch of prices (only for live updates in real mode)
-    if mode == "real" and not date:
+    # Check if we should trigger an on-demand background fetch of prices (only for live broker accounts)
+    if _is_broker_account(mode) and not date:
         # Determine if scheduler is running
         scheduler_running = False
         if os.path.exists(SCHEDULER_HEARTBEAT_FILE):
@@ -557,7 +559,7 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
 
     # Inputs for sizing the example trade plan (advisory): latest price per ticker + account equity.
     latest_close = prices_df.sort_values("date").groupby("ticker")["close"].last().to_dict()
-    acc_id = 2 if mode == "real" else 1
+    acc_id = _resolve_book(mode)[0]
     _acc = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     equity_for_sizing = float(_acc.equity) if (_acc and _acc.equity) else 100000.0
     POSITION_PCT = 0.10  # example long size = 10% of equity (matches backtest/executor convention)
@@ -804,11 +806,11 @@ def get_daily_suggestions(date: Optional[str] = None, mode: str = "real",
     cash_allocation = 1.0 - sum(scaled_weights.values())
 
     # Load virtual account and current positions for rebalancing action calculation
-    acc_id = 2 if mode == "real" else 1
+    acc_id, pos_mode, _ = _resolve_book(mode)
     account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     portfolio_equity = float(account.equity) if account else 100000.0
 
-    positions = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
+    positions = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == pos_mode).all()}
 
     def get_ticker_price(tk):
         if prices_df.empty:
@@ -974,7 +976,7 @@ def get_sentiment_aggregates(mode: str = "real", db=Depends(get_db)):
     """Exposes current sentiment indicators and scores for all tickers."""
     # Find most recent date cached
     query_latest = db.query(TickerSentiment)
-    if mode == "real":
+    if _is_broker_account(mode):
         query_latest = query_latest.filter(TickerSentiment.is_mock != True)
     latest_record = query_latest.order_by(TickerSentiment.date.desc()).first()
     if not latest_record:
@@ -982,7 +984,7 @@ def get_sentiment_aggregates(mode: str = "real", db=Depends(get_db)):
 
     date_str = latest_record.date
     query_records = db.query(TickerSentiment).filter(TickerSentiment.date == date_str)
-    if mode == "real":
+    if _is_broker_account(mode):
         query_records = query_records.filter(TickerSentiment.is_mock != True)
     sent_records = query_records.all()
 
@@ -1092,6 +1094,41 @@ def set_sim_date(date_str):
         else:
             f.write("")
 
+def _resolve_book(mode):
+    """Resolve a requested account/mode to its local book: (acc_id, pos_mode, sim_date).
+
+    Single source of truth for the dashboard's account selection, replacing the old binary
+    `acc_id = 2 if mode=="real" else 1` mapping. Honors the sim/replay date overlay, aliases the
+    legacy "real" → "paper" (the bot's live-paper book; fixes the post-rename regression and keeps
+    old callers working), and maps "live" → VirtualAccount id 3. `pos_mode` is the
+    VirtualPosition/VirtualOrder.mode string for the book."""
+    from execution.executor import _virtual_account_id
+    sim = get_sim_date()
+    if sim:
+        return (1, "replay", sim)
+    key = "paper" if mode in (None, "real", "paper") else mode
+    if key in ("paper", "live"):
+        return (_virtual_account_id(key), key, None)
+    return (1, "replay", None)   # sim / replay / unknown → historical book
+
+
+def _is_broker_account(mode):
+    """True when `mode` resolves to a live Alpaca book (paper or live) rather than the sim/replay book.
+    Used by the gates that reconcile against the broker, pull live data, or place real orders."""
+    return _resolve_book(mode)[1] in ("paper", "live")
+
+
+def _guard_live_readonly(mode):
+    """Block manual mutations on the live account — it's reconciled from the broker and traded only via
+    the approval queue, so hand-editing holdings/cash would just be overwritten."""
+    if _resolve_book(mode)[1] == "live":
+        raise HTTPException(
+            status_code=403,
+            detail="The live account is managed by the broker and the approval queue; "
+                   "manual holdings/cash edits are disabled. Use the Pending-approval queue to trade it.",
+        )
+
+
 def get_current_price(db, ticker, date=None):
     if date:
         # Get latest available price on or before date
@@ -1105,11 +1142,7 @@ def get_current_price(db, ticker, date=None):
 # Route to get account details
 @app.get("/api/virtual_alpaca/v2/account")
 def get_virtual_account(mode: str = "real", db=Depends(get_db)):
-    sim_date_val = get_sim_date()
-    effective_mode = "replay" if sim_date_val else mode
-    acc_id = 2 if effective_mode == "real" else 1
-    pos_mode = "real" if effective_mode == "real" else "replay"
-    sim_date = None if effective_mode == "real" else sim_date_val
+    acc_id, pos_mode, sim_date = _resolve_book(mode)
 
     account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     if not account:
@@ -1149,10 +1182,7 @@ def get_virtual_account(mode: str = "real", db=Depends(get_db)):
 # Route to get positions
 @app.get("/api/virtual_alpaca/v2/positions")
 def get_virtual_positions(mode: str = "real", db=Depends(get_db)):
-    sim_date_val = get_sim_date()
-    effective_mode = "replay" if sim_date_val else mode
-    pos_mode = "real" if effective_mode == "real" else "replay"
-    sim_date = None if effective_mode == "real" else sim_date_val
+    _acc_id, pos_mode, sim_date = _resolve_book(mode)
 
     positions = db.query(VirtualPosition).filter(VirtualPosition.quantity > 0, VirtualPosition.mode == pos_mode).all()
     res = []
@@ -1194,11 +1224,7 @@ class OrderRequest(BaseModel):
 # Route to place orders
 @app.post("/api/virtual_alpaca/v2/orders")
 def post_virtual_order(order_req: OrderRequest, mode: str = "real", db=Depends(get_db)):
-    sim_date_val = get_sim_date()
-    effective_mode = "replay" if sim_date_val else mode
-    pos_mode = "real" if effective_mode == "real" else "replay"
-    acc_id = 2 if effective_mode == "real" else 1
-    sim_date = None if effective_mode == "real" else sim_date_val
+    acc_id, pos_mode, sim_date = _resolve_book(mode)
 
     ticker = order_req.symbol
     fill_price = None
@@ -1339,11 +1365,7 @@ def post_virtual_order(order_req: OrderRequest, mode: str = "real", db=Depends(g
 # Route to delete (close) position
 @app.delete("/api/virtual_alpaca/v2/positions/{symbol}")
 def delete_virtual_position(symbol: str, mode: str = "real", db=Depends(get_db)):
-    sim_date_val = get_sim_date()
-    effective_mode = "replay" if sim_date_val else mode
-    pos_mode = "real" if effective_mode == "real" else "replay"
-    acc_id = 2 if effective_mode == "real" else 1
-    sim_date = None if effective_mode == "real" else sim_date_val
+    acc_id, pos_mode, sim_date = _resolve_book(mode)
 
     pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == symbol, VirtualPosition.mode == pos_mode).first()
     if not pos or pos.quantity <= 0:
@@ -1821,17 +1843,46 @@ class LiquidateRequest(BaseModel):
 
 @app.post("/api/positions/liquidate")
 def liquidate_position(req: LiquidateRequest, mode: str = "real", db=Depends(get_db)):
-    """Sell a chosen number of shares of an open position (partial or full). Real mode closes via Alpaca
-    (which cancels the bracket OCO); simulated mode reduces the local virtual position."""
+    """Sell a chosen number of shares of an open position (partial or full). Paper closes via Alpaca
+    immediately (cancelling the bracket OCO); the LIVE account routes the sell through the approval
+    gate (queues a PendingTrade); simulated mode reduces the local virtual position."""
     ticker = req.ticker.upper().strip()
     shares = float(req.shares)
     if shares <= 0:
         raise HTTPException(status_code=400, detail="Shares to sell must be positive")
 
-    if mode == "real":
+    acc_id, pos_mode, _sim_date = _resolve_book(mode)
+
+    # LIVE: never place directly — route through the same gate as bot trades.
+    if pos_mode == "live":
+        from execution.executor import (get_alpaca_api, place_or_queue_order, _record_submitted_order)
+        api = get_alpaca_api("live")
+        if api is None:
+            raise HTTPException(status_code=400, detail="Live account is not configured")
+        try:
+            bpos = api.get_position(ticker)
+            held, price = float(bpos.qty), float(bpos.current_price)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"No open position in {ticker}")
+        sell_qty = min(shares, held)
+        params = {"ticker": ticker, "side": "sell", "qty": sell_qty, "type": "market",
+                  "time_in_force": "gtc", "intended_price": round(price, 2), "sleeve": "manual",
+                  "label": "manual-liquidate", "reason": "manual liquidate"}
+        res = place_or_queue_order("live", db, api, params)
+        if res["action"] == "queued":
+            return {"status": "queued_for_approval", "ticker": ticker, "shares": sell_qty,
+                    "pending_id": res["pending_id"]}
+        order = res["order"]
+        _record_submitted_order(db, api, "live", order, params)
+        clear_suggestions_cache()
+        return {"status": "submitted", "ticker": ticker, "shares_sold": sell_qty,
+                "order_id": str(getattr(order, "id", None))}
+
+    # PAPER: close on the paper broker immediately.
+    if pos_mode == "paper":
         try:
             from execution.executor import get_alpaca_api
-            api = get_alpaca_api()
+            api = get_alpaca_api("paper")
             try:
                 pos = api.get_position(ticker)
             except Exception:
@@ -1853,7 +1904,7 @@ def liquidate_position(req: LiquidateRequest, mode: str = "real", db=Depends(get
             raise HTTPException(status_code=500, detail=str(e)[:200])
 
     # Simulated mode: reduce the local virtual position
-    pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "replay").first()
+    pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == pos_mode).first()
     if not pos or pos.quantity <= 0:
         raise HTTPException(status_code=400, detail=f"No simulated position in {ticker}")
     sold = min(shares, pos.quantity)
@@ -2035,7 +2086,8 @@ class AccountCashRequest(BaseModel):
 
 @app.post("/api/account")
 def update_account_cash(req: AccountCashRequest, mode: str = "real", db=Depends(get_db)):
-    acc_id = 2 if mode == "real" else 1
+    _guard_live_readonly(mode)
+    acc_id = _resolve_book(mode)[0]
     account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     if not account:
         account = VirtualAccount(id=acc_id, cash=req.cash, buying_power=req.cash, equity=req.cash)
@@ -2048,7 +2100,7 @@ def update_account_cash(req: AccountCashRequest, mode: str = "real", db=Depends(
 
 @app.get("/api/holdings")
 def get_holdings(mode: str = "real", db=Depends(get_db)):
-    pos_mode = "real" if mode == "real" else "replay"
+    pos_mode = _resolve_book(mode)[1]
     positions = db.query(VirtualPosition).filter(VirtualPosition.mode == pos_mode).all()
     return [
         {
@@ -2062,8 +2114,9 @@ def get_holdings(mode: str = "real", db=Depends(get_db)):
 
 @app.post("/api/holdings")
 def update_holding(req: HoldingRequest, mode: str = "real", db=Depends(get_db)):
+    _guard_live_readonly(mode)
     ticker = req.ticker.upper().strip()
-    pos_mode = "real" if mode == "real" else "replay"
+    pos_mode = _resolve_book(mode)[1]
     pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == pos_mode).first()
     if pos:
         pos.quantity = req.quantity
@@ -2092,8 +2145,9 @@ def update_holding(req: HoldingRequest, mode: str = "real", db=Depends(get_db)):
 
 @app.delete("/api/holdings/{ticker}")
 def delete_holding(ticker: str, mode: str = "real", db=Depends(get_db)):
+    _guard_live_readonly(mode)
     ticker_val = ticker.upper().strip()
-    pos_mode = "real" if mode == "real" else "replay"
+    pos_mode = _resolve_book(mode)[1]
     pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker_val, VirtualPosition.mode == pos_mode).first()
     if pos:
         db.delete(pos)
@@ -4138,7 +4192,7 @@ def get_sentiment_sources(ticker: str, date: Optional[str] = None, mode: str = "
     ticker_val = ticker.upper().strip()
 
     query_latest = db.query(SentimentSourceLog).filter(SentimentSourceLog.ticker == ticker_val)
-    if mode == "real":
+    if _is_broker_account(mode):
         query_latest = query_latest.filter(SentimentSourceLog.is_mock != True)
 
     if not date:
@@ -4152,7 +4206,7 @@ def get_sentiment_sources(ticker: str, date: Optional[str] = None, mode: str = "
         SentimentSourceLog.ticker == ticker_val,
         SentimentSourceLog.date == date
     )
-    if mode == "real":
+    if _is_broker_account(mode):
         query_records = query_records.filter(SentimentSourceLog.is_mock != True)
     records = query_records.all()
 
@@ -4277,17 +4331,17 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
     positions (not the periodically-synced local table). The local trade policy is merged in by ticker.
     Falls back to the local VirtualPosition records + stored closes when the broker is unavailable
     (or in simulated mode)."""
-    pos_mode = "real" if mode == "real" else "replay"
+    acc_id, pos_mode, _sim_date = _resolve_book(mode)
     local = {p.ticker: p for p in db.query(VirtualPosition).filter(
         VirtualPosition.mode == pos_mode, VirtualPosition.quantity > 0).all()}
 
     holdings, total_cost, total_value = [], 0.0, 0.0
     source, cash = "local", None
 
-    if mode == "real":
+    if _is_broker_account(mode):
         try:
             from execution.executor import get_alpaca_api
-            api = get_alpaca_api()
+            api = get_alpaca_api(pos_mode)
             broker_positions = api.list_positions()
             for p in broker_positions:
                 cost = float(p.cost_basis)
@@ -4335,7 +4389,7 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
     # FIFO buy lots (filled) per long-term ticker → long-term tax eligibility.
     lots_by_tk: dict = {}
     if lt_tickers:
-        for o in db.query(VirtualOrder).filter(VirtualOrder.mode == "real", VirtualOrder.side == "buy",
+        for o in db.query(VirtualOrder).filter(VirtualOrder.mode == pos_mode, VirtualOrder.side == "buy",
                                                VirtualOrder.status == "filled",
                                                VirtualOrder.ticker.in_(lt_tickers)).all():
             lots_by_tk.setdefault(o.ticker, []).append((o.created_at, float(o.qty or 0)))
@@ -4349,7 +4403,7 @@ def get_portfolio(mode: str = "real", db=Depends(get_db)):
             h.update(_lt_eligibility(lots_by_tk.get(h["ticker"], []), h.get("shares", 0)))
     holdings.sort(key=lambda x: -x["market_value"])
     if cash is None:
-        acc = db.query(VirtualAccount).filter(VirtualAccount.id == (2 if mode == "real" else 1)).first()
+        acc = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
         cash = float(acc.cash) if acc and acc.cash is not None else 0.0
     total_pl = total_value - total_cost
     return {
