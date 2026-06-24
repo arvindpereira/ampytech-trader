@@ -193,19 +193,27 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for ticker_metadata company columns: {em}")
 
-    # 11. Re-key legacy single-account bookkeeping (mode='real') to the paper account. The bot used to
-    #     run one Alpaca account whose default base URL is paper, so that data IS the paper account.
-    #     One-way, idempotent. NOTE: broker_performance_logs.mode uses 'live'/'replay' (a sim label,
-    #     unrelated to the new live account) and never 'real', so it is intentionally left untouched.
+    # 11. ONE-TIME re-key of the legacy single-account book (mode='real') to the paper account. The bot
+    #     used to run one Alpaca account whose default base URL is paper, so that data IS the paper
+    #     account. Guarded to run exactly once: the backtest simulator legitimately keeps writing
+    #     mode='real' (execution/simulator.py), so re-running on every init_db would clobber its book
+    #     and collide on virtual_positions' (ticker, mode) primary key. Collision-safe: a 'real' position
+    #     whose ticker already has a migrated 'paper' twin is a duplicate (paper is rebuilt from the live
+    #     broker on every sync), so it is dropped rather than renamed onto the existing key.
+    #     NOTE: broker_performance_logs.mode uses 'live'/'replay' (a sim label) and never 'real'.
     try:
-        for _tbl in ("virtual_orders", "virtual_positions"):
-            cols = [c["name"] for c in inspector.get_columns(_tbl)]
-            if "mode" in cols:
-                with engine.connect() as conn:
-                    res = conn.execute(text(f"UPDATE {_tbl} SET mode='paper' WHERE mode='real'"))
-                    conn.commit()
-                    if res.rowcount:
-                        print(f"Re-keyed {res.rowcount} {_tbl} row(s) from mode='real' to 'paper'.")
+        with engine.connect() as conn:
+            done = conn.execute(text(
+                "SELECT 1 FROM app_settings WHERE key='migration:mode_real_to_paper'")).fetchone()
+            if not done:
+                conn.execute(text("UPDATE virtual_orders SET mode='paper' WHERE mode='real'"))
+                conn.execute(text("DELETE FROM virtual_positions WHERE mode='real' AND ticker IN "
+                                  "(SELECT ticker FROM virtual_positions WHERE mode='paper')"))
+                conn.execute(text("UPDATE virtual_positions SET mode='paper' WHERE mode='real'"))
+                conn.execute(text("INSERT OR REPLACE INTO app_settings (key, value) "
+                                  "VALUES ('migration:mode_real_to_paper', 'done')"))
+                conn.commit()
+                print("Re-keyed legacy mode='real' bookkeeping to the paper account (one-time).")
     except Exception as em:
         print(f"Auto-migration check failed re-keying mode='real'->'paper': {em}")
 

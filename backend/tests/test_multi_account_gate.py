@@ -266,12 +266,14 @@ class MigrationTests(unittest.TestCase):
         init_db()
         db = SessionLocal()
         try:
+            # Clear the one-time marker so the re-key runs for this fixture, then seed a legacy row.
+            db.query(AppSetting).filter(AppSetting.key == "migration:mode_real_to_paper").delete()
             db.add(VirtualOrder(id="legacy-real-1", mode="real", ticker="ZZZ", qty=1.0, side="buy",
                                 type="market", status="filled", created_at=datetime.now().isoformat()))
             db.commit()
         finally:
             db.close()
-        init_db()   # idempotent; re-keys mode='real' → 'paper'
+        init_db()   # one-time re-key of mode='real' → 'paper'
         db = SessionLocal()
         try:
             vo = db.query(VirtualOrder).filter(VirtualOrder.id == "legacy-real-1").first()
