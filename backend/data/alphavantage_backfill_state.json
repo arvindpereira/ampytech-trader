@@ -6,8 +6,8 @@
           "name": "Year_1",
           "start": "20250622T1210",
           "end": "20260622T1810",
-          "cursor": "20251019T1038",
-          "completed": false
+          "cursor": null,
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -46,7 +46,7 @@
           "start": "20250622T1210",
           "end": "20260622T1810",
           "cursor": null,
-          "completed": false
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -85,7 +85,7 @@
           "start": "20250622T1210",
           "end": "20260622T1810",
           "cursor": null,
-          "completed": false
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -124,7 +124,7 @@
           "start": "20250622T1210",
           "end": "20260622T1810",
           "cursor": null,
-          "completed": false
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -163,7 +163,7 @@
           "start": "20250622T1210",
           "end": "20260622T1810",
           "cursor": null,
-          "completed": false
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -241,7 +241,7 @@
           "start": "20250622T1210",
           "end": "20260622T1810",
           "cursor": null,
-          "completed": false
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -319,7 +319,7 @@
           "start": "20250622T1210",
           "end": "20260622T1810",
           "cursor": null,
-          "completed": false
+          "completed": true
         },
         {
           "name": "Year_2",
@@ -3589,6 +3589,14 @@
       ]
     }
   },
-  "daily_request_count": 2,
-  "last_reset_date": "2026-06-22"
+  "daily_request_count": 24,
+  "last_reset_date": "2026-06-24",
+  "last_processed": {
+    "ticker": "BABA",
+    "interval": "Year_1",
+    "timestamp": "2026-06-24T09:20:55.780521",
+    "feed_size": 649,
+    "new_inserted": 729,
+    "status": "success"
+  }
 }

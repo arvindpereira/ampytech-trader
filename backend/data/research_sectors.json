@@ -3,16 +3,16 @@
   "source_doc": "perplexity_sectors.md",
   "taxonomy": "GICS",
   "description": "GICS sector handbook seed \u2014 representative large-cap US names, ETF proxies, and query aliases. Live metrics come from company_snapshots; ranks here are structural priors.",
-  "last_refreshed_at": "2026-06-22 14:04:30",
+  "last_refreshed_at": "2026-06-23 14:06:36",
   "seeds_top_n": 5,
   "metadata_universe_size": 82,
-  "classified_equity_count": 93,
+  "classified_equity_count": 94,
   "portfolio_classification": [
     {
       "ticker": "AAPL",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 4376979237699.0,
+      "market_cap": 4362291880772.3906,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -34,7 +34,7 @@
       "ticker": "ADBE",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 77576101456.00002,
+      "market_cap": 77472751454.06027,
       "sources": [
         "equity_lot",
         "virtual"
@@ -49,7 +49,7 @@
       "ticker": "AMAT",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 489960280875.0,
+      "market_cap": 508276924066.305,
       "sources": [
         "virtual"
       ],
@@ -62,7 +62,7 @@
       "ticker": "AMD",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 876235828903.0001,
+      "market_cap": 899488193047.1777,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -80,7 +80,7 @@
       "ticker": "AMZN",
       "sector": "Consumer Cyclical",
       "industry": "Retail",
-      "market_cap": 2628929953590.9995,
+      "market_cap": 2504147485152.62,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -109,7 +109,7 @@
       "ticker": "AVAV",
       "sector": "Industrials",
       "industry": "Aerospace & Defense",
-      "market_cap": 8469304156.0,
+      "market_cap": 7556510806.718237,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -125,7 +125,7 @@
       "ticker": "AVGO",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 1957030594175.0,
+      "market_cap": 1865589903716.647,
       "sources": [
         "virtual"
       ],
@@ -138,7 +138,7 @@
       "ticker": "BABA",
       "sector": "Consumer Cyclical",
       "industry": "Retail",
-      "market_cap": 256823348217.222,
+      "market_cap": 256823348217.22202,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -158,7 +158,7 @@
       "ticker": "BAC",
       "sector": "Financial Services",
       "industry": "Banking",
-      "market_cap": 398828382074.0,
+      "market_cap": 407131392875.1847,
       "sources": [
         "virtual"
       ],
@@ -171,7 +171,7 @@
       "ticker": "BB",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 6927246307.0,
+      "market_cap": 7062040734.0,
       "sources": [
         "virtual"
       ],
@@ -184,7 +184,7 @@
       "ticker": "BRK.B",
       "sector": "Financial Services",
       "industry": "Financial Services",
-      "market_cap": 1055400327699.8011,
+      "market_cap": 1056537169766.3331,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)"
@@ -198,7 +198,7 @@
       "ticker": "BYND",
       "sector": "Consumer Defensive",
       "industry": "Food Products",
-      "market_cap": 366356921.99999994,
+      "market_cap": 359863607.5855957,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint (116424851826)",
@@ -214,7 +214,7 @@
       "ticker": "CAT",
       "sector": "Industrials",
       "industry": "Machinery",
-      "market_cap": 454105194299.99994,
+      "market_cap": 470900020317.1004,
       "sources": [
         "virtual"
       ],
@@ -227,7 +227,7 @@
       "ticker": "CRM",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 124307819000.0,
+      "market_cap": 122948279010.93689,
       "sources": [
         "virtual"
       ],
@@ -240,7 +240,7 @@
       "ticker": "CRWD",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 174341258441.00003,
+      "market_cap": 171943257894.1522,
       "sources": [
         "virtual"
       ],
@@ -253,7 +253,7 @@
       "ticker": "DASH",
       "sector": "Consumer Cyclical",
       "industry": "Hotels, Restaurants & Leisure",
-      "market_cap": 75579777544.0,
+      "market_cap": 74978485643.7883,
       "sources": [
         "virtual"
       ],
@@ -266,7 +266,7 @@
       "ticker": "DELL",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 265471087065.0001,
+      "market_cap": 271441755470.05173,
       "sources": [
         "virtual"
       ],
@@ -279,7 +279,7 @@
       "ticker": "DKNG",
       "sector": "Consumer Cyclical",
       "industry": "Hotels, Restaurants & Leisure",
-      "market_cap": 13092839117.0,
+      "market_cap": 12725703802.61652,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint (116424851826)"
@@ -293,7 +293,7 @@
       "ticker": "FDX",
       "sector": "Industrials",
       "industry": "Logistics & Transportation",
-      "market_cap": 77833524922.0,
+      "market_cap": 78449130361.29723,
       "sources": [
         "virtual"
       ],
@@ -306,7 +306,7 @@
       "ticker": "FSLY",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 2801349940.0,
+      "market_cap": 2687104942.446928,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint (116424851826)"
@@ -320,7 +320,7 @@
       "ticker": "GE",
       "sector": "Industrials",
       "industry": "Aerospace & Defense",
-      "market_cap": 373139160199.99994,
+      "market_cap": 370509950146.0239,
       "sources": [
         "virtual"
       ],
@@ -333,7 +333,7 @@
       "ticker": "GEV",
       "sector": "Industrials",
       "industry": "Electrical Equipment",
-      "market_cap": 298206641706.0,
+      "market_cap": 303005980843.32996,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -365,7 +365,7 @@
       "ticker": "GOOGL",
       "sector": "Communication Services",
       "industry": "Media",
-      "market_cap": 4480603316799.999,
+      "market_cap": 4257200140800.0,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -381,7 +381,7 @@
       "ticker": "HMC",
       "sector": "Consumer Cyclical",
       "industry": "Automobiles",
-      "market_cap": 5504067840332.0,
+      "market_cap": 5498229013062.0,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)"
@@ -395,7 +395,7 @@
       "ticker": "HOOD",
       "sector": "Financial Services",
       "industry": "Financial Services",
-      "market_cap": 97476170909.0,
+      "market_cap": 95276985915.76874,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -433,7 +433,7 @@
       "ticker": "IBM",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 234125422485.0,
+      "market_cap": 237057864549.04337,
       "sources": [
         "virtual"
       ],
@@ -446,7 +446,7 @@
       "ticker": "INTC",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 673433767609.0,
+      "market_cap": 708364469041.0662,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -462,7 +462,7 @@
       "ticker": "INTU",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 73034375610.0,
+      "market_cap": 70509629217.18988,
       "sources": [
         "virtual"
       ],
@@ -475,7 +475,7 @@
       "ticker": "ISRG",
       "sector": "Healthcare",
       "industry": "Health Care",
-      "market_cap": 144066360354.00003,
+      "market_cap": 142709916673.9867,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint",
@@ -521,7 +521,7 @@
       "ticker": "JPM",
       "sector": "Financial Services",
       "industry": "Banking",
-      "market_cap": 871430725043.0,
+      "market_cap": 888204466937.0076,
       "sources": [
         "virtual"
       ],
@@ -534,7 +534,7 @@
       "ticker": "KDK",
       "sector": "Consumer Cyclical",
       "industry": "Auto Components",
-      "market_cap": 1202385961.0,
+      "market_cap": 1252236125.220564,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)"
@@ -548,7 +548,7 @@
       "ticker": "KMX",
       "sector": "Consumer Cyclical",
       "industry": "Retail",
-      "market_cap": 7610100054.0,
+      "market_cap": 7431405941.662318,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -564,7 +564,7 @@
       "ticker": "LLY",
       "sector": "Healthcare",
       "industry": "Pharmaceuticals",
-      "market_cap": 1034568792672.0001,
+      "market_cap": 1037874304803.4789,
       "sources": [
         "virtual"
       ],
@@ -577,7 +577,7 @@
       "ticker": "LUV",
       "sector": "Industrials",
       "industry": "Airlines",
-      "market_cap": 23446475569.0,
+      "market_cap": 23739739803.759228,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -593,7 +593,7 @@
       "ticker": "META",
       "sector": "Communication Services",
       "industry": "Media",
-      "market_cap": 1465228522512.0,
+      "market_cap": 1431289807037.856,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -613,7 +613,7 @@
       "ticker": "MMM",
       "sector": "Industrials",
       "industry": "Industrial Conglomerates",
-      "market_cap": 83763705259.0,
+      "market_cap": 85130211534.08456,
       "sources": [
         "virtual"
       ],
@@ -626,7 +626,7 @@
       "ticker": "MRNA",
       "sector": "Healthcare",
       "industry": "Biotechnology",
-      "market_cap": 25378448498.999996,
+      "market_cap": 23547279958.929874,
       "sources": [
         "virtual"
       ],
@@ -639,7 +639,7 @@
       "ticker": "MSFT",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 2818348030637.0005,
+      "market_cap": 2728761111160.2417,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -657,7 +657,7 @@
       "ticker": "MU",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 1278839077614.0,
+      "market_cap": 1366114411802.6152,
       "sources": [
         "virtual"
       ],
@@ -670,7 +670,7 @@
       "ticker": "NFLX",
       "sector": "Communication Services",
       "industry": "Media",
-      "market_cap": 325831563972.0,
+      "market_cap": 306882972115.26697,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -730,7 +730,7 @@
       "ticker": "NVDA",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 5098698059082.0,
+      "market_cap": 5049330058509.94,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -750,7 +750,7 @@
       "ticker": "ORCL",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 530026479314.0,
+      "market_cap": 503509337096.4348,
       "sources": [
         "virtual"
       ],
@@ -779,7 +779,7 @@
       "ticker": "PINS",
       "sector": "Communication Services",
       "industry": "Media",
-      "market_cap": 11354389216.999998,
+      "market_cap": 10923068067.661568,
       "sources": [
         "equity_lot",
         "virtual"
@@ -794,7 +794,7 @@
       "ticker": "PLTR",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 307982712702.00006,
+      "market_cap": 286478821264.80115,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -810,7 +810,7 @@
       "ticker": "PYPL",
       "sector": "Financial Services",
       "industry": "Financial Services",
-      "market_cap": 37498304591.0,
+      "market_cap": 37348346656.855804,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint",
@@ -826,7 +826,7 @@
       "ticker": "QCOM",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 238319940643.00003,
+      "market_cap": 233882600631.02783,
       "sources": [
         "equity_lot",
         "external:Robinhood Individual (706393097)",
@@ -872,7 +872,7 @@
       "ticker": "RGTI",
       "sector": "Technology",
       "industry": "Semiconductors",
-      "market_cap": 7100038650.0,
+      "market_cap": 7106686626.264045,
       "sources": [
         "virtual"
       ],
@@ -885,7 +885,7 @@
       "ticker": "ROKU",
       "sector": "Communication Services",
       "industry": "Media",
-      "market_cap": 20481604189.0,
+      "market_cap": 20055862144.946766,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint",
@@ -903,7 +903,7 @@
       "ticker": "RTX",
       "sector": "Industrials",
       "industry": "Aerospace & Defense",
-      "market_cap": 249944437907.0,
+      "market_cap": 244867441512.0141,
       "sources": [
         "virtual"
       ],
@@ -916,7 +916,7 @@
       "ticker": "RUN",
       "sector": "Industrials",
       "industry": "Electrical Equipment",
-      "market_cap": 3225186454.0,
+      "market_cap": 3249041383.3934913,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint (116424851826)"
@@ -946,7 +946,7 @@
       "ticker": "SHOP",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 141249713665.23578,
+      "market_cap": 140120750766.0937,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint",
@@ -966,7 +966,7 @@
       "ticker": "SMCI",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 19833125647.0,
+      "market_cap": 22938115963.555775,
       "sources": [
         "virtual"
       ],
@@ -979,7 +979,7 @@
       "ticker": "SNDK",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 323539119450.0,
+      "market_cap": 336716146958.25543,
       "sources": [
         "virtual"
       ],
@@ -992,7 +992,7 @@
       "ticker": "SNOW",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 80511713091.0,
+      "market_cap": 78536093113.30531,
       "sources": [
         "virtual"
       ],
@@ -1005,7 +1005,7 @@
       "ticker": "SNPS",
       "sector": "Technology",
       "industry": "Technology",
-      "market_cap": 87220748900.0,
+      "market_cap": 88957466408.9965,
       "sources": [
         "virtual"
       ],
@@ -1032,7 +1032,7 @@
       "ticker": "TSLA",
       "sector": "Consumer Cyclical",
       "industry": "Automobiles",
-      "market_cap": 1504129721028.0,
+      "market_cap": 1521255820376.0178,
       "sources": [
         "equity_lot",
         "external:Robinhood Joint (116424851826)",
@@ -1064,7 +1064,7 @@
       "ticker": "UBER",
       "sector": "Industrials",
       "industry": "Road & Rail",
-      "market_cap": 145830311048.0,
+      "market_cap": 145402835261.84592,
       "sources": [
         "virtual"
       ],
@@ -2100,7 +2100,7 @@
           "exchange": null,
           "subsector": "Semiconductors",
           "notes": "portfolio holding",
-          "market_cap": 5098698059082.0
+          "market_cap": 5049330058509.94
         },
         {
           "rank": 3,
@@ -2109,7 +2109,7 @@
           "exchange": null,
           "subsector": "Technology",
           "notes": "portfolio holding",
-          "market_cap": 4376979237699.0
+          "market_cap": 4362291880772.3906
         },
         {
           "rank": 4,
@@ -2118,7 +2118,7 @@
           "exchange": null,
           "subsector": "Technology",
           "notes": "portfolio holding",
-          "market_cap": 2818348030637.0005
+          "market_cap": 2728761111160.2417
         },
         {
           "rank": 5,
@@ -2127,7 +2127,7 @@
           "exchange": null,
           "subsector": "Semiconductors",
           "notes": "portfolio holding",
-          "market_cap": 1957030594175.0
+          "market_cap": 1865589903716.647
         }
       ],
       "portfolio_holdings": [
@@ -2492,7 +2492,7 @@
           "exchange": null,
           "subsector": "Media",
           "notes": "portfolio holding",
-          "market_cap": 4480603316799.999
+          "market_cap": 4257200140800.0
         },
         {
           "rank": 2,
@@ -2501,7 +2501,7 @@
           "exchange": null,
           "subsector": "Media",
           "notes": "portfolio holding",
-          "market_cap": 1465228522512.0
+          "market_cap": 1431289807037.856
         },
         {
           "rank": 3,
@@ -2510,7 +2510,7 @@
           "exchange": null,
           "subsector": "Communications",
           "notes": "cap-ranked seed",
-          "market_cap": 471159121328.0
+          "market_cap": 479002576668.82916
         },
         {
           "rank": 4,
@@ -2519,7 +2519,7 @@
           "exchange": null,
           "subsector": "Media",
           "notes": "portfolio holding",
-          "market_cap": 325831563972.0
+          "market_cap": 306882972115.26697
         },
         {
           "rank": 5,
@@ -2649,7 +2649,7 @@
           "exchange": null,
           "subsector": "Automobiles",
           "notes": "portfolio holding",
-          "market_cap": 5504067840332.0
+          "market_cap": 5498229013062.0
         },
         {
           "rank": 2,
@@ -2658,7 +2658,7 @@
           "exchange": null,
           "subsector": "Retail",
           "notes": "portfolio holding",
-          "market_cap": 2628929953590.9995
+          "market_cap": 2504147485152.62
         },
         {
           "rank": 3,
@@ -2667,7 +2667,7 @@
           "exchange": null,
           "subsector": "Automobiles",
           "notes": "portfolio holding",
-          "market_cap": 1504129721028.0
+          "market_cap": 1521255820376.0178
         },
         {
           "rank": 4,
@@ -2854,7 +2854,7 @@
           "exchange": null,
           "subsector": "Consumer products",
           "notes": "cap-ranked seed",
-          "market_cap": 350174747199.99994
+          "market_cap": 343887529368.9054
         },
         {
           "rank": 2,
@@ -2863,7 +2863,7 @@
           "exchange": null,
           "subsector": "Beverages",
           "notes": "cap-ranked seed",
-          "market_cap": 341574076846.99994
+          "market_cap": 342176424381.43225
         },
         {
           "rank": 3,
@@ -2872,7 +2872,7 @@
           "exchange": null,
           "subsector": "Beverages",
           "notes": "cap-ranked seed",
-          "market_cap": 194108458640.00003
+          "market_cap": 192317991939.40573
         },
         {
           "rank": 4,
@@ -2881,7 +2881,7 @@
           "exchange": null,
           "subsector": "Food Products",
           "notes": "portfolio holding",
-          "market_cap": 366356921.99999994
+          "market_cap": 359863607.5855957
         },
         {
           "rank": 5,
@@ -2889,7 +2889,7 @@
           "company": "Walmart",
           "exchange": "NYSE",
           "subsector": "Hypermarkets",
-          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
         }
       ],
       "portfolio_holdings": [
@@ -2938,7 +2938,7 @@
           "exchange": null,
           "subsector": "Pharmaceuticals",
           "notes": "portfolio holding",
-          "market_cap": 1034568792672.0001
+          "market_cap": 1037874304803.4789
         },
         {
           "rank": 2,
@@ -2947,7 +2947,7 @@
           "exchange": null,
           "subsector": "Pharmaceuticals",
           "notes": "cap-ranked seed",
-          "market_cap": 549784298528.0
+          "market_cap": 556765227928.2855
         },
         {
           "rank": 3,
@@ -2965,7 +2965,7 @@
           "exchange": null,
           "subsector": "Health Care",
           "notes": "portfolio holding",
-          "market_cap": 144066360354.00003
+          "market_cap": 142709916673.9867
         },
         {
           "rank": 5,
@@ -2974,7 +2974,7 @@
           "exchange": null,
           "subsector": "Biotechnology",
           "notes": "portfolio holding",
-          "market_cap": 25378448498.999996
+          "market_cap": 23547279958.929874
         }
       ],
       "portfolio_holdings": [
@@ -3044,7 +3044,7 @@
           "exchange": null,
           "subsector": "Financial Services",
           "notes": "portfolio holding",
-          "market_cap": 1055400327699.8011
+          "market_cap": 1056537169766.3331
         },
         {
           "rank": 2,
@@ -3053,7 +3053,7 @@
           "exchange": null,
           "subsector": "Banking",
           "notes": "portfolio holding",
-          "market_cap": 871430725043.0
+          "market_cap": 888204466937.0076
         },
         {
           "rank": 3,
@@ -3062,7 +3062,7 @@
           "exchange": null,
           "subsector": "Banking",
           "notes": "portfolio holding",
-          "market_cap": 398828382074.0
+          "market_cap": 407131392875.1847
         },
         {
           "rank": 4,
@@ -3071,7 +3071,7 @@
           "exchange": null,
           "subsector": "Financial Services",
           "notes": "portfolio holding",
-          "market_cap": 97476170909.0
+          "market_cap": 95276985915.76874
         },
         {
           "rank": 5,
@@ -3161,7 +3161,7 @@
           ]
         }
       ],
-      "classified_ticker_count": 6
+      "classified_ticker_count": 7
     },
     {
       "id": "industrials",
@@ -3193,7 +3193,7 @@
           "exchange": null,
           "subsector": "Machinery",
           "notes": "portfolio holding",
-          "market_cap": 454105194299.99994
+          "market_cap": 470900020317.1004
         },
         {
           "rank": 2,
@@ -3202,7 +3202,7 @@
           "exchange": null,
           "subsector": "Aerospace & Defense",
           "notes": "portfolio holding",
-          "market_cap": 373139160199.99994
+          "market_cap": 370509950146.0239
         },
         {
           "rank": 3,
@@ -3211,7 +3211,7 @@
           "exchange": null,
           "subsector": "Electrical Equipment",
           "notes": "portfolio holding",
-          "market_cap": 298206641706.0
+          "market_cap": 303005980843.32996
         },
         {
           "rank": 4,
@@ -3220,7 +3220,7 @@
           "exchange": null,
           "subsector": "Aerospace & Defense",
           "notes": "portfolio holding",
-          "market_cap": 249944437907.0
+          "market_cap": 244867441512.0141
         },
         {
           "rank": 5,
@@ -3229,7 +3229,7 @@
           "exchange": null,
           "subsector": "Road & Rail",
           "notes": "portfolio holding",
-          "market_cap": 145830311048.0
+          "market_cap": 145402835261.84592
         }
       ],
       "portfolio_holdings": [
@@ -3387,7 +3387,7 @@
           "exchange": null,
           "subsector": "Metals & Mining",
           "notes": "cap-ranked seed",
-          "market_cap": 160966989699.0
+          "market_cap": 158447317751.19
         },
         {
           "rank": 2,
@@ -3405,7 +3405,7 @@
           "exchange": null,
           "subsector": "Metals & Mining",
           "notes": "cap-ranked seed",
-          "market_cap": 98731608495.0
+          "market_cap": 99493515200.04294
         },
         {
           "rank": 4,
@@ -3414,7 +3414,7 @@
           "exchange": null,
           "subsector": "Chemicals",
           "notes": "cap-ranked seed",
-          "market_cap": 22869126039.999996
+          "market_cap": 22191629081.991802
         },
         {
           "rank": 5,
@@ -3423,7 +3423,7 @@
           "exchange": null,
           "subsector": "Chemicals",
           "notes": "cap-ranked seed",
-          "market_cap": 19557346073.0
+          "market_cap": 19754108305.551666
         }
       ],
       "portfolio_holdings": [],
@@ -3466,7 +3466,7 @@
           "exchange": null,
           "subsector": "Energy",
           "notes": "cap-ranked seed",
-          "market_cap": 345801131974.0
+          "market_cap": 348649116877.086
         },
         {
           "rank": 3,
@@ -3475,7 +3475,7 @@
           "exchange": null,
           "subsector": "Energy",
           "notes": "cap-ranked seed",
-          "market_cap": 131258987065.0
+          "market_cap": 133646843150.45946
         },
         {
           "rank": 4,
@@ -3484,7 +3484,7 @@
           "exchange": null,
           "subsector": "Energy",
           "notes": "cap-ranked seed",
-          "market_cap": 71897321039.0
+          "market_cap": 71688012971.92868
         },
         {
           "rank": 5,
@@ -3493,7 +3493,7 @@
           "exchange": null,
           "subsector": "Energy",
           "notes": "cap-ranked seed",
-          "market_cap": 66611345319.99999
+          "market_cap": 67521467830.391235
         }
       ],
       "portfolio_holdings": [],
@@ -3526,7 +3526,7 @@
           "exchange": null,
           "subsector": "Utilities",
           "notes": "cap-ranked seed",
-          "market_cap": 180903379699.99997
+          "market_cap": 179506200859.66568
         },
         {
           "rank": 2,
@@ -3544,7 +3544,7 @@
           "exchange": null,
           "subsector": "Utilities",
           "notes": "cap-ranked seed",
-          "market_cap": 96560784742.99998
+          "market_cap": 96295722036.6168
         },
         {
           "rank": 4,
@@ -3562,7 +3562,7 @@
           "exchange": null,
           "subsector": "Utilities",
           "notes": "cap-ranked seed",
-          "market_cap": 60167454181.0
+          "market_cap": 59842034534.06287
         }
       ],
       "portfolio_holdings": [],
@@ -3606,7 +3606,7 @@
           "exchange": null,
           "subsector": "Real Estate",
           "notes": "cap-ranked seed",
-          "market_cap": 133798432131.99995
+          "market_cap": 136930614014.12808
         },
         {
           "rank": 3,
@@ -3615,7 +3615,7 @@
           "exchange": null,
           "subsector": "Real Estate",
           "notes": "cap-ranked seed",
-          "market_cap": 82020475763.0
+          "market_cap": 82197515131.30411
         },
         {
           "rank": 4,
@@ -3624,7 +3624,7 @@
           "exchange": null,
           "subsector": "Real Estate",
           "notes": "cap-ranked seed",
-          "market_cap": 68530499039.99999
+          "market_cap": 69581172474.38982
         },
         {
           "rank": 5,
