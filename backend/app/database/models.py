@@ -133,7 +133,7 @@ class VirtualPosition(Base):
     __tablename__ = "virtual_positions"
 
     ticker = Column(String, nullable=False)
-    mode = Column(String, nullable=False, default="real")
+    mode = Column(String, nullable=False, default="paper")  # Alpaca account key: "paper" | "live"
     quantity = Column(Float, nullable=False, default=0.0)
     entry_price = Column(Float, nullable=False, default=0.0)
     policy = Column(String, nullable=False, default="rebalance")  # 'rebalance', 'lock', 'liquidate'
@@ -257,7 +257,7 @@ class VirtualOrder(Base):
     __tablename__ = "virtual_orders"
 
     id = Column(String, primary_key=True)
-    mode = Column(String, nullable=False, default="real")
+    mode = Column(String, nullable=False, default="paper")  # Alpaca account key: "paper" | "live"
     ticker = Column(String, nullable=False)
     qty = Column(Float, nullable=False)
     side = Column(String, nullable=False)  # 'buy' or 'sell'
@@ -504,6 +504,37 @@ class ExternalOrder(Base):
     execution_date = Column(String, nullable=True)  # YYYY-MM-DD
     created_at = Column(String, nullable=False)
     updated_at = Column(String, nullable=False)
+
+
+class PendingTrade(Base):
+    """A bot-calculated trade for a gated Alpaca account, awaiting human approval before placement.
+
+    When an account's approval gate is ON, run_execution() queues each intended order here instead of
+    submitting it. The user approves (choosing market-bracket or limit) or rejects in the UI; unapproved
+    rows expire at end of trading day. `account_key` matches the registry key / VirtualOrder.mode
+    ("paper" | "live")."""
+    __tablename__ = "pending_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_key = Column(String, nullable=False)          # "paper" | "live"
+    ticker = Column(String, nullable=False)
+    side = Column(String, nullable=False)                 # "buy" | "sell"
+    qty = Column(Float, nullable=False)
+    intended_type = Column(String, nullable=False, default="market")  # bot's intended order type
+    limit_price = Column(Float, nullable=True)            # set by the user at approval (limit path)
+    take_profit = Column(Float, nullable=True)            # bot bracket take-profit
+    stop_loss = Column(Float, nullable=True)              # bot bracket stop-loss
+    intended_price = Column(Float, nullable=True)         # entry price the bot sized against
+    time_in_force = Column(String, nullable=False, default="gtc")
+    sleeve = Column(String, nullable=True)                # "swing" | "high-risk" | "longterm"
+    label = Column(String, nullable=True)
+    reason = Column(String, nullable=True)                # human-readable rationale
+    # 'pending_approval' | 'approved' | 'rejected' | 'expired' | 'submitted'
+    status = Column(String, nullable=False, default="pending_approval")
+    broker_order_id = Column(String, nullable=True)       # set once submitted to Alpaca
+    created_at = Column(String, nullable=False)
+    expires_at = Column(String, nullable=False)           # YYYY-MM-DD; end of the trading day queued
+    decided_at = Column(String, nullable=True)            # when approved/rejected
 
 
 class ExternalTransaction(Base):

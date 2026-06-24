@@ -2152,6 +2152,15 @@ class AutoTradingRequest(BaseModel):
     paused: bool
 
 
+class GateRequest(BaseModel):
+    gate_on: bool
+
+
+class ApprovePendingRequest(BaseModel):
+    placement: str = "market_bracket"      # "market_bracket" | "limit"
+    limit_price: Optional[float] = None     # required when placement == "limit"
+
+
 class EquityAutoTradeBlockRequest(BaseModel):
     ticker: str
     blocked: bool
@@ -2579,7 +2588,7 @@ async def import_equity_lots_pdf(
 
 
 # --- External Portfolio Manager (Tab 6) Endpoints ---
-from app.database import ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding
+from app.database import ExternalAccount, ExternalOrder, ExternalTransaction, ExternalStatementHolding, PendingTrade
 from pydantic import BaseModel
 
 class ExternalAccountRequest(BaseModel):
@@ -3968,6 +3977,129 @@ def set_auto_trading(req: AutoTradingRequest, db=Depends(get_db)):
     row.value = "true" if req.paused else "false"
     db.commit()
     return {"status": "success", "auto_trading_paused": req.paused}
+
+
+@app.get("/api/execution/accounts")
+def list_execution_accounts(db=Depends(get_db)):
+    """The Alpaca accounts the bot can trade, with their configured + approval-gate state."""
+    from execution.accounts import ACCOUNTS, is_configured
+    from execution.executor import approval_gate_on
+    return [
+        {
+            "key": acc.key,
+            "label": acc.label,
+            "is_live": acc.is_live,
+            "configured": is_configured(acc),
+            "gate_on": approval_gate_on(db, acc.key),
+        }
+        for acc in ACCOUNTS.values()
+    ]
+
+
+@app.post("/api/execution/accounts/{account_key}/gate")
+def set_account_gate(account_key: str, req: GateRequest, db=Depends(get_db)):
+    """Toggle the per-account human-approval gate. When ON, the bot queues every calculated trade for
+    your approval instead of placing it on that account."""
+    from execution.accounts import get_account
+    from execution.executor import approval_gate_key
+    if get_account(account_key) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown account '{account_key}'")
+    key = approval_gate_key(account_key)
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if not row:
+        row = AppSetting(key=key)
+        db.add(row)
+    row.value = "true" if req.gate_on else "false"
+    db.commit()
+    return {"status": "success", "account_key": account_key, "gate_on": req.gate_on}
+
+
+def _pending_trade_dict(row):
+    return {
+        "id": row.id, "account_key": row.account_key, "ticker": row.ticker, "side": row.side,
+        "qty": row.qty, "intended_type": row.intended_type, "limit_price": row.limit_price,
+        "take_profit": row.take_profit, "stop_loss": row.stop_loss, "intended_price": row.intended_price,
+        "time_in_force": row.time_in_force, "sleeve": row.sleeve, "label": row.label,
+        "reason": row.reason, "status": row.status, "broker_order_id": row.broker_order_id,
+        "created_at": row.created_at, "expires_at": row.expires_at, "decided_at": row.decided_at,
+    }
+
+
+@app.get("/api/pending-trades")
+def get_pending_trades(account_key: Optional[str] = None, include_decided: bool = False, db=Depends(get_db)):
+    """Bot-calculated trades awaiting approval for a gated account. Stale pending rows are expired first."""
+    from execution.executor import _expire_stale_pending
+    _expire_stale_pending(db)
+    q = db.query(PendingTrade)
+    if account_key:
+        q = q.filter(PendingTrade.account_key == account_key)
+    if not include_decided:
+        q = q.filter(PendingTrade.status == "pending_approval")
+    rows = q.order_by(PendingTrade.created_at.desc()).all()
+    return [_pending_trade_dict(r) for r in rows]
+
+
+@app.post("/api/pending-trades/{pending_id}/reject")
+def reject_pending_trade(pending_id: int, db=Depends(get_db)):
+    row = db.query(PendingTrade).filter(PendingTrade.id == pending_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Pending trade not found")
+    if row.status != "pending_approval":
+        raise HTTPException(status_code=409, detail=f"Trade is already '{row.status}'")
+    row.status = "rejected"
+    row.decided_at = datetime.now().isoformat()
+    db.commit()
+    return {"status": "success", "pending_trade": _pending_trade_dict(row)}
+
+
+@app.post("/api/pending-trades/{pending_id}/approve")
+def approve_pending_trade(pending_id: int, req: ApprovePendingRequest, db=Depends(get_db)):
+    """Approve a queued trade and place it on Alpaca. Placement is the user's per-trade choice:
+    'market_bracket' (the bot's intended market order + TP/SL) or 'limit' (a plain limit at the given
+    price; bracket legs are NOT applied to limit orders)."""
+    from execution.accounts import get_account, is_configured
+    from execution.executor import get_alpaca_api, _submit_alpaca_order, _record_submitted_order
+
+    row = db.query(PendingTrade).filter(PendingTrade.id == pending_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Pending trade not found")
+    # Double-submit guard: only a still-pending row can be approved.
+    if row.status != "pending_approval":
+        raise HTTPException(status_code=409, detail=f"Trade is already '{row.status}'")
+
+    acc = get_account(row.account_key)
+    if acc is None or (acc.is_live and not is_configured(acc)):
+        raise HTTPException(status_code=400, detail=f"Account '{row.account_key}' is not configured")
+    api = get_alpaca_api(row.account_key)
+    if api is None:
+        raise HTTPException(status_code=400, detail=f"Could not connect to account '{row.account_key}'")
+
+    placement = (req.placement or "market_bracket").lower()
+    params = {"ticker": row.ticker, "side": row.side, "qty": row.qty,
+              "intended_price": row.intended_price, "time_in_force": row.time_in_force or "gtc"}
+    if placement == "limit":
+        if not req.limit_price or req.limit_price <= 0:
+            raise HTTPException(status_code=400, detail="limit_price must be > 0 for a limit order")
+        params.update({"type": "limit", "limit_price": float(req.limit_price)})
+    elif placement == "market_bracket":
+        params.update({"type": "market", "take_profit": row.take_profit, "stop_loss": row.stop_loss})
+    else:
+        raise HTTPException(status_code=400, detail="placement must be 'market_bracket' or 'limit'")
+
+    try:
+        order = _submit_alpaca_order(api, params)
+    except Exception as e:
+        # Leave the row pending so the user can retry (e.g. as a limit if a stale stop was rejected).
+        raise HTTPException(status_code=400, detail=f"Broker rejected the order: {e}")
+
+    row.status = "submitted"
+    row.broker_order_id = str(order.id)
+    row.limit_price = params.get("limit_price")
+    row.decided_at = datetime.now().isoformat()
+    db.commit()
+    filled = _record_submitted_order(db, api, row.account_key, order, params)
+    return {"status": "success", "filled": bool(filled),
+            "order_id": str(order.id), "pending_trade": _pending_trade_dict(row)}
 
 
 @app.post("/api/simulate")

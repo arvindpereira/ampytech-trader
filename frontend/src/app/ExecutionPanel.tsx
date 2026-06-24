@@ -97,7 +97,8 @@ export default function ExecutionPanel({ onTickerClick }: { onTickerClick?: (t: 
     if (pipeline?.running) return;
     const ok = window.confirm(
       'Run the full trading pipeline now?\n\nThis will: refresh data + news, retrain models if stale, '
-      + 'regenerate signals, and PLACE/ENQUEUE REAL TRADES on Alpaca (unless auto-trading is paused).'
+      + 'regenerate signals, and PLACE/ENQUEUE REAL TRADES on Alpaca (unless auto-trading is paused). '
+      + 'Accounts with the approval gate ON will queue their trades for your approval instead of placing them.'
     );
     if (!ok) return;
     setPipeline({ running: true, stage: 'Starting…', progress: 0 });

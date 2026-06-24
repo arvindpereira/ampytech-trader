@@ -193,6 +193,22 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for ticker_metadata company columns: {em}")
 
+    # 11. Re-key legacy single-account bookkeeping (mode='real') to the paper account. The bot used to
+    #     run one Alpaca account whose default base URL is paper, so that data IS the paper account.
+    #     One-way, idempotent. NOTE: broker_performance_logs.mode uses 'live'/'replay' (a sim label,
+    #     unrelated to the new live account) and never 'real', so it is intentionally left untouched.
+    try:
+        for _tbl in ("virtual_orders", "virtual_positions"):
+            cols = [c["name"] for c in inspector.get_columns(_tbl)]
+            if "mode" in cols:
+                with engine.connect() as conn:
+                    res = conn.execute(text(f"UPDATE {_tbl} SET mode='paper' WHERE mode='real'"))
+                    conn.commit()
+                    if res.rowcount:
+                        print(f"Re-keyed {res.rowcount} {_tbl} row(s) from mode='real' to 'paper'.")
+    except Exception as em:
+        print(f"Auto-migration check failed re-keying mode='real'->'paper': {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE

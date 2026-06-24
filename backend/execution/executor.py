@@ -13,6 +13,7 @@ from app.core.config import (
     ALPACA_SECRET_KEY,
     ALPACA_BASE_URL,
     TICKER_UNIVERSE,
+    # (live creds are read via execution.accounts, not directly here)
     HEDGE_MODE,
     EXECUTION_STRATEGY,
     SWING_POSITION_PCT,
@@ -27,8 +28,9 @@ from app.core.config import (
 from app.database import (
     SessionLocal, init_db, ExecutedTrade, RecentPrice,
     VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
-    UniverseTicker, AppSetting, TradingBlock
+    UniverseTicker, AppSetting, TradingBlock, PendingTrade
 )
+from execution.accounts import get_account, is_configured, enabled_account_keys
 from ml_engine.models import PortfolioOptimizer
 import numpy as np
 
@@ -43,6 +45,125 @@ def auto_trading_paused(db):
     """Global kill-switch. When set, run_execution() halts ALL trading (buys and sells)."""
     row = db.query(AppSetting).filter(AppSetting.key == AUTO_TRADING_PAUSED_KEY).first()
     return bool(row and str(row.value).lower() in ("true", "1", "yes"))
+
+
+def approval_gate_key(account_key):
+    return f"approval_gate:{account_key}"
+
+
+def approval_gate_on(db, account_key):
+    """Whether the per-account human-approval gate is ON. When ON, run_execution() queues each
+    calculated trade for approval instead of submitting it. No DB row → the account's default
+    (live ON, paper OFF). Unknown account → True (fail safe: gate rather than auto-trade)."""
+    acc = get_account(account_key)
+    if acc is None:
+        return True
+    row = db.query(AppSetting).filter(AppSetting.key == approval_gate_key(account_key)).first()
+    if row is None:
+        return bool(acc.default_gate)
+    return str(row.value).lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Order placement choke-point: submit to Alpaca, or queue for human approval.
+# EVERY order submission in run_execution routes through place_or_queue_order so the per-account
+# gate is enforced in exactly one place.
+# ---------------------------------------------------------------------------
+def _submit_alpaca_order(api, p):
+    """Submit one order to Alpaca from a params dict. The single raw-submit implementation, shared by
+    the executor's submit sites and the approval endpoint so a market-bracket approval is byte-identical
+    to what the bot would have placed.
+
+    p keys: ticker, side ('buy'|'sell'), qty, type ('market'|'limit'), time_in_force,
+            take_profit, stop_loss (bracket legs, market only), limit_price (limit only)."""
+    ticker, side, qty = p["ticker"], p["side"], p["qty"]
+    otype = p.get("type", "market")
+    tif = p.get("time_in_force", "gtc")
+    if otype == "limit":
+        return api.submit_order(symbol=ticker, qty=qty, side=side, type="limit",
+                                time_in_force=tif, limit_price=round(float(p["limit_price"]), 2))
+    tp, sl = p.get("take_profit"), p.get("stop_loss")
+    if tp and sl:
+        return api.submit_order(symbol=ticker, qty=qty, side=side, type="market", time_in_force=tif,
+                                order_class="bracket",
+                                take_profit=dict(limit_price=round(float(tp), 2)),
+                                stop_loss=dict(stop_price=round(float(sl), 2)))
+    return api.submit_order(symbol=ticker, qty=qty, side=side, type="market", time_in_force=tif)
+
+
+def _record_submitted_order(db, api, account_key, order, p):
+    """Record a just-submitted order locally (ExecutedTrade + VirtualOrder) and poll for the fill.
+    Generic over buy/sell; used by the approval endpoint. Returns whether the fill was confirmed."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    side, ticker, qty = p["side"], p["ticker"], float(p["qty"])
+    price = float(p.get("intended_price") or p.get("limit_price") or 0.0)
+    db.add(ExecutedTrade(ticker=ticker, date=date_str, action=side.upper(), price=price,
+                         shares=qty, value=qty * price, status="filled"))
+    if not db.query(VirtualOrder).filter(VirtualOrder.id == order.id).first():
+        vo = VirtualOrder(id=order.id, mode=account_key, ticker=ticker, qty=qty, side=side,
+                          type=p.get("type", "market"), status="submitted",
+                          created_at=datetime.now().isoformat())
+        if p.get("stop_loss"):
+            vo.stop_loss = float(p["stop_loss"])
+        if p.get("take_profit"):
+            vo.take_profit = float(p["take_profit"])
+        db.add(vo)
+    db.commit()
+    return _poll_and_record_fill(api, db, order.id, ticker, side, mode=account_key)
+
+
+def place_or_queue_order(account_key, db, api, order_params, *, gate_override=None):
+    """The choke-point. Gate ON → queue a PendingTrade for human approval (no broker call). Gate OFF →
+    submit to Alpaca and return the order so the caller does its own bookkeeping.
+
+    order_params keys: ticker, side, qty, type, time_in_force, take_profit, stop_loss, intended_price,
+                       sleeve, label, reason.
+    Returns {"action": "queued"|"submitted", "order": <alpaca order|None>, "pending_id": <int|None>}."""
+    gate = approval_gate_on(db, account_key) if gate_override is None else gate_override
+    if gate:
+        now = datetime.now()
+        row = PendingTrade(
+            account_key=account_key, ticker=order_params["ticker"], side=order_params["side"],
+            qty=float(order_params["qty"]), intended_type=order_params.get("type", "market"),
+            take_profit=order_params.get("take_profit"), stop_loss=order_params.get("stop_loss"),
+            intended_price=order_params.get("intended_price"),
+            time_in_force=order_params.get("time_in_force", "gtc"),
+            sleeve=order_params.get("sleeve"), label=order_params.get("label"),
+            reason=order_params.get("reason"), status="pending_approval",
+            created_at=now.isoformat(), expires_at=now.strftime("%Y-%m-%d"),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        print(f"⏸ Gated [{account_key}]: queued {row.side} {row.qty} {row.ticker} for approval (#{row.id})")
+        return {"action": "queued", "order": None, "pending_id": row.id}
+
+    order = _submit_alpaca_order(api, order_params)
+    return {"action": "submitted", "order": order, "pending_id": None}
+
+
+# Local VirtualAccount row id per Alpaca account (id 1 is the historical sim book).
+_VIRTUAL_ACCOUNT_ID = {"paper": 2, "live": 3}
+
+
+def _virtual_account_id(account_key):
+    return _VIRTUAL_ACCOUNT_ID.get(account_key, 1)
+
+
+def _expire_stale_pending(db, as_of=None):
+    """Flip pending_approval rows whose expires_at is before `as_of` (default today) to 'expired'.
+    Returns the count expired. Shared by the EOD scheduler job and the lazy expiry on read."""
+    as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+    stale = db.query(PendingTrade).filter(
+        PendingTrade.status == "pending_approval", PendingTrade.expires_at < as_of
+    ).all()
+    now = datetime.now().isoformat()
+    for row in stale:
+        row.status = "expired"
+        row.decided_at = now
+    if stale:
+        db.commit()
+    return len(stale)
 
 
 def buy_block_reason(ticker, db, as_of=None):
@@ -74,16 +195,28 @@ def buy_block_reason(ticker, db, as_of=None):
         db.commit()
     return None
 
-def get_alpaca_api(force_virtual=False):
-    """Initializes and returns the Alpaca REST API object, defaulting to virtual broker if keys are missing."""
-    if force_virtual or not ALPACA_API_KEY or not ALPACA_SECRET_KEY:
+def get_alpaca_api(account_key="paper", force_virtual=False):
+    """Return the Alpaca REST client for a given account ("paper" | "live").
+
+    Paper falls back to the in-process virtual broker mock when creds are missing. A LIVE account with
+    missing creds returns None — it must NEVER be silently routed to the mock or to the paper account.
+    The default account_key="paper" keeps all existing no-arg callers byte-for-byte unchanged."""
+    acc = get_account(account_key)
+    if acc is None:
+        print(f"Unknown Alpaca account '{account_key}'.")
+        return None
+
+    if force_virtual or not is_configured(acc):
+        if acc.is_live:
+            # Safety: do not fabricate a live client. Caller must skip this account.
+            return None
         base_url = "http://localhost:8008/api/virtual_alpaca"
         key_id = "VIRTUAL"
         secret_key = "VIRTUAL"
     else:
-        base_url = ALPACA_BASE_URL or "https://paper-api.alpaca.markets"
-        key_id = ALPACA_API_KEY
-        secret_key = ALPACA_SECRET_KEY
+        base_url = acc.base_url
+        key_id = acc.api_key
+        secret_key = acc.secret_key
 
     try:
         import alpaca_trade_api as tradeapi
@@ -101,9 +234,10 @@ def get_alpaca_api(force_virtual=False):
             return tradeapi.REST(key_id=key_id, secret_key=secret_key, base_url=base_url, api_version='v2')
         return None
 
-def _is_real_alpaca():
-    """True only when real Alpaca credentials are configured (the virtual broker mock cannot short)."""
-    return bool(ALPACA_API_KEY and ALPACA_SECRET_KEY)
+def _is_real_alpaca(account_key="paper"):
+    """True only when real Alpaca credentials are configured for the account (the virtual broker mock
+    cannot short)."""
+    return is_configured(get_account(account_key))
 
 
 def _maybe_place_hedge(api, db, sug, long_shares, long_price, mode, date_str):
@@ -111,6 +245,7 @@ def _maybe_place_hedge(api, db, sug, long_shares, long_price, mode, date_str):
 
     Guarded: only on real Alpaca (which supports shorting). On the virtual broker it logs and skips so
     backtests/sims stay long-only and the user knows to place the hedge manually (see the UI trade plan).
+    `mode` is the account key, so the short-capability check is account-specific.
     """
     hedge = sug.get("hedge") if isinstance(sug, dict) else None
     if not hedge or not hedge.get("symbol"):
@@ -121,7 +256,7 @@ def _maybe_place_hedge(api, db, sug, long_shares, long_price, mode, date_str):
     if ratio <= 0 or not hprice:
         return
 
-    if not _is_real_alpaca():
+    if not _is_real_alpaca(mode):
         print(f"Hedge for {sug['ticker']} ({HEDGE_MODE}): SHORT {hsym} skipped — virtual broker can't short. "
               f"Execute manually if desired (see trade plan).")
         return
@@ -248,10 +383,10 @@ def check_alpaca_authentication(api):
         print(f"CRITICAL ERROR: Alpaca API Authentication failed: {e}")
         raise e
 
-def sync_broker_orders(db, api):
+def sync_broker_orders(db, api, mode="paper"):
     """
     Queries SQLite database for pending/submitted orders, checks status on Alpaca,
-    and resolves the statuses accordingly.
+    and resolves the statuses accordingly. `mode` is the account key ("paper"|"live").
     """
     if not api:
         return
@@ -259,7 +394,7 @@ def sync_broker_orders(db, api):
     # Fetch orders that are not in a final state
     pending_orders = db.query(VirtualOrder).filter(
         VirtualOrder.status.in_(["pending", "submitted", "accepted", "partially_filled"]),
-        VirtualOrder.mode == "real"
+        VirtualOrder.mode == mode
     ).all()
 
     if not pending_orders:
@@ -281,7 +416,7 @@ def sync_broker_orders(db, api):
                 # Update database VirtualPosition directly for the fill
                 pos = db.query(VirtualPosition).filter(
                     VirtualPosition.ticker == order.ticker,
-                    VirtualPosition.mode == "real"
+                    VirtualPosition.mode == mode
                 ).first()
                 qty = float(order.qty)
                 price = float(order.filled_price) if order.filled_price else 100.0
@@ -292,7 +427,7 @@ def sync_broker_orders(db, api):
                         pos.entry_price = ((pos.quantity * pos.entry_price) + (qty * price)) / new_qty
                         pos.quantity = new_qty
                     else:
-                        pos = VirtualPosition(ticker=order.ticker, mode="real", quantity=qty, entry_price=price, policy="rebalance")
+                        pos = VirtualPosition(ticker=order.ticker, mode=mode, quantity=qty, entry_price=price, policy="rebalance")
                         db.add(pos)
                 elif order.side == "sell":
                     if pos:
@@ -332,10 +467,11 @@ def _has_real_broker_sell(api, ticker, lookback_days=4):
         return True
 
 
-def sync_broker_positions(db, api):
+def sync_broker_positions(db, api, mode="paper"):
     """
     Compares local database VirtualPosition values with live positions on Alpaca.
     Corrects discrepancies and logs synthetic transactions to maintain FIFO consistency.
+    `mode` is the account key ("paper"|"live"); local rows and the cash row are scoped to it.
     """
     if not api:
         return
@@ -347,7 +483,7 @@ def sync_broker_positions(db, api):
         broker_pos_dict = {p.symbol: p for p in broker_positions}
 
         # 2. Fetch local positions from SQLite
-        local_positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "real").all()
+        local_positions = db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()
         local_pos_dict = {p.ticker: p for p in local_positions}
 
         # 3. Align positions
@@ -359,14 +495,14 @@ def sync_broker_positions(db, api):
 
             if not l_pos:
                 print(f"Reconcile: {ticker} held on broker ({b_qty} shares) but missing locally. Creating local position.")
-                l_pos = VirtualPosition(ticker=ticker, mode="real", quantity=b_qty, entry_price=b_price, policy="rebalance")
+                l_pos = VirtualPosition(ticker=ticker, mode=mode, quantity=b_qty, entry_price=b_price, policy="rebalance")
                 db.add(l_pos)
 
                 # Create synthetic buy order for FIFO lot
                 sync_order_id = f"sync-buy-{ticker}-{int(time.time())}"
                 sync_order = VirtualOrder(
                     id=sync_order_id,
-                    mode="real",
+                    mode=mode,
                     ticker=ticker,
                     qty=b_qty,
                     side="buy",
@@ -398,7 +534,7 @@ def sync_broker_positions(db, api):
                 sync_order_id = f"sync-{action}-{ticker}-{int(time.time())}"
                 sync_order = VirtualOrder(
                     id=sync_order_id,
-                    mode="real",
+                    mode=mode,
                     ticker=ticker,
                     qty=abs(diff),
                     side=action,
@@ -429,7 +565,7 @@ def sync_broker_positions(db, api):
                 sync_order_id = f"sync-sell-{ticker}-{int(time.time())}"
                 sync_order = VirtualOrder(
                     id=sync_order_id,
-                    mode="real",
+                    mode=mode,
                     ticker=ticker,
                     qty=l_pos.quantity,
                     side="sell",
@@ -443,7 +579,8 @@ def sync_broker_positions(db, api):
                 db.commit()
 
         # 5. Sync cash balance
-        account = db.query(VirtualAccount).filter(VirtualAccount.id == 2).first()
+        acct_id = _virtual_account_id(mode)
+        account = db.query(VirtualAccount).filter(VirtualAccount.id == acct_id).first()
         try:
             broker_account = api.get_account()
             b_cash = float(broker_account.cash)
@@ -454,7 +591,7 @@ def sync_broker_positions(db, api):
                     account.buying_power = b_cash
                     db.commit()
             else:
-                account = VirtualAccount(id=2, cash=b_cash, buying_power=b_cash, equity=b_cash)
+                account = VirtualAccount(id=acct_id, cash=b_cash, buying_power=b_cash, equity=b_cash)
                 db.add(account)
                 db.commit()
         except Exception as e:
@@ -644,7 +781,7 @@ def execute_alpaca_live_paper_trade(api, db, suggestions_data, mode="real"):
         sim_date = datetime.now().strftime("%Y-%m-%d")
     execute_long_term_grid_trades(db, api, suggestions_data, sim_date)
 
-def close_aged_swing_positions(api, db, mode="real", horizon_days=None, allowed_tickers=None):
+def close_aged_swing_positions(api, db, mode="paper", horizon_days=None, allowed_tickers=None):
     """Closes swing positions held past their intended horizon that haven't hit a bracket.
 
     The validated strategy exits at the triple-barrier OR at the horizon; Alpaca brackets only cover the
@@ -678,6 +815,18 @@ def close_aged_swing_positions(api, db, mode="real", horizon_days=None, allowed_
         age = (now - opened).days
         if age >= max_cal_days:
             print(f"Swing horizon exit: {ticker} held {age}d (≥ ~{horizon_days} trading days). Closing.")
+            # When the account is gated, queue the exit for approval instead of flattening now.
+            if approval_gate_on(db, mode):
+                try:
+                    exit_price = float(api.get_latest_trade(ticker).price)
+                except Exception:
+                    exit_price = None
+                place_or_queue_order(mode, db, api, {
+                    "ticker": ticker, "side": "sell", "qty": float(pos.qty), "type": "market",
+                    "time_in_force": "gtc", "intended_price": exit_price, "sleeve": "swing",
+                    "label": "swing-horizon", "reason": f"swing horizon exit (held {age}d)",
+                }, gate_override=True)
+                continue
             try:
                 api.close_position(ticker)   # cancels the bracket OCO and flattens
                 db.add(VirtualOrder(id=f"swing-horizon-{ticker}-{int(time.time())}", mode=mode, ticker=ticker,
@@ -689,7 +838,7 @@ def close_aged_swing_positions(api, db, mode="real", horizon_days=None, allowed_
                 db.rollback()
 
 
-def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_tickers=None, budget=None,
+def execute_swing_paper_trades(api, db, suggestions_data, mode="paper", allowed_tickers=None, budget=None,
                                suggestions_key="swing_suggestions", label="swing", position_pct=None):
     """Places swing (multi-day) bracket trades on Alpaca paper from `swing_suggestions`.
 
@@ -785,15 +934,26 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
             continue
 
         stop_loss, take_profit = stop_price, target_price
-        print(f"Submitting swing bracket order for {ticker}: {shares} sh @ ~${entry_price:.2f} "
+        order_params = {
+            "ticker": ticker, "side": "buy", "qty": shares, "type": "market", "time_in_force": "gtc",
+            "take_profit": round(take_profit, 2), "stop_loss": round(stop_loss, 2),
+            "intended_price": round(entry_price, 2), "sleeve": label, "label": label,
+            "reason": f"{label} entry · conf {sug['confidence']*100:.0f}%",
+        }
+        print(f"Placing swing bracket order for {ticker}: {shares} sh @ ~${entry_price:.2f} "
               f"(stop ${stop_loss:.2f}, target ${take_profit:.2f}, conf {sug['confidence']*100:.0f}%)...")
         try:
-            order = api.submit_order(
-                symbol=ticker, qty=shares, side="buy", type="market", time_in_force="gtc",
-                order_class="bracket",
-                take_profit=dict(limit_price=round(take_profit, 2)),
-                stop_loss=dict(stop_price=round(stop_loss, 2)),
-            )
+            res = place_or_queue_order(mode, db, api, order_params)
+            buying_power -= shares * entry_price
+            remaining_budget -= shares * entry_price
+            if res["action"] == "queued":
+                submitted.append({"ticker": ticker, "sleeve": label, "side": "buy", "shares": int(shares),
+                                  "price": round(entry_price, 2), "value": round(shares * entry_price, 2),
+                                  "stop": round(stop_loss, 2), "target": round(take_profit, 2),
+                                  "tif": "gtc", "status": "queued_for_approval", "pending_id": res["pending_id"]})
+                print(f"  Queued for approval (#{res['pending_id']}).")
+                continue
+            order = res["order"]
             db.add(ExecutedTrade(ticker=ticker, date=date_str, action="BUY", price=entry_price,
                                  shares=float(shares), value=float(shares * entry_price), status="filled"))
             if not db.query(VirtualOrder).filter(VirtualOrder.id == order.id).first():
@@ -802,12 +962,10 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="real", allowed_t
                                     stop_loss=float(stop_loss), take_profit=float(take_profit),
                                     created_at=datetime.now().isoformat()))
             db.commit()
-            buying_power -= shares * entry_price
-            remaining_budget -= shares * entry_price
             # Record the entry fill against the local position so sync doesn't invent a sync-buy
             # lot for this swing name (the bracket's stop/take-profit legs sell on the broker and
             # are reconciled via the real-sell guard).
-            filled = _poll_and_record_fill(api, db, order.id, ticker, "buy")
+            filled = _poll_and_record_fill(api, db, order.id, ticker, "buy", mode=mode)
             submitted.append({"ticker": ticker, "sleeve": label, "side": "buy", "shares": int(shares),
                               "price": round(entry_price, 2), "value": round(shares * entry_price, 2),
                               "stop": round(stop_loss, 2), "target": round(take_profit, 2),
@@ -962,11 +1120,13 @@ def _poll_and_record_fill(api, db, order_id, ticker, side, mode="real", max_wait
     return True
 
 
-def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_tickers=None, budget_fraction=1.0):
+def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_tickers=None,
+                                  budget_fraction=1.0, account_key="paper"):
     """
     Executes long-term grid/tranche-based buying and tax-optimized FIFO selling for the stocks assigned
     the 'longterm' strategy. `allowed_tickers` restricts the set; `budget_fraction` (0..1) scales the
-    MPT target weights down to this bucket's share of equity (soft capital cap).
+    MPT target weights down to this bucket's share of equity (soft capital cap). `account_key` selects
+    the Alpaca account / local book and drives the approval gate.
     """
     print("--- Running Long-Term Grid/Tranche Rebalancing ---")
 
@@ -982,7 +1142,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
         print(f"Failed to get account for long-term rebalance: {e}")
         return submitted
 
-    positions_db = {p.ticker: p for p in db.query(VirtualPosition).all()}
+    positions_db = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == account_key).all()}
 
     # Load stock universe dynamically from DB (honoring user edits)
     db_tickers = db.query(UniverseTicker).all()
@@ -1035,18 +1195,25 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
 
                 if n_shares >= 0.01:
                     print(f"Long-Term Grid BUY: Symbol: {ticker}. Current: ${current_price:.2f}, Cost Basis: ${entry_price:.2f} ({price_dev*100:+.1f}%). Placing cautious tranche of {n_shares:.2f} shares.")
+                    grid_params = {"ticker": ticker, "side": "buy", "qty": n_shares, "type": "market",
+                                   "time_in_force": "day", "intended_price": round(current_price, 2),
+                                   "sleeve": "longterm", "label": "longterm",
+                                   "reason": f"grid buy · {price_dev*100:+.1f}% vs basis"}
                     try:
-                        lt_order = api.submit_order(
-                            symbol=ticker,
-                            qty=n_shares,
-                            side='buy',
-                            type='market',
-                            time_in_force='day'   # Alpaca requires DAY for fractional-share quantities
-                        )
+                        res = place_or_queue_order(account_key, db, api, grid_params)
+                        buying_power -= (n_shares * current_price)
+                        if res["action"] == "queued":
+                            submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "buy",
+                                              "shares": round(float(n_shares), 4), "price": round(current_price, 2),
+                                              "value": round(n_shares * current_price, 2), "tif": "day",
+                                              "status": "queued_for_approval", "pending_id": res["pending_id"]})
+                            continue
+                        lt_order = res["order"]
                         existing = db.query(VirtualOrder).filter(VirtualOrder.id == lt_order.id).first()
                         if not existing:
                             v_order = VirtualOrder(
                                 id=lt_order.id,
+                                mode=account_key,
                                 ticker=ticker,
                                 qty=float(n_shares),
                                 side="buy",
@@ -1056,8 +1223,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                             )
                             db.add(v_order)
                         db.commit()
-                        buying_power -= (n_shares * current_price)
-                        filled = _poll_and_record_fill(api, db, lt_order.id, ticker, "buy")
+                        filled = _poll_and_record_fill(api, db, lt_order.id, ticker, "buy", mode=account_key)
                         submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "buy",
                                           "shares": round(float(n_shares), 4), "price": round(current_price, 2),
                                           "value": round(n_shares * current_price, 2), "order_id": str(lt_order.id),
@@ -1076,18 +1242,24 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
 
                 if m_shares >= 0.01:
                     print(f"Long-Term Grid SELL (Tax-Optimized FIFO): Symbol: {ticker}. Current: ${current_price:.2f}, Cost Basis: ${entry_price:.2f} ({price_dev*100:+.1f}%). Selling {m_shares:.2f} shares.")
+                    grid_params = {"ticker": ticker, "side": "sell", "qty": m_shares, "type": "market",
+                                   "time_in_force": "day", "intended_price": round(current_price, 2),
+                                   "sleeve": "longterm", "label": "longterm",
+                                   "reason": f"grid take-profit · {price_dev*100:+.1f}% vs basis (LT-eligible)"}
                     try:
-                        lt_order = api.submit_order(
-                            symbol=ticker,
-                            qty=m_shares,
-                            side='sell',
-                            type='market',
-                            time_in_force='day'   # Alpaca requires DAY for fractional-share quantities
-                        )
+                        res = place_or_queue_order(account_key, db, api, grid_params)
+                        if res["action"] == "queued":
+                            submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "sell",
+                                              "shares": round(float(m_shares), 4), "price": round(current_price, 2),
+                                              "value": round(m_shares * current_price, 2), "tif": "day",
+                                              "status": "queued_for_approval", "pending_id": res["pending_id"]})
+                            continue
+                        lt_order = res["order"]
                         existing = db.query(VirtualOrder).filter(VirtualOrder.id == lt_order.id).first()
                         if not existing:
                             v_order = VirtualOrder(
                                 id=lt_order.id,
+                                mode=account_key,
                                 ticker=ticker,
                                 qty=float(m_shares),
                                 side="sell",
@@ -1097,7 +1269,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                             )
                             db.add(v_order)
                         db.commit()
-                        filled = _poll_and_record_fill(api, db, lt_order.id, ticker, "sell")
+                        filled = _poll_and_record_fill(api, db, lt_order.id, ticker, "sell", mode=account_key)
                         submitted.append({"ticker": ticker, "sleeve": "longterm", "side": "sell",
                                           "shares": round(float(m_shares), 4), "price": round(current_price, 2),
                                           "value": round(m_shares * current_price, 2), "order_id": str(lt_order.id),
@@ -1109,6 +1281,94 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
                         print(f"Long-Term Grid SELL skipped for {ticker}: Price is up {price_dev*100:+.1f}%, but no shares qualify as long-term (> 365 days held). Tax-eligible: {tax_eligible_shares:.2f} shares.")
 
     return submitted
+
+def _execute_for_account(db, account_key, api, suggestions_data):
+    """Run the bucket-aware execution for ONE Alpaca account and return its order summaries (each
+    tagged with account_key). All order placement routes through place_or_queue_order, so when the
+    account's gate is ON these are queued for approval rather than submitted."""
+    from app.main import get_strategy_buckets, get_strategy_assignments, get_sim_date
+    from app.core.config import SWING_AUTOSIZE, SWING_TOP_N, HIGH_RISK_TOP_N, HIGH_RISK_CAP
+    submitted = []
+
+    # Sync this account's local book with its broker before sizing/trading.
+    print(f"[{account_key}] Synchronizing with broker...")
+    sync_broker_orders(db, api, mode=account_key)
+    sync_broker_positions(db, api, mode=account_key)
+
+    buckets = get_strategy_buckets(db)
+    assignments = get_strategy_assignments(db)
+    swing_set = {t for t, s in assignments.items() if s == "swing"}
+    longterm_set = {t for t, s in assignments.items() if s == "longterm"}
+    # Speculative-tier names are split off into the small high-risk sleeve (aggressive model);
+    # the core swing book excludes them so the two sleeves never trade the same name.
+    try:
+        from ml_engine.swing_alpha import tickers_for_tiers, HIGH_RISK_TIERS
+        spec_set = set(tickers_for_tiers(HIGH_RISK_TIERS))
+    except Exception as e:
+        print(f"Tier lookup failed (high-risk sleeve disabled): {e}")
+        spec_set = set()
+    core_swing_set = swing_set - spec_set
+
+    try:
+        equity = float(api.get_account().equity)
+        broker_pos = api.list_positions()
+    except Exception as e:
+        print(f"Could not read account for bucket budgets: {e}")
+        equity, broker_pos = 0.0, []
+    deployed = {"swing": 0.0, "longterm": 0.0, "hold": 0.0}
+    for p in broker_pos:
+        strat = assignments.get(p.symbol, "swing")
+        deployed[strat] = deployed.get(strat, 0.0) + float(p.market_value)
+
+    # Regime overlay: shrink swing's effective capital in defensive regimes (freed → cash).
+    regime = suggestions_data.get("regime", "growth")
+    swing_factor = REGIME_SWING_FACTORS.get(regime, 1.0) if REGIME_OVERLAY_ENABLED else 1.0
+    swing_w_eff = buckets.get("swing", 0.0) * swing_factor
+    if swing_factor < 1.0:
+        print(f"[{account_key}] Regime overlay: {regime} → swing weight {buckets.get('swing',0):.2f} × {swing_factor} "
+              f"= {swing_w_eff:.2f} (freed capital held as cash)")
+
+    swing_budget = max(0.0, swing_w_eff * equity - deployed.get("swing", 0.0))
+    longterm_frac = buckets.get("longterm", 0.0)
+    print(f"[{account_key}] Buckets: swing {buckets.get('swing',0)*100:.0f}%→{swing_w_eff*100:.0f}% (avail ${swing_budget:.0f}), "
+          f"longterm {longterm_frac*100:.0f}% | regime {regime} | assigned swing={len(swing_set)} longterm={len(longterm_set)}")
+
+    swing_pos_pct = (buckets.get("swing", 0.0) / max(1, SWING_TOP_N)) if SWING_AUTOSIZE else None
+
+    close_aged_swing_positions(api, db, mode=account_key,
+                               allowed_tickers=core_swing_set if core_swing_set else None)
+    if buckets.get("swing", 0.0) > 0:
+        submitted += execute_swing_paper_trades(api, db, suggestions_data, mode=account_key,
+                                   allowed_tickers=core_swing_set, budget=swing_budget,
+                                   position_pct=swing_pos_pct) or []
+
+    # High-risk sleeve: AGGRESSIVE model on speculative names, hard-capped at HIGH_RISK_CAP of equity.
+    hr_frac = min(HIGH_RISK_CAP, buckets.get("high_risk", 0.0))
+    if hr_frac > 0 and spec_set:
+        deployed_hr = sum(float(p.market_value) for p in broker_pos if p.symbol in spec_set)
+        hr_budget = max(0.0, hr_frac * equity - deployed_hr)
+        print(f"[{account_key}] High-risk sleeve: {hr_frac*100:.1f}% cap (avail ${hr_budget:.0f}) over {len(spec_set)} speculative names")
+        close_aged_swing_positions(api, db, mode=account_key, allowed_tickers=spec_set)
+        if hr_budget >= 100.0:
+            hr_pos_pct = (hr_frac / max(1, HIGH_RISK_TOP_N)) if SWING_AUTOSIZE else None
+            submitted += execute_swing_paper_trades(api, db, suggestions_data, mode=account_key, allowed_tickers=spec_set,
+                                       budget=hr_budget, suggestions_key="high_risk_suggestions",
+                                       label="high-risk", position_pct=hr_pos_pct) or []
+
+    # Long-term bucket: MPT grid restricted to longterm-assigned tickers, scaled to the bucket.
+    if longterm_frac > 0 and longterm_set:
+        submitted += execute_long_term_grid_trades(db, api, suggestions_data,
+                                      get_sim_date() or datetime.now().strftime("%Y-%m-%d"),
+                                      allowed_tickers=longterm_set, budget_fraction=longterm_frac,
+                                      account_key=account_key) or []
+
+    print(f"[{account_key}] Running final synchronization post-trade...")
+    sync_broker_orders(db, api, mode=account_key)
+    sync_broker_positions(db, api, mode=account_key)
+    for o in submitted:
+        o.setdefault("account_key", account_key)
+    return submitted
+
 
 def run_execution(trigger="scheduled"):
     init_db()
@@ -1153,113 +1413,41 @@ def run_execution(trigger="scheduled"):
     from app.main import get_daily_suggestions
 
     try:
-        # Connect to Alpaca
-        api = get_alpaca_api()
+        # Model signals are account-agnostic — compute once and reuse across accounts.
+        print("Retrieving daily trade recommendations...")
+        suggestions_data = get_daily_suggestions(date=None, hedge_mode=HEDGE_MODE, db=db)
 
-        if api:
-            # 1. Perform authentication check
-            print("Verifying Alpaca credentials...")
-            check_alpaca_authentication(api)
+        # Snapshot the pre-trade decision plan (why each candidate will/won't trade) for the dashboard.
+        try:
+            from execution.plan import build_execution_plan
+            plan_snapshot = build_execution_plan(db, api=get_alpaca_api("paper"),
+                                                 suggestions_data=suggestions_data)
+        except Exception as e:
+            print(f"Execution plan snapshot failed: {e}")
 
-            # 2. Sync broker order states & reconcile positions at startup
-            print("Synchronizing with broker...")
-            sync_broker_orders(db, api)
-            sync_broker_positions(db, api)
-
-            # 3. Retrieve daily recommendations (with hedge plan attached when hedging is enabled)
-            print("Retrieving daily trade recommendations...")
-            suggestions_data = get_daily_suggestions(date=None, hedge_mode=HEDGE_MODE, db=db)
-
-            # Snapshot the pre-trade decision plan (why each candidate will/won't trade) for the dashboard.
+        # Run each enabled Alpaca account (paper, then live). A live account with no creds is skipped
+        # (get_alpaca_api returns None) — it is never routed to the mock or another account.
+        any_api = False
+        for account_key in enabled_account_keys():
+            api = get_alpaca_api(account_key)
+            if api is None:
+                print(f"Skipping account '{account_key}': unconfigured (no credentials).")
+                continue
+            gate = approval_gate_on(db, account_key)
+            print("\n" + "=" * 60)
+            print(f"▶ Executing account '{account_key}' "
+                  f"(approval gate {'ON — queueing trades for approval' if gate else 'OFF'})")
+            print("=" * 60)
             try:
-                from execution.plan import build_execution_plan
-                plan_snapshot = build_execution_plan(db, api=api, suggestions_data=suggestions_data)
+                check_alpaca_authentication(api)
             except Exception as e:
-                print(f"Execution plan snapshot failed: {e}")
+                print(f"Alpaca auth failed for '{account_key}': {e}; skipping this account.")
+                continue
+            any_api = True
+            submitted_orders += _execute_for_account(db, account_key, api, suggestions_data)
 
-            # 4. Bucket-aware, per-ticker-strategy execution. Each strategy trades only the tickers
-            #    assigned to it and deploys at most its bucket's share of equity (soft cap: never opens
-            #    NEW positions past the limit, but doesn't force-sell existing holdings).
-            from app.main import get_strategy_buckets, get_strategy_assignments, get_sim_date
-            buckets = get_strategy_buckets(db)
-            assignments = get_strategy_assignments(db)
-            swing_set = {t for t, s in assignments.items() if s == "swing"}
-            longterm_set = {t for t, s in assignments.items() if s == "longterm"}
-            # Speculative-tier names are split off into the small high-risk sleeve (aggressive model);
-            # the core swing book excludes them so the two sleeves never trade the same name.
-            try:
-                from ml_engine.swing_alpha import tickers_for_tiers, HIGH_RISK_TIERS
-                spec_set = set(tickers_for_tiers(HIGH_RISK_TIERS))
-            except Exception as e:
-                print(f"Tier lookup failed (high-risk sleeve disabled): {e}")
-                spec_set = set()
-            core_swing_set = swing_set - spec_set
-
-            try:
-                equity = float(api.get_account().equity)
-                broker_pos = api.list_positions()
-            except Exception as e:
-                print(f"Could not read account for bucket budgets: {e}")
-                equity, broker_pos = 0.0, []
-            deployed = {"swing": 0.0, "longterm": 0.0, "hold": 0.0}
-            for p in broker_pos:
-                strat = assignments.get(p.symbol, "swing")
-                deployed[strat] = deployed.get(strat, 0.0) + float(p.market_value)
-
-            # Regime overlay: shrink swing's effective capital in defensive regimes (freed → cash).
-            regime = suggestions_data.get("regime", "growth")
-            swing_factor = REGIME_SWING_FACTORS.get(regime, 1.0) if REGIME_OVERLAY_ENABLED else 1.0
-            swing_w_eff = buckets.get("swing", 0.0) * swing_factor
-            if swing_factor < 1.0:
-                print(f"Regime overlay: {regime} → swing weight {buckets.get('swing',0):.2f} × {swing_factor} "
-                      f"= {swing_w_eff:.2f} (freed capital held as cash)")
-
-            swing_budget = max(0.0, swing_w_eff * equity - deployed.get("swing", 0.0))
-            longterm_frac = buckets.get("longterm", 0.0)
-            print(f"Buckets: swing {buckets.get('swing',0)*100:.0f}%→{swing_w_eff*100:.0f}% (avail ${swing_budget:.0f}), "
-                  f"longterm {longterm_frac*100:.0f}% | regime {regime} | assigned swing={len(swing_set)} longterm={len(longterm_set)}")
-
-            # Swing bucket: horizon exits, then budget-capped entries (CORE names only — excl. speculative).
-            # Position size auto-scales to the chosen allocation: (nominal sleeve weight ÷ top-N).
-            # The regime overlay still shrinks the BUDGET, so defensive regimes hold fewer names
-            # rather than smaller ones.
-            from app.core.config import SWING_AUTOSIZE, SWING_TOP_N, HIGH_RISK_TOP_N
-            swing_pos_pct = (buckets.get("swing", 0.0) / max(1, SWING_TOP_N)) if SWING_AUTOSIZE else None
-
-            close_aged_swing_positions(api, db, allowed_tickers=core_swing_set if core_swing_set else None)
-            if buckets.get("swing", 0.0) > 0:
-                submitted_orders += execute_swing_paper_trades(api, db, suggestions_data,
-                                           allowed_tickers=core_swing_set, budget=swing_budget,
-                                           position_pct=swing_pos_pct) or []
-
-            # High-risk sleeve: AGGRESSIVE model on speculative names, hard-capped at HIGH_RISK_CAP of equity.
-            from app.core.config import HIGH_RISK_CAP
-            hr_frac = min(HIGH_RISK_CAP, buckets.get("high_risk", 0.0))
-            if hr_frac > 0 and spec_set:
-                deployed_hr = sum(float(p.market_value) for p in broker_pos if p.symbol in spec_set)
-                hr_budget = max(0.0, hr_frac * equity - deployed_hr)
-                print(f"High-risk sleeve: {hr_frac*100:.1f}% cap (avail ${hr_budget:.0f}) over {len(spec_set)} speculative names")
-                close_aged_swing_positions(api, db, allowed_tickers=spec_set)
-                if hr_budget >= 100.0:
-                    hr_pos_pct = (hr_frac / max(1, HIGH_RISK_TOP_N)) if SWING_AUTOSIZE else None
-                    submitted_orders += execute_swing_paper_trades(api, db, suggestions_data, allowed_tickers=spec_set,
-                                               budget=hr_budget, suggestions_key="high_risk_suggestions",
-                                               label="high-risk", position_pct=hr_pos_pct) or []
-
-            # Long-term bucket: MPT grid restricted to longterm-assigned tickers, scaled to the bucket.
-            if longterm_frac > 0 and longterm_set:
-                submitted_orders += execute_long_term_grid_trades(db, api, suggestions_data,
-                                              get_sim_date() or datetime.now().strftime("%Y-%m-%d"),
-                                              allowed_tickers=longterm_set, budget_fraction=longterm_frac) or []
-
-            # 5. Final sync to capture immediate fills
-            print("Running final synchronization post-trade...")
-            sync_broker_orders(db, api)
-            sync_broker_positions(db, api)
-        else:
+        if not any_api:
             print("No Alpaca API connection. Falling back to local simulated execution...")
-            print("Retrieving daily trade recommendations...")
-            suggestions_data = get_daily_suggestions(date=None, db=db)
             execute_local_paper_trade(db, suggestions_data)
 
     except Exception as e:
