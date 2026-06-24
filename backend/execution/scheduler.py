@@ -247,6 +247,21 @@ def daily_trade_execution_job():
     except Exception as e:
         print(f"Error during Daily Trade Execution: {e}")
 
+def expire_pending_trades_job():
+    """End-of-day cleanup: expire any gated trades the user never approved, so tomorrow's run starts
+    fresh and no stale-priced order can be approved the next day."""
+    print(f"\n[{datetime.now()}] Expiring unapproved pending trades (EOD)...")
+    from app.database import SessionLocal
+    from execution.executor import _expire_stale_pending
+    db = SessionLocal()
+    try:
+        n = _expire_stale_pending(db)
+        print(f"Expired {n} unapproved pending trade(s).")
+    except Exception as e:
+        print(f"Error expiring pending trades: {e}")
+    finally:
+        db.close()
+
 def weekly_model_retrain_job():
     print(f"\n[{datetime.now()}] Triggering Weekly Model Retraining Job...")
     try:
@@ -325,6 +340,14 @@ def main():
         trigger=CronTrigger(day_of_week="sun", hour=18, minute=0, timezone=market_tz),
         id="weekly_retrain",
         name="Retrain models on rolling window"
+    )
+
+    # 4b. Expire unapproved gated trades just after the close (16:05 ET, weekdays).
+    scheduler.add_job(
+        expire_pending_trades_job,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=5, timezone=market_tz),
+        id="expire_pending_trades",
+        name="Expire unapproved pending trades (EOD)"
     )
 
     # 5. Crash Radar refresh — every weekday at 09:30 EST, shortly after the daily data fetch. The job

@@ -283,10 +283,17 @@ REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
 REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "ampytech-trader:v1.0.0 (by /u/arvind)")
 
-# Alpaca API Credentials (Paper Trading Defaults)
+# Alpaca API Credentials (Paper Trading Defaults). The ALPACA_* set is the PAPER account.
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
 ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+
+# Alpaca LIVE (real-money) account credentials — a SEPARATE account from the paper one above.
+# Kept in env (never the DB, which is backed up to Google Drive). Absent by default; when unset the
+# live account is treated as unconfigured and is never traded (see execution/accounts.py).
+ALPACA_LIVE_API_KEY = os.getenv("ALPACA_LIVE_API_KEY", "")
+ALPACA_LIVE_SECRET_KEY = os.getenv("ALPACA_LIVE_SECRET_KEY", "")
+ALPACA_LIVE_BASE_URL = os.getenv("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets")
 
 # Alpaca market-data host (separate from the trading host). Used for the free, Benzinga-sourced
 # news endpoint (/v1beta1/news), which is included with any Alpaca account at no extra cost.

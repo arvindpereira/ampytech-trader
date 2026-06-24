@@ -8,6 +8,7 @@ import type {
   SwingSuggestion, Allocation, PriceSummaryRow, TickerInfo, Classification,
 } from './TickerDrawer';
 import ExecutionPanel from './ExecutionPanel';
+import ApprovalGatesPanel from './ApprovalGatesPanel';
 
 // ─── types ──────────────────────────────────────────────────────────────────
 
@@ -228,6 +229,9 @@ export default function DashboardTab({
 
       {/* ── Execution plan / Why ────────────────────────────────────────── */}
       <ExecutionPanel onTickerClick={onTickerClick} />
+
+      {/* ── Approval gates + pending-trade queue ─────────────────────────── */}
+      <ApprovalGatesPanel onTickerClick={onTickerClick} />
 
       {/* ── Two-column: Signals + Holdings ──────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: '16px', alignItems: 'start' }}>

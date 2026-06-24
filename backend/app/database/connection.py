@@ -193,6 +193,30 @@ def init_db():
     except Exception as em:
         print(f"Auto-migration check failed for ticker_metadata company columns: {em}")
 
+    # 11. ONE-TIME re-key of the legacy single-account book (mode='real') to the paper account. The bot
+    #     used to run one Alpaca account whose default base URL is paper, so that data IS the paper
+    #     account. Guarded to run exactly once: the backtest simulator legitimately keeps writing
+    #     mode='real' (execution/simulator.py), so re-running on every init_db would clobber its book
+    #     and collide on virtual_positions' (ticker, mode) primary key. Collision-safe: a 'real' position
+    #     whose ticker already has a migrated 'paper' twin is a duplicate (paper is rebuilt from the live
+    #     broker on every sync), so it is dropped rather than renamed onto the existing key.
+    #     NOTE: broker_performance_logs.mode uses 'live'/'replay' (a sim label) and never 'real'.
+    try:
+        with engine.connect() as conn:
+            done = conn.execute(text(
+                "SELECT 1 FROM app_settings WHERE key='migration:mode_real_to_paper'")).fetchone()
+            if not done:
+                conn.execute(text("UPDATE virtual_orders SET mode='paper' WHERE mode='real'"))
+                conn.execute(text("DELETE FROM virtual_positions WHERE mode='real' AND ticker IN "
+                                  "(SELECT ticker FROM virtual_positions WHERE mode='paper')"))
+                conn.execute(text("UPDATE virtual_positions SET mode='paper' WHERE mode='real'"))
+                conn.execute(text("INSERT OR REPLACE INTO app_settings (key, value) "
+                                  "VALUES ('migration:mode_real_to_paper', 'done')"))
+                conn.commit()
+                print("Re-keyed legacy mode='real' bookkeeping to the paper account (one-time).")
+    except Exception as em:
+        print(f"Auto-migration check failed re-keying mode='real'->'paper': {em}")
+
 
     # Seeding Universe and Account
     from app.core.config import TICKER_UNIVERSE
