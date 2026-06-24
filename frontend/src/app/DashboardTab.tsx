@@ -44,13 +44,14 @@ const accountTheme = (label: string): { text: string; border: string; bg: string
 
 export default function DashboardTab({
   regime, date, swingSuggestions, allocations, priceSummary, portfolio, externalPositions, classification,
-  onTickerClick,
+  onTickerClick, botAccountLabel = INTERNAL_LABEL,
 }: {
   regime: string; date: string;
   swingSuggestions: SwingSuggestion[]; allocations: Allocation[];
   priceSummary: PriceSummaryRow[]; portfolio: any; externalPositions: any[];
   classification: Record<string, Classification>;
   onTickerClick: (ticker: string) => void;
+  botAccountLabel?: string;
 }) {
   const [tickerInfo, setTickerInfo] = useState<Record<string, TickerInfo>>({});
   const infoFetched = useRef(false);
@@ -120,7 +121,7 @@ export default function DashboardTab({
     (portfolio?.holdings || []).forEach((h: any) => {
       const tk = (h.ticker || '').toUpperCase();
       if (!tk) return;
-      const g = ensure(INTERNAL_LABEL);
+      const g = ensure(botAccountLabel);
       const value = h.market_value ?? 0;
       const pl = h.unrealized_pl ?? null;
       g.rows.push({
@@ -165,8 +166,8 @@ export default function DashboardTab({
         return g;
       })
       // Bot account first, then largest accounts by value.
-      .sort((a, b) => (a.label === INTERNAL_LABEL ? -1 : b.label === INTERNAL_LABEL ? 1 : b.totalValue - a.totalValue));
-  }, [portfolio, externalPositions]);
+      .sort((a, b) => (a.label === botAccountLabel ? -1 : b.label === botAccountLabel ? 1 : b.totalValue - a.totalValue));
+  }, [portfolio, externalPositions, botAccountLabel]);
 
   const holdingsCount = useMemo(() => accountGroups.reduce((n, g) => n + g.rows.length, 0), [accountGroups]);
 
@@ -190,7 +191,7 @@ export default function DashboardTab({
       <div className="glass-card" style={{ padding: '16px 20px', display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
         <div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '2px' }}>
-            Total Holdings <span style={{ opacity: 0.6 }}>· all accounts</span>
+            Total Holdings <span style={{ opacity: 0.6 }}>· {(externalPositions && externalPositions.length) ? 'all real-money accounts' : botAccountLabel}</span>
           </div>
           <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
             {grand.value > 0 ? money(grand.value) : '—'}

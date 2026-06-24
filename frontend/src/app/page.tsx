@@ -2294,7 +2294,10 @@ export default function Home() {
             allocations={allocations}
             priceSummary={priceSummary}
             portfolio={portfolio}
-            externalPositions={dashExternalPositions}
+            /* Paper is fake money → show it alone. Live is real money → consolidate it with the
+               external brokerage accounts (which are also real money). */
+            externalPositions={isLiveAccount ? dashExternalPositions : []}
+            botAccountLabel={isLiveAccount ? 'Alpaca Live' : 'Alpaca Paper'}
             classification={classification}
             onTickerClick={openTicker}
           />
