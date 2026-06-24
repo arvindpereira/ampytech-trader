@@ -16,6 +16,7 @@ frontend/node_modules/
 # Back it up with `make db-backup` (Google Drive, commit-stamped); restore with `make db-restore-commit`.
 # History still holds the last snapshot at commit 313081e if ever needed.
 backend/data/*.db
+backend/data/*.db.bak-*
 backend/data/*.db-wal
 backend/data/*.db-shm
 backend/data/scheduler_heartbeat.txt

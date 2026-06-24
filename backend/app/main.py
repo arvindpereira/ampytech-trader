@@ -2860,12 +2860,20 @@ async def import_external_portfolio_pdf(
     data = await file.read()
     if len(data) > 15 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 15 MB)")
-    # Robinhood transaction CSV → reconstruct holdings (with the 2026-05-31 statement as basis/snapshot anchor).
+    # CSV → either a Vanguard cost-basis (per-lot) export or a Robinhood transaction history. Detect
+    # which by header signature and route accordingly. The Vanguard path REPLACES the account's lots
+    # with the file's tax lots (after reconciling totals against the prior snapshot).
     if name.endswith(".csv"):
         try:
             _stash_import_source(file.filename, data)   # keep a backed-up copy of the source export
-            from data_ingestion.import_external_csv import import_robinhood_csv
-            result = import_robinhood_csv(data, override_account=override_account)
+            from data_ingestion.import_vanguard_costbasis import (
+                is_vanguard_costbasis, import_vanguard_costbasis,
+            )
+            if is_vanguard_costbasis(data):
+                result = import_vanguard_costbasis(data, override_account=override_account)
+            else:
+                from data_ingestion.import_external_csv import import_robinhood_csv
+                result = import_robinhood_csv(data, override_account=override_account)
             if result.get("status") != "success":
                 raise HTTPException(status_code=422, detail=result.get("detail", "Could not parse CSV"))
         except HTTPException:
