@@ -611,8 +611,24 @@ def _looks_like_legacy_hourly_table(db, hourly_start):
     return legacy is not None
 
 
+def _current_bar_period_start(now):
+    """Start of the bar period currently forming. A ticker is re-fetched only when its latest stored
+    bar predates this — i.e. a NEW bar period has begun — so the intraday job stops re-fetching every
+    ticker every few minutes when the underlying (e.g. hourly) bars only update once per period."""
+    mult = max(1, DATA_MULTIPLIER)
+    if DATA_TIMESPAN == "hour":
+        return now.replace(hour=(now.hour // mult) * mult, minute=0, second=0, microsecond=0)
+    if DATA_TIMESPAN == "minute":
+        return now.replace(minute=(now.minute // mult) * mult, second=0, microsecond=0)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def fetch_recent_prices():
-    """Fetches a clean HOURLY-only dataset (~5y window) into recent_prices."""
+    """Fetches a clean HOURLY-only dataset (~5y window) into recent_prices.
+
+    Smart refresh: a ticker is only re-fetched when a new bar period has started (its latest bar is
+    older than the current period), so a frequent intraday cron does real work only once per bar.
+    Returns the number of tickers fetched (0 = nothing new), so callers can skip downstream rebuilds."""
     init_db()
     db = SessionLocal()
 
@@ -635,6 +651,9 @@ def fetch_recent_prices():
         db.commit()
         print(f"Removed {stale} rows for tickers no longer in the universe.")
 
+    # Re-fetch a ticker only when a new bar period has begun (its latest bar predates the current
+    # period start), not merely because the latest bar is a few minutes old.
+    refetch_cutoff = _current_bar_period_start(end_date)
     fetch_tasks = []
     for ticker in active_universe:
         if ticker in FICTIONAL_TICKERS:
@@ -642,13 +661,13 @@ def fetch_recent_prices():
         _, latest = _earliest_latest(db, RecentPrice, ticker, keep_time=True)
         if latest is None:
             fetch_tasks.append((ticker, hourly_start, end_date))
-        elif latest < end_date - timedelta(minutes=5):
+        elif latest < refetch_cutoff:
             fetch_tasks.append((ticker, max(hourly_start, latest), end_date))
     db.close()
 
     if not fetch_tasks:
-        print("All tickers already up to date (hourly).")
-        return
+        print("All tickers already current for this bar period — nothing to fetch.")
+        return 0
 
     print(f"Fetching {len(fetch_tasks)} hourly tasks in parallel...", flush=True)
     results_map = {}
@@ -709,6 +728,7 @@ def fetch_recent_prices():
     finally:
         db.close()
     print("Hourly price fetch completed.\n")
+    return len(fetch_tasks)
 
 
 # ---------------------------------------------------------------------------

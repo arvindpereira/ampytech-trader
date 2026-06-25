@@ -150,12 +150,17 @@ def intraday_news_scoring_job():
         print(f"Error during Intraday LLM News Scoring: {e}")
 
 def intraday_price_fetch_job():
-    """Fetches intraday prices every 5 minutes during market hours so suggestions and models are current."""
+    """Refreshes intraday prices during market hours. fetch_recent_prices() only does work when a new
+    bar period has started, so most 5-minute ticks are a cheap no-op; the costly suggestions rebuild
+    runs ONLY when fresh bars actually arrived."""
     print(f"\n[{datetime.now()}] Triggering Intraday Price Fetch Job...")
     try:
-        fetch_recent_prices()
+        fetched = fetch_recent_prices()
+        if not fetched:
+            print("Intraday Price Fetch: no new bar period yet — skipping signal rebuild.")
+            return
 
-        # Clear suggestions cache and pre-populate
+        # Fresh bars arrived → clear cache and re-run signals.
         try:
             from app.main import get_daily_suggestions, clear_suggestions_cache
             from app.database import SessionLocal
@@ -165,7 +170,7 @@ def intraday_price_fetch_job():
                 get_daily_suggestions(date=None, db=db)
             finally:
                 db.close()
-            print("Suggestions cache cleared and refreshed with fresh prices.")
+            print(f"Refreshed {fetched} ticker(s); suggestions cache rebuilt with fresh prices.")
         except Exception as e:
             print(f"Signal re-run after price fetch failed: {e}")
 
