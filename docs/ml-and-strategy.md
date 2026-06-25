@@ -192,7 +192,7 @@ The **Sector Exposure Simulator** tracks active sector weights across all portfo
 
 ### 2. Consolidated Position Aggregation
 - **Holdings Merger** (`sector_exposure_analyzer.py`): Combines positions from:
-  - **Trading Account**: Active holdings pulled dynamically from the Alpaca paper API (or local `VirtualPosition` DB tables).
+  - **Trading Account**: Active holdings pulled dynamically from the Alpaca API (or local `VirtualPosition` DB tables).
   - **External Brokerage**: Manually imported brokerage tax lot records stored in the `EquityLot` table.
 - Calculates current valuations using recent market close quotes and aggregates portfolio weights.
 

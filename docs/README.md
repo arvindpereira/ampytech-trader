@@ -6,7 +6,7 @@ explorations are preserved at the bottom for history).
 
 > **TL;DR for the developer.** A local, single-user ML trading bot. The pipeline runs end-to-end:
 > ingest prices/macro/sentiment + **LLM-scored news** → engineer features → train models → produce
-> **per-stock strategy suggestions** → execute on **Alpaca paper** behind a real/sim toggle, with a
+> **per-stock strategy suggestions** → execute on **Alpaca (Paper/Live)** with per-account human approval gates, with a
 > scheduler for daily + intraday cycles.
 >
 > The honest state after rigorous out-of-sample evaluation (see
@@ -31,7 +31,7 @@ explorations are preserved at the bottom for history).
 | [architecture.md](./architecture.md) | Components, 7-tab frontend, processes (API / scheduler / servers), data flows, **Crash Radar, External Portfolio strategy (holdings-aware de_risk + war-game), Research Analyst, Sector Heatmap** |
 | [data-pipeline.md](./data-pipeline.md) | Ingestion sources (prices, macro, sentiment, LLM news, insider, **stress indicators, estimates, transcripts**), DB schema (**all table groups: prices, fundamentals, signals, virtual broker, Equity Advisor, External Portfolio, research**) |
 | [ml-and-strategy.md](./ml-and-strategy.md) | Features, strategies (swing+news, long-term MPT, HMM, **Composite Crash Index, Research Analyst, Sector Simulator**), suggester, evaluation harness |
-| [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca paper execution, capital buckets, regime overlay, re-execution, virtual broker, **defensive playbook stances** |
+| [execution-and-simulation.md](./execution-and-simulation.md) | Alpaca execution (Paper/Live), capital buckets, regime overlay, re-execution, virtual broker, **defensive playbook stances** |
 | [api-reference.md](./api-reference.md) | Every FastAPI endpoint and what it returns (including **/api/crash/\***, **/api/research/\***, **/api/equity/\*** (Equity Advisor), **/api/external/\*** (war-game + policy-compare), and **/api/portfolio/sector-exposure**) |
 | [operations.md](./operations.md) | Setup, Makefile/CLI (with **Research KB & sector commands**), scheduler jobs, model retraining, DB backups |
 | [research-methodology.md](./research-methodology.md) | **RKB & GICS screens.** snapshot materialization, relative multi-factor ranks, earnings depth, internal 12m targets, structured RAG |
@@ -74,8 +74,8 @@ flowchart LR
         API["FastAPI :8008<br/>/api/suggestions, /api/crash/*,<br/>/api/research/*, /api/classification, /health"]
     end
     subgraph Exec["4 · Execution"]
-        BUCK["Stance Rebalance (Paper)<br/>Defensive Playbook (Buffett/Dalio/Taleb)<br/>vol target scaling"]
-        ALP[Alpaca paper API]
+        BUCK["Stance Rebalance (Paper/Live)<br/>Defensive Playbook (Buffett/Dalio/Taleb)<br/>vol target scaling"]
+        ALP[Alpaca Paper/Live API]
     end
     UI["Next.js :3002<br/>Suggestions · Model Evaluation · Portfolio · Crash Radar<br/>Research Analyst · Sector Heatmap"]
     SCH["scheduler.py<br/>daily + intraday + weekly retrain"]
@@ -119,7 +119,7 @@ flowchart LR
 - **Capital buckets** — User-set % of equity per strategy (`app_settings`); execution never exceeds them.
 - **Regime overlay** — Auto-shrinks the swing bucket in `transition`/`crisis` HMM regimes.
 - **Regime** — `growth` / `transition` / `crisis`, from a 3-state HMM on daily SPY volatility + macro.
-- **Mode (`real` vs `simulated`/`replay`)** — Two isolated virtual accounts; `real` mirrors the Alpaca paper book.
+- **Mode (`paper` / `live` vs `replay`)** — Local database mirrors Alpaca Paper/Live positions, while `replay` is for simulations.
 - **Look-ahead-free / OOS** — Walk-forward evaluation where models only see data before the test date; LLM-news features are shifted +1 day (point-in-time).
 - **Research Thread** — Conversation logs with the AI research analyst, capturing intent, query context, and generated reports.
 - **Sector Heatmap** — Visually color-coded dashboard grid detailing portfolio weight drift vs. the S&P 500 GICS sector weights.

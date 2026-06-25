@@ -4,15 +4,15 @@ Three distinct ways the bot "trades", easy to confuse:
 
 | Mechanism | Code | Account / data | Purpose |
 | :-- | :-- | :-- | :-- |
-| **Alpaca paper execution** | `execution/executor.py:run_execution` | real Alpaca paper account | the live bot — places real paper orders |
-| **Virtual broker** | `app/main.py:/api/virtual_alpaca/*` | SQLite-backed mock of the Alpaca REST API | UI holdings/orders without a broker; powers sim/replay |
-| **Simulation / replay** | `execution/simulator.py` | replay account (`mode='replay'`) | forward sim / look-ahead-free historical replay |
+| **Alpaca execution (Paper/Live)** | `execution/executor.py:run_execution` | Real Alpaca paper or live accounts | The live bot — places real-money or paper orders |
+| **Virtual broker** | `app/main.py:/api/virtual_alpaca/*` | SQLite-backed mock of the Alpaca REST API | UI holdings/orders without a broker (falls back for paper when offline) |
+| **Simulation / replay** | `execution/simulator.py` | Replay account (`mode='replay'`) | Forward simulation / look-ahead-free historical replay |
 
 ## Bucket-aware execution (`run_execution`)
 
 The default strategy is **swing** (`EXECUTION_STRATEGY=swing`). Each cycle:
 
-1. Connect to Alpaca, authenticate, **sync** broker orders + positions into SQLite.
+1. Connect to Alpaca, authenticate, and **sync** broker orders + positions into SQLite for all configured/enabled accounts (Paper and/or Live).
 2. Read the daily suggestions (`get_daily_suggestions`) → `swing_suggestions`, `high_risk_suggestions`, `long_term_allocation`, and the HMM **regime**.
 3. Read **capital buckets** (`app_settings`) and **per-ticker strategy** assignments (`universe_tickers.strategy`).
 4. Compute each strategy's budget = `weight × equity − already-deployed` (soft cap).
@@ -40,11 +40,12 @@ When `INTRADAY_EXECUTION_ENABLED`, the hourly intraday job (10:00–16:00 ET) re
 
 ## Real vs. simulated / replay
 
-Two isolated virtual accounts: **real** (account id 2, positions `mode='real'`) mirrors the Alpaca paper
-book; **replay**/simulated (id 1, `mode='replay'`) is for sims. A `data/sim_date.txt` file flips the
-server into replay-as-of-a-date while a simulation runs (`/api/simulate`, `/api/backtest-virtual`). The
-replay path is look-ahead-free (orders fill at the next bar's open). `evaluate_virtual_broker_daily`
-marks positions to market, applies stop/take-profit, and logs equity vs SPY/QQQ/BRK-B.
+The local database supports three account contexts:
+1. **Simulated/Replay**: Account ID 1, positions/orders tagged with `mode='replay'`. Used for historical backtesting and forward simulations.
+2. **Alpaca Paper**: Account ID 2, positions/orders tagged with `mode='paper'`. Mirrors your Alpaca Paper trading account (or falls back to the in-process mock if credentials are omitted).
+3. **Alpaca Live**: Account ID 3, positions/orders tagged with `mode='live'`. Accesses your real-money Alpaca trading account (must be configured manually with `ALPACA_LIVE_API_KEY` and `ALPACA_LIVE_SECRET_KEY`).
+
+A `data/sim_date.txt` file flips the server into replay-as-of-a-date while a simulation runs (`/api/simulate`, `/api/backtest-virtual`). The replay path is look-ahead-free (orders fill at the next bar's open). `evaluate_virtual_broker_daily` marks positions to market, applies stop/take-profit, and logs equity vs SPY/QQQ/BRK-B.
 
 ## Posture State Machine & Defensive Playbook
 

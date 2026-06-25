@@ -4,7 +4,7 @@
 
 ```bash
 make install            # backend venv + Python deps + frontend npm deps
-# Fill backend/.env: MASSIVE_API_KEY (Polygon), ALPACA_API_KEY/SECRET (paper), FRED, Reddit (optional),
+# Fill backend/.env: MASSIVE_API_KEY (Polygon), ALPACA_API_KEY/SECRET (paper), ALPACA_LIVE_API_KEY/SECRET (live), FRED, Reddit (optional),
 #                    GOOGLE_OAUTH_CLIENT_ID/SECRET (for DB backup). Defaults point Alpaca at paper.
 # Install + run Ollama locally with the LLM_MODEL (default gemma4:e4b) for news scoring.
 # Optional: OPENAI_API_KEY to use OpenAI for fast bulk news backfills (else local Ollama is used) and
@@ -80,8 +80,10 @@ wipes the stamps. The dependency graph is: `data → {train-core, classify(+fund
 | Research KB refresh | Mon–Fri 10:00 | materializes stock snapshot metrics and refreshes sector classifications |
 | Intraday news + re-exec | Mon–Fri 10:00–16:00 hourly | score recent news → re-run swing signals → re-execute (market-open guarded) |
 | Intraday price fetch | Mon–Fri 09:00–16:00 every 5 min | refresh recent prices + suggestions cache |
+| Expire pending trades (EOD) | Mon–Fri 16:05 | Clean up and expire unapproved pending trades |
 | Weekly retrain | Sun 18:00 | `train_models()` + swing `train_and_save()` |
 | Heartbeat | every 60 s | writes `data/scheduler_heartbeat.txt` (feeds `/api/health`) |
+| AlphaVantage news backfill | every 30 min | incremental historical news sentiment accumulator |
 
 A reload of the API (or the scheduler) kills its in-process background jobs; long backfills are launched
 as standalone processes and are resumable.
@@ -128,4 +130,4 @@ Run a single layer when that's all you need: `make train-core`, `make swing-trai
 `GET /api/health` (and the navbar pills) report **Ollama, Alpaca, scheduler, DB, news** status. With the
 default Ollama provider the swing pipeline needs **Ollama up**; if it stops, news scoring stalls
 (degrades gracefully) unless `OPENAI_API_KEY` is set, in which case backfills use OpenAI instead. The
-intraday loop and execution require the **Alpaca paper** creds and (for execution) an open market.
+intraday loop and execution require the **Alpaca** credentials (paper or live) and (for execution) an open market.
