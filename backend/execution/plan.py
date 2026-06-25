@@ -21,6 +21,7 @@ VERDICT_LABELS = {
     "no_brackets": "Missing stop/target",
     "budget_exhausted": "Sleeve budget exhausted",
     "position_too_small": "Position too small (<$100)",
+    "extended": "Extended — waiting for pullback",
     # Long-term MPT grid verdicts
     "would_open": "Would open (new)",
     "would_add_dip": "Would add (3%+ dip)",
@@ -33,7 +34,7 @@ VERDICT_LABELS = {
 def _replay_sleeve(buys, allowed, budget, held, db, equity, position_pct, vol_map, sleeve, vol_target):
     """Replay the swing/high-risk entry gates in conviction order, decrementing the
     sleeve budget exactly as the executor does, and tag each candidate with a verdict."""
-    from execution.executor import buy_block_reason
+    from execution.executor import buy_block_reason, _extension_block
     from app.database import VirtualPosition
 
     locked = {p.ticker for p in db.query(VirtualPosition).filter(VirtualPosition.policy == "lock").all()}
@@ -52,6 +53,8 @@ def _replay_sleeve(buys, allowed, budget, held, db, equity, position_pct, vol_ma
             cand["verdict"] = "locked"
         elif tk in held:
             cand["verdict"] = "already_held"
+        elif _extension_block(db, tk):
+            cand["verdict"] = "extended"; cand["detail"] = _extension_block(db, tk)
         elif not sug.get("stop_loss") or not sug.get("take_profit") or price <= 0:
             cand["verdict"] = "no_brackets"
         elif remaining < 100.0:
@@ -73,7 +76,7 @@ def _replay_sleeve(buys, allowed, budget, held, db, equity, position_pct, vol_ma
     return out, remaining
 
 
-def _replay_longterm(allocations, longterm_set, positions, equity, budget_fraction):
+def _replay_longterm(allocations, longterm_set, positions, equity, budget_fraction, db=None):
     """Replay the MPT grid's real entry rule: open a new position, add a tranche only on a
     dip below cost, otherwise wait. Mirrors executor.execute_long_term_grid_trades. Also surfaces
     the concrete buy (dip-below-cost) and take-profit (gain-above-cost) target prices."""
@@ -100,7 +103,12 @@ def _replay_longterm(allocations, longterm_set, positions, equity, budget_fracti
                 "take_profit": round(entry * (1 + GRID_TP_GAIN), 2) if entry > 0 else None}
         if diff > 0.01:
             if current == 0.0:
-                cand["verdict"] = "would_open"
+                from execution.executor import _extension_block
+                ext = _extension_block(db, tk) if db is not None else None
+                if ext:
+                    cand["verdict"] = "extended"; cand["detail"] = ext
+                else:
+                    cand["verdict"] = "would_open"
             elif dev <= -GRID_BUY_DIP:
                 cand["verdict"] = "would_add_dip"
             else:
@@ -267,7 +275,7 @@ def build_execution_plan(db, api=None, suggestions_data=None) -> dict:
 
     # Long-term: replay the MPT grid's REAL rules (open new / add on 3%+ dip / wait / trim).
     lt_candidates = _replay_longterm(suggestions_data.get("long_term_allocation", []),
-                                     longterm_set, positions, equity, lt_w) if not plan["paused"] else []
+                                     longterm_set, positions, equity, lt_w, db=db) if not plan["paused"] else []
 
     plan["sleeves"] = [
         {"key": "swing", "label": "Swing", "weight": swing_w, "effective_weight": swing_w_eff,
