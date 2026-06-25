@@ -92,9 +92,11 @@ def prepare_sequences(df, feature_cols, seq_len=20, fit_scaler=False, scaler_met
                 np.empty((0,)), np.empty((0,)), scaler_metadata)
 
     if fit_scaler:
-        mean = df[feature_cols].mean().values
-        std  = df[feature_cols].std().values
-        std[std == 0.0] = 1.0
+        mean = df[feature_cols].mean().to_numpy(dtype=float)
+        std  = df[feature_cols].std().to_numpy(dtype=float)
+        # np.where returns a fresh writable array — pandas 3.0 / numpy 2 make .values/.to_numpy()
+        # read-only, so an in-place `std[mask] = 1.0` would raise "assignment destination is read-only".
+        std = np.where(std == 0.0, 1.0, std)
         scaler_metadata = {"mean": mean.tolist(), "std": std.tolist(), "feature_cols": feature_cols}
     else:
         if scaler_metadata is None:

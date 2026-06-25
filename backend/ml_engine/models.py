@@ -116,27 +116,34 @@ class PortfolioOptimizer:
         f_star = max(0.0, min(1.0, f_star))
         return f_star * fraction
 
+def _read_sql(sql):
+    """Run pd.read_sql_query via a raw sqlite3 connection. pandas 3.0 stopped recognizing SQLAlchemy
+    Engines as connectables (treats them as untested DBAPI objects and calls .cursor()); a sqlite3
+    DBAPI2 connection is explicitly supported on both pandas 2.2 and 3.0."""
+    import sqlite3
+    raw = sqlite3.connect(engine.url.database)
+    try:
+        return pd.read_sql_query(sql, raw)
+    finally:
+        raw.close()
+
+
 def load_data_from_db():
     """Loads HOURLY prices + REAL sentiment + macro and builds the SHORT-TERM feature set
     (cross-ticker breakout features over an intraday/few-day horizon)."""
     print("Loading hourly price data from database (SQL)...", flush=True)
-    prices_df = pd.read_sql_query(
-        "SELECT ticker, date, open, high, low, close, volume, sma_10, sma_50, rsi_14, macd, macd_signal FROM recent_prices",
-        con=engine
+    prices_df = _read_sql(
+        "SELECT ticker, date, open, high, low, close, volume, sma_10, sma_50, rsi_14, macd, macd_signal FROM recent_prices"
     )
     if prices_df.empty:
         raise ValueError("No hourly price records found. Run ingestion first!")
 
     print("Loading macro indicators from database...", flush=True)
-    macro_df = pd.read_sql_query(
-        "SELECT date, indicator_name, value FROM macro_indicators",
-        con=engine
-    )
+    macro_df = _read_sql("SELECT date, indicator_name, value FROM macro_indicators")
 
     print("Loading ticker sentiment data from database...", flush=True)
-    sent_df = pd.read_sql_query(
-        "SELECT ticker, date, source, sentiment_score, mention_count FROM ticker_sentiments WHERE is_mock != 1",
-        con=engine
+    sent_df = _read_sql(
+        "SELECT ticker, date, source, sentiment_score, mention_count FROM ticker_sentiments WHERE is_mock != 1"
     )
 
     db = SessionLocal()
@@ -1012,10 +1019,7 @@ def walk_forward_evaluate(n_splits=5, warmup_frac=0.4, round_trip_fee=0.001):
     # 2. Run chronological portfolio-level simulations
     print("\nRunning chronological portfolio-level simulations (max 10% per trade, max 10 open positions)...", flush=True)
     print("Loading recent prices from database (SQL)...", flush=True)
-    prices_df = pd.read_sql_query(
-        "SELECT ticker, date, open, high, low, close FROM recent_prices",
-        con=engine
-    )
+    prices_df = _read_sql("SELECT ticker, date, open, high, low, close FROM recent_prices")
 
     prices_df = prices_df.sort_values(["ticker", "date"]).reset_index(drop=True)
 
