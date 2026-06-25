@@ -88,5 +88,39 @@ class SupersedeTests(unittest.TestCase):
         self.assertEqual(ex._supersede_pending(self.db, "live"), 0)
 
 
+class _FakeOrder:
+    def __init__(self, symbol):
+        self.symbol = symbol
+
+
+class _FakeApi:
+    def __init__(self, symbols):
+        self._symbols = symbols
+    def list_orders(self, **kw):
+        return [_FakeOrder(s) for s in self._symbols]
+
+
+class OpenOrderTests(unittest.TestCase):
+    def test_open_order_symbols(self):
+        self.assertEqual(ex.open_order_symbols(_FakeApi(["AAPL", "MU"])), {"AAPL", "MU"})
+
+    def test_open_order_symbols_handles_broker_error(self):
+        class Boom:
+            def list_orders(self, **kw): raise RuntimeError("down")
+        self.assertEqual(ex.open_order_symbols(Boom()), set())
+
+    def test_plan_marks_resting_order_open_order(self):
+        from execution.plan import _replay_longterm
+        allocations = [{"ticker": "AAPL", "weight": 0.1, "current_price": 100.0}]
+        # No position (current == 0) → would normally be "would_open"; resting flips it to "open_order".
+        cands = _replay_longterm(allocations, {"AAPL"}, positions={}, equity=100000.0,
+                                 budget_fraction=1.0, db=None, resting={"AAPL"})
+        self.assertEqual(cands[0]["verdict"], "open_order")
+        # Without a resting order it would open.
+        cands2 = _replay_longterm(allocations, {"AAPL"}, positions={}, equity=100000.0,
+                                  budget_fraction=1.0, db=None, resting=set())
+        self.assertEqual(cands2[0]["verdict"], "would_open")
+
+
 if __name__ == "__main__":
     unittest.main()

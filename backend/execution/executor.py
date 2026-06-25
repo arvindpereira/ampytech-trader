@@ -212,6 +212,17 @@ def _extension_block(db, ticker):
     return None
 
 
+def open_order_symbols(api):
+    """Symbols that already have a RESTING (open/unfilled) order at the broker. Used to avoid
+    re-queuing or re-placing a name whose approved order is still working — which would otherwise
+    leave a stale order plus a duplicate trade for the same ticker."""
+    try:
+        return {o.symbol for o in api.list_orders(status="open", limit=500)}
+    except Exception as e:
+        print(f"Could not list open orders: {e}")
+        return set()
+
+
 def buy_block_reason(ticker, db, as_of=None):
     """Return a human-readable reason if BUYING `ticker` is currently blocked, else None.
 
@@ -918,6 +929,7 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="paper", allowed_
 
     open_positions = api.list_positions()
     active_tickers = [p.symbol for p in open_positions]
+    resting_orders = open_order_symbols(api)   # names with a working order — don't double-queue
     positions_db = {p.ticker: p for p in db.query(VirtualPosition).filter(VirtualPosition.mode == mode).all()}
 
     # Per-name volatility caps: trim high-beta names' position size (size x min(1, target/name_vol)).
@@ -945,6 +957,9 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="paper", allowed_
             continue
         if ticker in active_tickers:
             print(f"Already holding {ticker}. Skipping.")
+            continue
+        if ticker in resting_orders:
+            print(f"{ticker} already has a working order at the broker. Skipping (no duplicate).")
             continue
         # Extension guard: swing entries always OPEN a new position, so don't chase an overextended name.
         ext_reason = _extension_block(db, ticker)
@@ -1185,6 +1200,7 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
     target_weights = {a["ticker"]: a["weight"] for a in allocations}
 
     submitted = []
+    resting_orders = open_order_symbols(api)   # names with a working order — don't double-queue
     try:
         account = api.get_account()
         portfolio_equity = float(account.equity)
@@ -1234,6 +1250,11 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
         # Grid Buy: underweight AND (new position OR price fell at least 3% below entry price)
         if diff_shares > 0.01:
             should_buy = (current_shares == 0.0) or (price_dev <= -GRID_BUY_DIP)
+
+            # Don't open a new position in a name that already has a working order at the broker.
+            if should_buy and current_shares == 0.0 and ticker in resting_orders:
+                print(f"⏭ Long-Term Grid skip {ticker}: a working order is already resting at the broker.")
+                continue
 
             # Extension guard: don't OPEN a brand-new position in an overextended name (chasing a
             # parabolic run from an empty book). Dip-adds to existing positions are never blocked.
