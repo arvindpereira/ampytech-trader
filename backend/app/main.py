@@ -4505,9 +4505,11 @@ def get_health(db=Depends(get_db)):
         api = get_alpaca_api()
         clock = api.get_clock()
         acct = api.get_account()
+        # The Alpaca lib now returns clock times as ISO strings (older versions gave datetimes) — handle both.
+        _iso = lambda v: (v.isoformat() if hasattr(v, "isoformat") else str(v)) if v else None
         svc["alpaca"] = {"status": "up", "market_open": bool(clock.is_open),
-                         "next_open": clock.next_open.isoformat() if clock.next_open else None,
-                         "next_close": clock.next_close.isoformat() if clock.next_close else None,
+                         "next_open": _iso(clock.next_open),
+                         "next_close": _iso(clock.next_close),
                          "detail": f"{'market open' if clock.is_open else 'market closed'} · ${float(acct.equity):,.0f}"}
     except Exception as e:
         svc["alpaca"] = {"status": "down", "detail": str(e)[:100]}
