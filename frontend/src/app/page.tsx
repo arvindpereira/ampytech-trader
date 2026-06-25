@@ -5876,6 +5876,7 @@ export default function Home() {
         swingSuggestions={swingSuggestions}
         allocations={allocations}
         classification={classification}
+        onApproved={() => fetchData()}
       />
 
       {/* Account Deletion Warning Modal */}

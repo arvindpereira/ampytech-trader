@@ -1,11 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, CheckCircle2, XCircle, Lock } from 'lucide-react';
 import { apiUrl } from '../lib/api';
 import PriceChart from './PriceChart';
 
 // ─── shared types ─────────────────────────────────────────────────────────────
+
+export interface PendingTrade {
+  id: number; account_key: string; ticker: string; side: string; qty: number;
+  intended_type: string; limit_price: number | null; take_profit: number | null;
+  stop_loss: number | null; intended_price: number | null; status: string;
+  sleeve: string | null; reason: string | null;
+}
 
 export interface SwingSuggestion {
   ticker: string; close: number; action: 'BUY' | 'HOLD';
@@ -66,13 +73,24 @@ export const TIER_LABEL: Record<string, string> = {
 
 export function TickerDrawer({
   ticker, info, classification, priceRow, swing, allocation, quote, onClose,
+  pendingTrades = [], onApprove, onReject, approveBusy = false, approveError = null,
 }: {
   ticker: string; info: TickerInfo | null; classification: Classification | null;
   priceRow: PriceSummaryRow | null; swing: SwingSuggestion | null;
   allocation: Allocation | null; quote?: QuoteStats | null; onClose: () => void;
+  pendingTrades?: PendingTrade[];
+  onApprove?: (id: number, placement: 'market_bracket' | 'limit', limitPrice: number | null) => void;
+  onReject?: (id: number) => void;
+  approveBusy?: boolean; approveError?: string | null;
 }) {
   const tier = classification?.tier;
   const price = priceRow?.price;
+  // Per-trade approval draft: chosen placement + edited limit price (defaults to the bot's intended).
+  const [drafts, setDrafts] = useState<Record<number, { placement: 'market_bracket' | 'limit'; limit: string }>>({});
+  const draftFor = (t: PendingTrade) =>
+    drafts[t.id] ?? { placement: 'limit' as const, limit: String(t.limit_price ?? t.intended_price ?? '') };
+  const setDraft = (id: number, patch: Partial<{ placement: 'market_bracket' | 'limit'; limit: string }>) =>
+    setDrafts((p) => ({ ...p, [id]: { ...draftFor(pendingTrades.find((x) => x.id === id)!), ...p[id], ...patch } }));
 
   return (
     <div style={{
@@ -124,6 +142,83 @@ export function TickerDrawer({
       </div>
 
       <div style={{ padding: '16px 20px', flex: 1 }}>
+        {/* Pending approval — only shown when the bot's gate actually queued a trade for this ticker.
+            Lets you approve it here (adjusting the limit price) so it passes the gate for this stock. */}
+        {pendingTrades.map((t) => {
+          const d = draftFor(t);
+          const buy = t.side === 'buy';
+          const sideColor = buy ? '#10B981' : '#F43F5E';
+          return (
+            <div key={t.id} style={{ marginBottom: '18px', padding: '14px', borderRadius: '10px',
+              background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.45)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <Lock size={14} color="#a78bfa" />
+                <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#a78bfa' }}>
+                  Awaiting your approval
+                </span>
+                <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' }}>
+                  {t.account_key.toUpperCase()}{t.sleeve ? ` · ${t.sleeve}` : ''}
+                </span>
+              </div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                <span style={{ color: sideColor }}>{t.side.toUpperCase()}</span> {t.qty} {ticker}
+                {t.intended_price != null && <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}> · bot price ~{money(t.intended_price)}</span>}
+              </div>
+              {t.take_profit != null && t.stop_loss != null && (
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                  Bot bracket — target <strong style={{ color: '#10B981' }}>{money(t.take_profit)}</strong> / stop <strong style={{ color: '#F43F5E' }}>{money(t.stop_loss)}</strong>
+                </div>
+              )}
+              {t.reason && <div style={{ fontSize: '11px', fontStyle: 'italic', color: 'var(--text-secondary)', marginBottom: '10px' }}>{t.reason}</div>}
+
+              {/* Placement choice */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <button onClick={() => setDraft(t.id, { placement: 'limit' })}
+                  className={`toggle-btn ${d.placement === 'limit' ? 'active' : ''}`} style={{ flex: 1, padding: '7px', fontSize: '12px' }}>
+                  Limit (edit price)
+                </button>
+                <button onClick={() => setDraft(t.id, { placement: 'market_bracket' })}
+                  className={`toggle-btn ${d.placement === 'market_bracket' ? 'active' : ''}`} style={{ flex: 1, padding: '7px', fontSize: '12px' }}>
+                  Market bracket
+                </button>
+              </div>
+
+              {d.placement === 'limit' ? (
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    {buy ? 'Buy' : 'Sell'} limit price
+                  </label>
+                  <input type="number" step="any" value={d.limit}
+                    onChange={(e) => setDraft(t.id, { limit: e.target.value })}
+                    style={{ width: '100%', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-glass)', borderRadius: '6px', color: 'var(--text-primary)', padding: '8px 10px', fontSize: '14px' }} />
+                  <div style={{ fontSize: '10px', color: '#F59E0B', marginTop: '4px' }}>Limit orders don&apos;t carry the bot&apos;s take-profit/stop.</div>
+                </div>
+              ) : (
+                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                  Places the bot&apos;s exact market order{t.take_profit != null ? ' with its bracket target/stop.' : '.'}
+                </div>
+              )}
+
+              {approveError && <div style={{ fontSize: '11px', color: '#F43F5E', marginBottom: '8px' }}>{approveError}</div>}
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => onApprove?.(t.id, d.placement, d.placement === 'limit' ? (parseFloat(d.limit) || null) : null)}
+                  disabled={approveBusy || (d.placement === 'limit' && !(parseFloat(d.limit) > 0))}
+                  className="toggle-btn" style={{ flex: 1, padding: '9px', fontSize: '13px', fontWeight: 600, borderColor: '#10B981', color: '#10B981',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    opacity: (approveBusy || (d.placement === 'limit' && !(parseFloat(d.limit) > 0))) ? 0.5 : 1 }}>
+                  <CheckCircle2 size={14} /> {approveBusy ? 'Placing…' : `Approve & place ${buy ? 'buy' : 'sell'}`}
+                </button>
+                <button onClick={() => onReject?.(t.id)} disabled={approveBusy}
+                  style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-glass)', background: 'transparent', color: '#F43F5E', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <XCircle size={14} /> Reject
+                </button>
+              </div>
+            </div>
+          );
+        })}
+
         {/* Description */}
         {info?.description && (
           <p style={{ fontSize: '12px', lineHeight: 1.6, color: 'var(--text-secondary)', marginBottom: '16px', borderLeft: '3px solid var(--border-glass)', paddingLeft: '10px' }}>
@@ -249,16 +344,67 @@ export function TickerDrawer({
 
 export function TickerDrawerHost({
   ticker, onClose, priceSummary = [], swingSuggestions = [], allocations = [],
-  classification = {},
+  classification = {}, onApproved,
 }: {
   ticker: string | null; onClose: () => void;
   priceSummary?: PriceSummaryRow[]; swingSuggestions?: SwingSuggestion[];
   allocations?: Allocation[]; classification?: Record<string, Classification>;
+  onApproved?: () => void;   // called after a gate approve/reject so the dashboard can refresh
 }) {
   // Company-profile cache, fetched lazily per ticker from the metadata API.
   const [infoCache, setInfoCache] = useState<Record<string, TickerInfo>>({});
   // Live quote stats, fetched fresh each time a ticker opens (not cached client-side).
   const [quote, setQuote] = useState<QuoteStats | null>(null);
+  // Gate: bot-calculated trades for THIS ticker awaiting approval (any gated account).
+  const [pendingTrades, setPendingTrades] = useState<PendingTrade[]>([]);
+  const [approveBusy, setApproveBusy] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
+
+  const refreshPending = React.useCallback(async (tk: string) => {
+    try {
+      const res = await fetch(apiUrl('/api/pending-trades'));   // all gated accounts, pending only
+      if (!res.ok) return;
+      const all: PendingTrade[] = await res.json();
+      setPendingTrades(all.filter((t) => (t.ticker || '').toUpperCase() === tk.toUpperCase()
+        && t.status === 'pending_approval'));
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    setApproveError(null);
+    setPendingTrades([]);
+    if (ticker) refreshPending(ticker);
+  }, [ticker, refreshPending]);
+
+  const approve = async (id: number, placement: 'market_bracket' | 'limit', limitPrice: number | null) => {
+    setApproveBusy(true);
+    setApproveError(null);
+    try {
+      const res = await fetch(apiUrl(`/api/pending-trades/${id}/approve`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placement, limit_price: limitPrice }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setApproveError(data.detail || `HTTP ${res.status}`); return; }
+      if (ticker) await refreshPending(ticker);
+      onApproved?.();
+    } catch (e: any) {
+      setApproveError(e?.message || 'approval failed');
+    } finally {
+      setApproveBusy(false);
+    }
+  };
+
+  const reject = async (id: number) => {
+    setApproveBusy(true);
+    try {
+      await fetch(apiUrl(`/api/pending-trades/${id}/reject`), { method: 'POST' });
+      if (ticker) await refreshPending(ticker);
+      onApproved?.();
+    } finally {
+      setApproveBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!ticker || infoCache[ticker]) return;
@@ -309,6 +455,11 @@ export function TickerDrawerHost({
         allocation={allocation}
         quote={quote}
         onClose={onClose}
+        pendingTrades={pendingTrades}
+        onApprove={approve}
+        onReject={reject}
+        approveBusy={approveBusy}
+        approveError={approveError}
       />
     </>
   );
