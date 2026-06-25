@@ -462,7 +462,9 @@ def add_cross_ticker_features(df):
         group['corr_qqq_20'] = group['returns'].rolling(20).corr(group['qqq_returns'])
         return group
 
-    df = df.groupby('ticker', group_keys=False).apply(get_rolling_corr)
+    # Per-ticker apply via an explicit concat: groupby(...).apply() drops the grouping column in
+    # pandas 3.0 (the 2.2 deprecation became the default), which would lose 'ticker' below.
+    df = pd.concat([get_rolling_corr(g) for _, g in df.groupby('ticker', sort=False)], ignore_index=True)
 
     # Clean up intermediate columns
     df = df.drop(columns=['date_dt', 'close_shift_50', 'spy_close_shift_50'])

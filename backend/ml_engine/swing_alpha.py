@@ -120,7 +120,9 @@ def add_llm_features(feat_df, llm_daily, decay_days=3):
         grp["feat_llm_news_today"] = (grp["wsum"] / (grp["relsum"] + 1e-9)).shift(1).fillna(0.0)
         return grp
 
-    df = df.groupby("ticker", group_keys=False).apply(per_ticker)
+    # Explicit per-group concat keeps 'ticker' a column (groupby(...).apply() drops the grouping
+    # column in pandas 3.0).
+    df = pd.concat([per_ticker(g.copy()) for _, g in df.groupby("ticker", sort=False)], ignore_index=True)
     first_llm_date = llm_daily["date"].min()
     return df, first_llm_date
 
