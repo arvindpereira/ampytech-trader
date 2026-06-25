@@ -4068,6 +4068,51 @@ def set_account_gate(account_key: str, req: GateRequest, db=Depends(get_db)):
     return {"status": "success", "account_key": account_key, "gate_on": req.gate_on}
 
 
+def _account_api_or_400(account_key):
+    """Resolve a configured account to its Alpaca client, or raise 400. Shared by the order endpoints."""
+    from execution.accounts import get_account, is_configured
+    from execution.executor import get_alpaca_api
+    acc = get_account(account_key)
+    if acc is None or (acc.is_live and not is_configured(acc)):
+        raise HTTPException(status_code=400, detail=f"Account '{account_key}' is not configured")
+    api = get_alpaca_api(account_key)
+    if api is None:
+        raise HTTPException(status_code=400, detail=f"Could not connect to account '{account_key}'")
+    return api
+
+
+@app.get("/api/execution/open-orders")
+def list_open_orders(account_key: str = "paper", db=Depends(get_db)):
+    """Working (resting/unfilled) orders at the broker for an account — e.g. an approved limit that
+    hasn't filled yet. Surfaced so you can see and cancel stale ones."""
+    api = _account_api_or_400(account_key)
+    try:
+        orders = api.list_orders(status="open", limit=500)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Broker error listing orders: {e}")
+    return [{
+        "id": str(o.id), "symbol": o.symbol, "side": o.side, "qty": str(o.qty),
+        "type": getattr(o, "type", None), "limit_price": getattr(o, "limit_price", None),
+        "time_in_force": getattr(o, "time_in_force", None), "status": o.status,
+        "submitted_at": str(getattr(o, "submitted_at", "") or ""),
+    } for o in orders]
+
+
+@app.post("/api/execution/open-orders/{order_id}/cancel")
+def cancel_open_order(order_id: str, account_key: str = "paper", db=Depends(get_db)):
+    """Cancel a resting order at the broker and mark the local record canceled."""
+    api = _account_api_or_400(account_key)
+    try:
+        api.cancel_order(order_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not cancel order: {e}")
+    vo = db.query(VirtualOrder).filter(VirtualOrder.id == order_id).first()
+    if vo:
+        vo.status = "canceled"
+        db.commit()
+    return {"status": "success", "order_id": order_id}
+
+
 def _pending_trade_dict(row):
     return {
         "id": row.id, "account_key": row.account_key, "ticker": row.ticker, "side": row.side,

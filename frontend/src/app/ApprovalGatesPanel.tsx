@@ -8,6 +8,10 @@ import { money } from './TickerDrawer';
 interface GateAccount {
   key: string; label: string; is_live: boolean; configured: boolean; gate_on: boolean;
 }
+interface OpenOrder {
+  id: string; symbol: string; side: string; qty: string; type: string | null;
+  limit_price: number | null; status: string;
+}
 interface PendingTrade {
   id: number; account_key: string; ticker: string; side: string; qty: number;
   intended_type: string; limit_price: number | null; take_profit: number | null;
@@ -29,6 +33,7 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
   const [accounts, setAccounts] = useState<GateAccount[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [pending, setPending] = useState<PendingTrade[]>([]);
+  const [openOrders, setOpenOrders] = useState<OpenOrder[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Approve modal: the trade being approved + the chosen placement + editable limit price.
@@ -61,8 +66,26 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
     } catch { /* surfaced via err on the accounts call */ }
   }, []);
 
+  const loadOpenOrders = useCallback(async (key: string) => {
+    if (!key) { setOpenOrders([]); return; }
+    try {
+      const res = await fetch(apiUrl(`/api/execution/open-orders?account_key=${encodeURIComponent(key)}`));
+      setOpenOrders(res.ok ? await res.json() : []);
+    } catch { setOpenOrders([]); }
+  }, []);
+
+  const cancelOrder = async (id: string) => {
+    setBusy(true);
+    try {
+      await fetch(apiUrl(`/api/execution/open-orders/${encodeURIComponent(id)}/cancel?account_key=${encodeURIComponent(selected)}`), { method: 'POST' });
+      await loadOpenOrders(selected);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
-  useEffect(() => { loadPending(selected); }, [selected, loadPending]);
+  useEffect(() => { loadPending(selected); loadOpenOrders(selected); }, [selected, loadPending, loadOpenOrders]);
 
   // Re-fetch prices + re-run the model (retrain skipped), then reload the queue. The backend
   // supersedes the prior pending trades, so this REPLACES the queue with a fresh, current-priced set.
@@ -85,6 +108,7 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
             setRefreshStage(null);
             await loadAccounts();
             await loadPending(selected);
+            await loadOpenOrders(selected);
           }
         } catch { setTimeout(tick, 3000); }
       };
@@ -128,6 +152,7 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
       if (!res.ok) { setModalErr(data.detail || `HTTP ${res.status}`); return; }
       setApproving(null);
       await loadPending(selected);
+      await loadOpenOrders(selected);   // an approved limit may now be resting at the broker
     } catch (e: any) {
       setModalErr(e?.message || 'approval failed');
     } finally {
@@ -195,6 +220,31 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
           <RefreshCw size={12} /> {refreshStage ? refreshStage : 'Refresh queue'}
         </button>
       </div>
+
+      {/* Resting (working) orders at the broker — e.g. an approved limit that hasn't filled. Cancel
+          stale ones here; the bot won't re-queue a name while its order is still working. */}
+      {openOrders.length > 0 && (
+        <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.06)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#F59E0B', marginBottom: '8px' }}>
+            Resting orders at broker ({openOrders.length})
+          </div>
+          <div style={{ display: 'grid', gap: '6px' }}>
+            {openOrders.map((o) => (
+              <div key={o.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '12px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  <strong style={{ color: o.side === 'buy' ? '#10B981' : '#F43F5E' }}>{o.side.toUpperCase()}</strong>{' '}
+                  <strong style={{ color: 'var(--text-primary)' }}>{o.symbol}</strong> {o.qty} ·{' '}
+                  {o.type === 'limit' && o.limit_price != null ? `limit ${money(o.limit_price)}` : o.type} · {o.status}
+                </span>
+                <button onClick={() => cancelOrder(o.id)} disabled={busy}
+                  style={{ padding: '3px 9px', fontSize: '11px', borderRadius: '5px', border: '1px solid var(--border-glass)', background: 'transparent', color: '#F43F5E', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Pending trades */}
       {pending.length === 0 ? (
