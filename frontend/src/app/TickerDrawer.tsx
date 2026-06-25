@@ -45,11 +45,15 @@ export interface QuoteStats {
 
 // ─── shared helpers ───────────────────────────────────────────────────────────
 
-export const money = (n: number) =>
-  n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B`
-  : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M`
-  : n >= 1e3 ? `$${(n / 1e3).toFixed(1)}K`
-  : `$${n.toFixed(2)}`;
+export const money = (n: number | string | null | undefined) => {
+  // Coerce defensively — some sources (e.g. Alpaca order fields) hand us numeric strings.
+  const v = typeof n === 'number' ? n : Number(n);
+  if (n == null || n === '' || Number.isNaN(v)) return '—';
+  return v >= 1e9 ? `$${(v / 1e9).toFixed(2)}B`
+    : v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M`
+    : v >= 1e3 ? `$${(v / 1e3).toFixed(1)}K`
+    : `$${v.toFixed(2)}`;
+};
 
 export const pct = (n: number | null | undefined, decimals = 1) =>
   n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(decimals)}%`;

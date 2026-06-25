@@ -4090,9 +4090,14 @@ def list_open_orders(account_key: str = "paper", db=Depends(get_db)):
         orders = api.list_orders(status="open", limit=500)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Broker error listing orders: {e}")
+    def _f(v):
+        try:
+            return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
     return [{
         "id": str(o.id), "symbol": o.symbol, "side": o.side, "qty": str(o.qty),
-        "type": getattr(o, "type", None), "limit_price": getattr(o, "limit_price", None),
+        "type": getattr(o, "type", None), "limit_price": _f(getattr(o, "limit_price", None)),
         "time_in_force": getattr(o, "time_in_force", None), "status": o.status,
         "submitted_at": str(getattr(o, "submitted_at", "") or ""),
     } for o in orders]
