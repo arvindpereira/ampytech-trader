@@ -3,10 +3,10 @@
   "source_doc": "perplexity_sectors.md",
   "taxonomy": "GICS",
   "description": "GICS sector handbook seed \u2014 representative large-cap US names, ETF proxies, and query aliases. Live metrics come from company_snapshots; ranks here are structural priors.",
-  "last_refreshed_at": "2026-06-23 14:06:36",
+  "last_refreshed_at": "2026-06-25 14:06:45",
   "seeds_top_n": 5,
   "metadata_universe_size": 82,
-  "classified_equity_count": 94,
+  "classified_equity_count": 96,
   "portfolio_classification": [
     {
       "ticker": "AAPL",
@@ -26,7 +26,7 @@
         "Robinhood Joint",
         "Robinhood Joint (116424851826)",
         "Vanguard Joint (7062)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -41,7 +41,7 @@
       ],
       "accounts": [
         "E*TRADE Stock Plan",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -54,7 +54,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -72,7 +72,7 @@
       "accounts": [
         "Robinhood Individual (706393097)",
         "Robinhood Joint (116424851826)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -101,7 +101,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -117,7 +117,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -130,7 +130,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -150,7 +150,7 @@
         "Robinhood Individual (706393097)",
         "Robinhood Joint",
         "Vanguard Joint (7062)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -163,7 +163,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -176,7 +176,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -206,7 +206,7 @@
       ],
       "accounts": [
         "Robinhood Joint (116424851826)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -219,7 +219,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -232,7 +232,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -245,7 +245,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -258,7 +258,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -271,7 +271,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -298,7 +298,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -325,7 +325,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -341,7 +341,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -373,7 +373,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -409,7 +409,7 @@
         "Robinhood Joint",
         "Robinhood Joint (116424851826)",
         "Vanguard Joint (7062)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -438,7 +438,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -454,7 +454,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -467,7 +467,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -526,7 +526,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -556,7 +556,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -569,7 +569,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -585,7 +585,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -605,7 +605,7 @@
         "Robinhood Individual (706393097)",
         "Robinhood Joint",
         "Vanguard Joint (7062)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -618,7 +618,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -631,7 +631,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -662,7 +662,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -709,7 +709,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -742,7 +742,7 @@
         "Robinhood Individual (706393097)",
         "Robinhood Joint",
         "Vanguard Joint (7062)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -755,7 +755,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -786,7 +786,7 @@
       ],
       "accounts": [
         "Charles Schwab",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -802,7 +802,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -829,12 +829,10 @@
       "market_cap": 233882600631.02783,
       "sources": [
         "equity_lot",
-        "external:Robinhood Individual (706393097)",
-        "virtual"
+        "external:Robinhood Individual (706393097)"
       ],
       "accounts": [
-        "Robinhood Individual (706393097)",
-        "real"
+        "Robinhood Individual (706393097)"
       ],
       "is_equity": true
     },
@@ -877,7 +875,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -908,7 +906,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -958,7 +956,7 @@
         "Robinhood Joint",
         "Robinhood Joint (116424851826)",
         "Vanguard Joint (7062)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -971,7 +969,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -984,7 +982,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -997,7 +995,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -1010,7 +1008,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -1040,7 +1038,7 @@
       ],
       "accounts": [
         "Robinhood Joint (116424851826)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -1056,7 +1054,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -1069,7 +1067,7 @@
         "virtual"
       ],
       "accounts": [
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -1215,7 +1213,7 @@
       ],
       "accounts": [
         "Robinhood Individual (706393097)",
-        "real"
+        "paper"
       ],
       "is_equity": true
     },
@@ -1267,7 +1265,7 @@
           "Robinhood Joint",
           "Robinhood Joint (116424851826)",
           "Vanguard Joint (7062)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1279,7 +1277,7 @@
         ],
         "accounts": [
           "E*TRADE Stock Plan",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1289,7 +1287,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1304,7 +1302,7 @@
         "accounts": [
           "Robinhood Individual (706393097)",
           "Robinhood Joint (116424851826)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1314,7 +1312,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1324,7 +1322,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1334,7 +1332,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1344,7 +1342,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1354,7 +1352,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1364,7 +1362,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1385,7 +1383,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1398,7 +1396,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1408,7 +1406,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1444,7 +1442,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1461,7 +1459,7 @@
           "Robinhood Individual (706393097)",
           "Robinhood Joint",
           "Vanguard Joint (7062)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1471,7 +1469,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1484,7 +1482,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1492,12 +1490,10 @@
         "industry": "Semiconductors",
         "sources": [
           "equity_lot",
-          "external:Robinhood Individual (706393097)",
-          "virtual"
+          "external:Robinhood Individual (706393097)"
         ],
         "accounts": [
-          "Robinhood Individual (706393097)",
-          "real"
+          "Robinhood Individual (706393097)"
         ]
       },
       {
@@ -1507,7 +1503,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1524,7 +1520,7 @@
           "Robinhood Joint",
           "Robinhood Joint (116424851826)",
           "Vanguard Joint (7062)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1534,7 +1530,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1544,7 +1540,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1554,7 +1550,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1564,7 +1560,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1577,7 +1573,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       }
     ],
@@ -1609,7 +1605,7 @@
           "Robinhood Individual (706393097)",
           "Robinhood Joint",
           "Vanguard Joint (7062)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1619,7 +1615,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1665,7 +1661,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1699,7 +1695,7 @@
         ],
         "accounts": [
           "Robinhood Joint (116424851826)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1712,7 +1708,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       }
     ],
@@ -1727,7 +1723,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1737,7 +1733,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1747,7 +1743,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1757,7 +1753,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1770,7 +1766,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1783,7 +1779,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1793,7 +1789,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1803,7 +1799,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1837,7 +1833,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       }
     ],
@@ -1849,7 +1845,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1879,7 +1875,7 @@
           "Robinhood Joint",
           "Robinhood Joint (116424851826)",
           "Vanguard Joint (7062)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1889,7 +1885,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -1930,7 +1926,7 @@
         ],
         "accounts": [
           "Robinhood Joint (116424851826)",
-          "real"
+          "paper"
         ]
       }
     ],
@@ -1945,7 +1941,7 @@
         ],
         "accounts": [
           "Robinhood Individual (706393097)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1962,7 +1958,7 @@
           "Robinhood Individual (706393097)",
           "Robinhood Joint",
           "Vanguard Joint (7062)",
-          "real"
+          "paper"
         ]
       },
       {
@@ -1989,7 +1985,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -2001,7 +1997,7 @@
         ],
         "accounts": [
           "Charles Schwab",
-          "real"
+          "paper"
         ]
       },
       {
@@ -2041,7 +2037,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       },
       {
@@ -2051,7 +2047,7 @@
           "virtual"
         ],
         "accounts": [
-          "real"
+          "paper"
         ]
       }
     ]
@@ -2147,7 +2143,7 @@
             "Robinhood Joint",
             "Robinhood Joint (116424851826)",
             "Vanguard Joint (7062)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2159,7 +2155,7 @@
           ],
           "accounts": [
             "E*TRADE Stock Plan",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2169,7 +2165,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2184,7 +2180,7 @@
           "accounts": [
             "Robinhood Individual (706393097)",
             "Robinhood Joint (116424851826)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2194,7 +2190,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2204,7 +2200,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2214,7 +2210,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2224,7 +2220,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2234,7 +2230,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2244,7 +2240,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2265,7 +2261,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2278,7 +2274,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2288,7 +2284,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2324,7 +2320,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2341,7 +2337,7 @@
             "Robinhood Individual (706393097)",
             "Robinhood Joint",
             "Vanguard Joint (7062)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2351,7 +2347,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2364,7 +2360,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2372,12 +2368,10 @@
           "industry": "Semiconductors",
           "sources": [
             "equity_lot",
-            "external:Robinhood Individual (706393097)",
-            "virtual"
+            "external:Robinhood Individual (706393097)"
           ],
           "accounts": [
-            "Robinhood Individual (706393097)",
-            "real"
+            "Robinhood Individual (706393097)"
           ]
         },
         {
@@ -2387,7 +2381,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2404,7 +2398,7 @@
             "Robinhood Joint",
             "Robinhood Joint (116424851826)",
             "Vanguard Joint (7062)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2414,7 +2408,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2424,7 +2418,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2434,7 +2428,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2444,7 +2438,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2457,7 +2451,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         }
       ],
@@ -2542,7 +2536,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2559,7 +2553,7 @@
             "Robinhood Individual (706393097)",
             "Robinhood Joint",
             "Vanguard Joint (7062)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2586,7 +2580,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2598,7 +2592,7 @@
           ],
           "accounts": [
             "Charles Schwab",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2716,7 +2710,7 @@
             "Robinhood Individual (706393097)",
             "Robinhood Joint",
             "Vanguard Joint (7062)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2726,7 +2720,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -2772,7 +2766,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2806,7 +2800,7 @@
           ],
           "accounts": [
             "Robinhood Joint (116424851826)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -2819,11 +2813,11 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         }
       ],
-      "classified_ticker_count": 11
+      "classified_ticker_count": 13
     },
     {
       "id": "consumer_staples",
@@ -2889,7 +2883,7 @@
           "company": "Walmart",
           "exchange": "NYSE",
           "subsector": "Hypermarkets",
-          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
+          "notes": "Retail giant (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback) (static fallback)"
         }
       ],
       "portfolio_holdings": [
@@ -2903,7 +2897,7 @@
           ],
           "accounts": [
             "Robinhood Joint (116424851826)",
-            "real"
+            "paper"
           ]
         }
       ],
@@ -2998,7 +2992,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3008,7 +3002,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         }
       ],
@@ -3091,7 +3085,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3121,7 +3115,7 @@
             "Robinhood Joint",
             "Robinhood Joint (116424851826)",
             "Vanguard Joint (7062)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -3131,7 +3125,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3243,7 +3237,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -3253,7 +3247,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3263,7 +3257,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3273,7 +3267,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3286,7 +3280,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -3299,7 +3293,7 @@
           ],
           "accounts": [
             "Robinhood Individual (706393097)",
-            "real"
+            "paper"
           ]
         },
         {
@@ -3309,7 +3303,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3319,7 +3313,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         },
         {
@@ -3353,7 +3347,7 @@
             "virtual"
           ],
           "accounts": [
-            "real"
+            "paper"
           ]
         }
       ],

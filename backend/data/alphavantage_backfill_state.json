@@ -3589,8 +3589,8 @@
       ]
     }
   },
-  "daily_request_count": 24,
-  "last_reset_date": "2026-06-24",
+  "daily_request_count": 21,
+  "last_reset_date": "2026-06-25",
   "last_processed": {
     "ticker": "BABA",
     "interval": "Year_1",
