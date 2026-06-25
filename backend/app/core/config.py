@@ -301,6 +301,15 @@ ALPACA_DATA_URL = os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets")
 # Merge Alpaca (Benzinga) headlines into the LLM news feed alongside Polygon/Massive. On by default
 NEWS_USE_ALPACA = os.getenv("NEWS_USE_ALPACA", "True").lower() in ("true", "1", "yes")
 
+# Source for HOURLY/intraday price bars (recent_prices): "massive" (Polygon-compatible, the default) or
+# "alpaca" (Alpaca Market Data API). Alpaca needs ALPACA_API_KEY/SECRET + a data subscription for the
+# SIP feed (Algo Trader Plus); it gives ~7-9y of full-volume SIP history vs Massive's plan window.
+PRICE_HOURLY_SOURCE = os.getenv("PRICE_HOURLY_SOURCE", "massive").lower()
+# Alpaca data feed: "sip" (full volume, needs the paid sub) or "iex" (free, partial). Adjustment matches
+# Polygon's adjusted=true ("split") by default; use "all" to also dividend-adjust, "raw" for neither.
+ALPACA_DATA_FEED = os.getenv("ALPACA_DATA_FEED", "sip").lower()
+ALPACA_DATA_ADJUSTMENT = os.getenv("ALPACA_DATA_ADJUSTMENT", "split").lower()
+
 # --- Short-Term Portfolio Simulation & Throttling/Kelly Config ---
 PORTFOLIO_MAX_SIGNALS_PER_BAR = int(os.getenv("PORTFOLIO_MAX_SIGNALS_PER_BAR", "0"))  # 0 = unlimited
 PORTFOLIO_MAX_OPEN_POSITIONS = int(os.getenv("PORTFOLIO_MAX_OPEN_POSITIONS", "10"))

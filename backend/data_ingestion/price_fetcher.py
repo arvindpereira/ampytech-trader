@@ -13,7 +13,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import (
     TICKER_UNIVERSE, BENCHMARK_TICKER, MASSIVE_API_KEY, MASSIVE_BASE_URL,
-    DATA_TIMESPAN, DATA_MULTIPLIER, HOURLY_LOOKBACK_DAYS, DAILY_HISTORY_START
+    DATA_TIMESPAN, DATA_MULTIPLIER, HOURLY_LOOKBACK_DAYS, DAILY_HISTORY_START,
+    PRICE_HOURLY_SOURCE, ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_DATA_URL,
+    ALPACA_DATA_FEED, ALPACA_DATA_ADJUSTMENT,
 )
 from app.database import init_db, SessionLocal, RecentPrice, DailyPrice, UniverseTicker
 
@@ -128,6 +130,125 @@ def fetch_massive_hourly(ticker, start_date, end_date):
     if pages > 1:
         print(f"{ticker}: fetched {len(bars)} hourly bars across {pages} pages.")
     return bars
+
+
+# ---------------------------------------------------------------------------
+# Alpaca Market Data bars (drop-in alternative to Massive; gated by PRICE_HOURLY_SOURCE)
+# ---------------------------------------------------------------------------
+def _alpaca_timeframe():
+    """Map the configured Massive/Polygon timespan to an Alpaca timeframe string (e.g. 1Hour)."""
+    unit = {"minute": "Min", "hour": "Hour", "day": "Day"}.get(DATA_TIMESPAN, "Hour")
+    return f"{DATA_MULTIPLIER}{unit}"
+
+
+def _alpaca_get(url, headers, params, ticker):
+    """GETs an Alpaca Market Data URL with 429 backoff. Returns (json|None). A 401/403 means the data
+    subscription doesn't cover the requested feed (e.g. SIP on the free plan)."""
+    backoff_sec = 2.0
+    for attempt in range(5):
+        time.sleep(0.2)
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=60)
+            if response.status_code == 429:
+                print(f"Alpaca rate limited (429) for {ticker}. Retrying in {backoff_sec}s...")
+                time.sleep(backoff_sec)
+                backoff_sec *= 2.0
+                continue
+            if response.status_code in (401, 403):
+                print(f"Alpaca data not authorized for {ticker} (feed={ALPACA_DATA_FEED}): {response.text[:160]}")
+                return None
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            if attempt == 4:
+                print(f"Failed Alpaca request for {ticker}: {e}")
+                return None
+            time.sleep(backoff_sec)
+            backoff_sec *= 2.0
+    return None
+
+
+def fetch_alpaca_hourly(ticker, start_date, end_date):
+    """Fetches bars from Alpaca's Market Data API (SIP with Algo Trader Plus), following the
+    `next_page_token` cursor. Returns Polygon-shaped dicts (t=epoch_ms, o/h/l/c/v) so it is a drop-in
+    replacement for fetch_massive_hourly(). Timestamps (RFC3339 UTC) are converted to UTC epoch ms,
+    the same basis Polygon uses, so downstream date strings line up between the two sources."""
+    if not (ALPACA_API_KEY and ALPACA_SECRET_KEY):
+        print(f"Alpaca data credentials missing; cannot fetch {ticker}.")
+        return []
+    symbol = map_ticker_to_massive(ticker)   # class-B uses a dot on Alpaca too (BRK.B)
+    headers = {"APCA-API-KEY-ID": ALPACA_API_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY}
+    url = f"{ALPACA_DATA_URL}/v2/stocks/{urllib.parse.quote(symbol)}/bars"
+    params = {
+        "timeframe": _alpaca_timeframe(),
+        "start": start_date.strftime("%Y-%m-%d"),
+        "end": end_date.strftime("%Y-%m-%d"),
+        "adjustment": ALPACA_DATA_ADJUSTMENT,
+        "feed": ALPACA_DATA_FEED,
+        "limit": 10000,
+        "sort": "asc",
+    }
+
+    bars, pages, page_token = [], 0, None
+    while True:
+        if page_token:
+            params["page_token"] = page_token
+        data = _alpaca_get(url, headers, params, ticker)
+        if data is None:
+            break
+        for b in (data.get("bars") or []):
+            t = b.get("t")
+            if not t:
+                continue
+            try:
+                dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                epoch_ms = int(dt.timestamp() * 1000)
+                bars.append({"t": epoch_ms, "o": float(b["o"]), "h": float(b["h"]),
+                             "l": float(b["l"]), "c": float(b["c"]), "v": float(b.get("v") or 0.0)})
+            except Exception:
+                continue
+        pages += 1
+        page_token = data.get("next_page_token")
+        if not page_token or pages > 500:   # safety guard against runaway pagination
+            break
+    if pages > 1:
+        print(f"{ticker}: fetched {len(bars)} Alpaca bars across {pages} pages.")
+    return bars
+
+
+def fetch_hourly_bars(ticker, start_date, end_date):
+    """Provider-agnostic hourly-bar fetch. Source is chosen by PRICE_HOURLY_SOURCE
+    ("massive" default | "alpaca"). Both return the same Polygon-shaped bar dicts."""
+    if PRICE_HOURLY_SOURCE == "alpaca":
+        return fetch_alpaca_hourly(ticker, start_date, end_date)
+    return fetch_massive_hourly(ticker, start_date, end_date)
+
+
+def validate_overlap(ticker, days=20):
+    """Side-by-side sanity check of Alpaca vs Massive over the same recent window. Prints bar counts,
+    overlapping-timestamp count, and close-price agreement (mean/max abs diff) so you can confirm the
+    Alpaca feed matches before flipping PRICE_HOURLY_SOURCE. Read-only — fetches only, no DB writes."""
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    m = {b["t"]: b for b in fetch_massive_hourly(ticker, start, end)}
+    a = {b["t"]: b for b in fetch_alpaca_hourly(ticker, start, end)}
+    shared = sorted(set(m) & set(a))
+    print(f"\n=== {ticker}: Alpaca vs Massive over last {days}d ===")
+    print(f"  Massive bars: {len(m)} | Alpaca bars: {len(a)} | overlapping timestamps: {len(shared)}")
+    if shared:
+        diffs = [abs(m[t]["c"] - a[t]["c"]) for t in shared]
+        rel = [d / m[t]["c"] for d, t in zip(diffs, shared) if m[t]["c"]]
+        print(f"  Close agreement on overlap: mean |Δ| ${sum(diffs)/len(diffs):.4f}, "
+              f"max |Δ| ${max(diffs):.4f}, mean |Δ%| {100*sum(rel)/len(rel):.3f}%")
+        only_m = sorted(set(m) - set(a))[:3]
+        only_a = sorted(set(a) - set(m))[:3]
+        if only_m:
+            print(f"  Massive-only sample ts: {[timestamp_to_str(t) for t in only_m]}")
+        if only_a:
+            print(f"  Alpaca-only sample ts:  {[timestamp_to_str(t) for t in only_a]}")
+    else:
+        print("  No overlapping bars — check creds/feed/timeframe/symbol mapping.")
+    return {"massive": len(m), "alpaca": len(a), "overlap": len(shared)}
 
 
 def fetch_yahoo_daily(ticker, start_date, end_date):
@@ -377,10 +498,10 @@ def backfill_ticker(ticker, progress_cb=None):
     finally:
         db.close()
 
-    # 2) Hourly recent bars (Massive, ~5y window)
-    report(30, "Fetching hourly bars (Massive)…")
+    # 2) Hourly recent bars (Massive or Alpaca per PRICE_HOURLY_SOURCE)
+    report(30, f"Fetching hourly bars ({PRICE_HOURLY_SOURCE})…")
     hourly_start = end_date - timedelta(days=HOURLY_LOOKBACK_DAYS)
-    hourly_bars = fetch_massive_hourly(ticker, hourly_start, end_date)
+    hourly_bars = fetch_hourly_bars(ticker, hourly_start, end_date)
     db = SessionLocal()
     hourly_added = 0
     try:
@@ -534,7 +655,7 @@ def fetch_recent_prices():
     total_tasks = len(fetch_tasks)
     completed = 0
     with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(fetch_massive_hourly, tk, s, e): tk for tk, s, e in fetch_tasks}
+        futures = {executor.submit(fetch_hourly_bars, tk, s, e): tk for tk, s, e in fetch_tasks}
         for future in as_completed(futures):
             completed += 1
             tk = futures[future]
@@ -849,5 +970,14 @@ def fetch_daily_history():
 
 
 if __name__ == "__main__":
-    fetch_recent_prices()
-    fetch_daily_history()
+    # `--validate TICKER [DAYS]` compares the Alpaca feed against Massive over a recent window without
+    # writing anything — use it to confirm parity before setting PRICE_HOURLY_SOURCE=alpaca.
+    if "--validate" in sys.argv:
+        i = sys.argv.index("--validate")
+        tickers = [sys.argv[i + 1]] if len(sys.argv) > i + 1 and not sys.argv[i + 1].isdigit() else ["AAPL", "NVDA", "SPY"]
+        days = next((int(a) for a in sys.argv[i + 1:] if a.isdigit()), 20)
+        for tk in tickers:
+            validate_overlap(tk.upper(), days=days)
+    else:
+        fetch_recent_prices()
+        fetch_daily_history()
