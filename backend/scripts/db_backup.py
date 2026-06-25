@@ -40,6 +40,18 @@ _VERIFY_TABLES = [
     "news_llm_scores", "daily_prices", "recent_prices", "universe_tickers", "virtual_orders",
     "equity_lots", "equity_vest_schedules", "equity_auto_trade_blocks", "tax_profile", "trading_blocks",
 ]
+_COUNT_SQL = {
+    "news_llm_scores": "SELECT COUNT(*) FROM news_llm_scores",
+    "daily_prices": "SELECT COUNT(*) FROM daily_prices",
+    "recent_prices": "SELECT COUNT(*) FROM recent_prices",
+    "universe_tickers": "SELECT COUNT(*) FROM universe_tickers",
+    "virtual_orders": "SELECT COUNT(*) FROM virtual_orders",
+    "equity_lots": "SELECT COUNT(*) FROM equity_lots",
+    "equity_vest_schedules": "SELECT COUNT(*) FROM equity_vest_schedules",
+    "equity_auto_trade_blocks": "SELECT COUNT(*) FROM equity_auto_trade_blocks",
+    "tax_profile": "SELECT COUNT(*) FROM tax_profile",
+    "trading_blocks": "SELECT COUNT(*) FROM trading_blocks",
+}
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -396,7 +408,10 @@ def verify(name=None, match_commit=False, files_mode=False):
 
 def _safe_count(conn, table):
     try:
-        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        sql = _COUNT_SQL.get(table)
+        if not sql:
+            return None
+        return conn.execute(sql).fetchone()[0]
     except Exception:
         return None
 

@@ -34,6 +34,7 @@ from app.database import (
     UniverseTicker, AppSetting, TradingBlock, PendingTrade
 )
 from execution.accounts import get_account, is_configured, enabled_account_keys
+from execution.alpaca_rest import AlpacaRestClient
 from ml_engine.models import PortfolioOptimizer
 import numpy as np
 
@@ -276,19 +277,17 @@ def get_alpaca_api(account_key="paper", force_virtual=False):
         secret_key = acc.secret_key
 
     try:
-        import alpaca_trade_api as tradeapi
-        api = tradeapi.REST(
+        api = AlpacaRestClient(
             key_id=key_id,
             secret_key=secret_key,
             base_url=base_url,
-            api_version='v2'
+            account_key=acc.key,
         )
         return api
     except Exception as e:
         print(f"Warning: Failed to connect to Alpaca API at {base_url}: {e}")
         if "localhost" in base_url or "127.0.0.1" in base_url:
-            import alpaca_trade_api as tradeapi
-            return tradeapi.REST(key_id=key_id, secret_key=secret_key, base_url=base_url, api_version='v2')
+            return AlpacaRestClient(key_id=key_id, secret_key=secret_key, base_url=base_url, account_key=acc.key)
         return None
 
 def _is_real_alpaca(account_key="paper"):

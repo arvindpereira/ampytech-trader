@@ -3,7 +3,7 @@ import os
 import random
 import time
 from datetime import datetime, timedelta
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 import requests
 
 # Adjust path to import app modules

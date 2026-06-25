@@ -1,4 +1,4 @@
-.PHONY: help default install bootstrap up \
+.PHONY: help default install install-security bootstrap up \
         data fetch fetch-valuation fetch-market-stress fetch-forecasts backfill-news \
         news-llm news-recent news-llm-batch news-llm-batch-collect llm-usage premium-ingest insider fundamentals classify \
         train train-core swing-train train-deep walkforward calibrate \
@@ -7,6 +7,7 @@
         simulate backtest-virtual \
         serve serve-all serve-backend serve-frontend schedule stop \
         popular-tickers add-ticker lint test clean-cache _expire \
+        sec-audit security-audit \
         db-backup db-backup-list db-verify db-restore db-restore-commit \
         files-backup files-backup-list files-verify files-restore files-restore-commit \
         backup restore restore-commit
@@ -32,8 +33,16 @@ TICKER   ?=
 TICKERS  ?=
 BACKUP_KEEP ?= 10
 RESTORE  ?=
-VENV_PY := venv/bin/python3
-FRONTEND_HOST ?= 0.0.0.0
+PYTHON ?= python3
+BACKEND_VENV ?= venv-py314
+VENV_PY := $(BACKEND_VENV)/bin/python3
+SECURITY_VENV := backend/.security-venv-py314
+SECURITY_PY := $(SECURITY_VENV)/bin/python
+SECURITY_REQ := backend/requirements-security.txt
+SECURITY_REQ_STAMP := $(SECURITY_VENV)/.requirements-security.sha256
+FRONTEND_HOST ?= 127.0.0.1
+BACKEND_HOST ?= 127.0.0.1
+WIKI_HOST ?= 127.0.0.1
 FRONTEND_PORT ?= 3002
 BACKEND_PORT  ?= 8008
 WIKI_PORT     ?= 4000
@@ -74,12 +83,13 @@ help:
 	@echo "  make data              - All data fetches in one dependency-aware, cached step (FORCE=1 to refetch)"
 	@echo "  make train             - Train ALL served models (HMM + XGBoost + Core/Aggressive swing); depends on data"
 	@echo "  make serve-all         - Just launch backend + frontend + scheduler (no pipeline)"
-	@echo "  make serve             - Just launch backend (:8008) + frontend (:3002, LAN-friendly)"
+	@echo "  make serve             - Just launch backend (:8008) + frontend (:3002)"
 	@echo "  make stop              - Stop the running backend + frontend + scheduler (by port + command)"
 	@echo "  Cache knobs: FORCE=1 (rebuild everything) · DATA_TTL/MODEL_TTL=<minutes> · make clean-cache"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make install           - Create backend venv + install Python & Node deps"
+	@echo "  make install-security  - Create isolated pinned security-tool venv"
 	@echo "  make bootstrap         - First run: install, seed universe, fetch data, train models"
 	@echo ""
 	@echo "Pipeline internals (run automatically by data/train/up; usually no need to call directly):"
@@ -133,6 +143,7 @@ help:
 	@echo "Misc:"
 	@echo "  make lint              - Strip trailing whitespace / normalize line endings"
 	@echo "  make test              - Run the test suite against an isolated throwaway DB"
+	@echo "  make sec-audit         - Run npm audit, pip-audit, bandit, and detect-secrets"
 	@echo "  make clean-cache       - Delete pipeline stamp files (forces a full refresh next run)"
 	@echo "========================================================================"
 
@@ -141,12 +152,32 @@ help:
 # ----------------------------------------------------------------------------
 install:
 	@echo "📦 Installing backend (venv + requirements) and frontend (npm) dependencies..."
-	cd backend && python3 -m venv venv && venv/bin/pip install --upgrade pip && venv/bin/pip install -r requirements.txt
+	@$(PYTHON) -c "import sys; raise SystemExit('Python 3.14+ is required, found %s.%s' % sys.version_info[:2]) if sys.version_info < (3, 14) else None"
+	cd backend && $(PYTHON) -m venv $(BACKEND_VENV) && $(VENV_PY) -m pip install --upgrade pip setuptools wheel && $(VENV_PY) -m pip install -r requirements.txt
+	@$(MAKE) install-security
 	cd frontend && npm install
 	@echo "✅ Install complete."
 
 bootstrap: install popular-tickers data train
 	@echo "✅ Bootstrap complete. Run 'make up' to launch everything (or 'make serve-all')."
+
+install-security:
+	@echo "🔐 Installing pinned security audit tooling into isolated venv ($(SECURITY_VENV))..."
+	@if [ ! -x backend/$(VENV_PY) ]; then \
+		echo "backend/$(VENV_PY) is missing. Run 'make install' first so the security venv matches the backend Python."; \
+		exit 1; \
+	fi
+	@expected=$$(printf "%s:%s" "$$(shasum -a 256 $(SECURITY_REQ) | awk '{print $$1}')" "$$(backend/$(VENV_PY) -c 'import sys; print(sys.version)')"); \
+	current=$$(cat $(SECURITY_REQ_STAMP) 2>/dev/null || true); \
+	if [ -x "$(SECURITY_PY)" ] && [ "$$expected" = "$$current" ]; then \
+		echo "✅ Security audit tooling already matches $(SECURITY_REQ)."; \
+		exit 0; \
+	fi; \
+	backend/$(VENV_PY) -m venv $(SECURITY_VENV); \
+	$(SECURITY_PY) -m pip install --no-deps -r $(SECURITY_REQ); \
+	mkdir -p "$(SECURITY_VENV)"; \
+	echo "$$expected" > "$(SECURITY_REQ_STAMP)"
+	@echo "✅ Security audit tooling installed."
 
 # ----------------------------------------------------------------------------
 # Cache plumbing
@@ -251,12 +282,12 @@ research-wiki-serve: research-wiki-export
 	  echo "  Or use:   make research-wiki-serve WIKI_PORT=4001"; \
 	  exit 1; \
 	fi; \
-	echo "Serving at http://localhost:$$PORT (Ctrl+C to stop)"; \
-	cd research-wiki/site && $(CURDIR)/backend/$(VENV_PY) -m http.server $$PORT --bind 0.0.0.0
+	echo "Serving at http://$(WIKI_HOST):$$PORT (Ctrl+C to stop)"; \
+	cd research-wiki/site && $(CURDIR)/backend/$(VENV_PY) -m http.server $$PORT --bind $(WIKI_HOST)
 
 # Optional: Jekyll build (requires Ruby 3+ and: cd research-wiki && bundle install)
 research-wiki-serve-jekyll: research-wiki-export
-	cd research-wiki && bundle exec jekyll serve --host 0.0.0.0 --port $(WIKI_PORT)
+	cd research-wiki && bundle exec jekyll serve --host $(WIKI_HOST) --port $(WIKI_PORT)
 
 import-equity-lots:
 	@test -n "$(FILE)" || (echo "Usage: make import-equity-lots FILE=path/to/export.pdf [REPLACE=1] [FORCE_LLM=1]" && exit 1)
@@ -511,14 +542,14 @@ restore-commit: db-restore-commit files-restore-commit
 serve:
 	@echo "========================================================================"
 	@echo "Launching Ampytech Trader full stack..."
-	@echo "🚀 Backend API: http://0.0.0.0:$(BACKEND_PORT) (also http://localhost:$(BACKEND_PORT))"
+	@echo "🚀 Backend API: http://$(BACKEND_HOST):$(BACKEND_PORT)"
 	@echo "🎨 Web Interface: http://$(FRONTEND_HOST):$(FRONTEND_PORT) (LAN: use this machine's IP, e.g. http://10.0.0.43:$(FRONTEND_PORT))"
 	@echo "Press Ctrl+C to terminate both servers."
 	@echo "========================================================================"
-	@bash -c 'trap "kill 0" EXIT; (cd backend && $(VENV_PY) run.py serve) & (cd frontend && npm run dev -- -H $(FRONTEND_HOST) -p $(FRONTEND_PORT)) & wait'
+	@bash -c 'trap "kill 0" EXIT; (cd backend && BACKEND_HOST=$(BACKEND_HOST) BACKEND_PORT=$(BACKEND_PORT) $(VENV_PY) run.py serve) & (cd frontend && npm run dev -- -H $(FRONTEND_HOST) -p $(FRONTEND_PORT)) & wait'
 
 serve-backend:
-	cd backend && $(VENV_PY) run.py serve
+	cd backend && BACKEND_HOST=$(BACKEND_HOST) BACKEND_PORT=$(BACKEND_PORT) $(VENV_PY) run.py serve
 
 serve-frontend:
 	cd frontend && npm run dev -- -H $(FRONTEND_HOST) -p $(FRONTEND_PORT)
@@ -586,6 +617,28 @@ test:
 	@echo "========================================================================"
 	cd backend && $(VENV_PY) run_tests.py $(TESTS)
 	@echo "✅ Tests complete."
+
+sec-audit: install-security
+	@echo "========================================================================"
+	@echo "🔐 Running security audit: npm audit, pip-audit, bandit, detect-secrets"
+	@echo "========================================================================"
+	@status=0; \
+	echo ""; echo "▶ npm audit (frontend)"; \
+	(cd frontend && npm audit --audit-level=high) || status=1; \
+	echo ""; echo "▶ pip-audit (backend requirements)"; \
+	$(SECURITY_PY) -m pip_audit -r backend/requirements.txt || status=1; \
+	echo ""; echo "▶ bandit (first-party backend source)"; \
+	$(SECURITY_PY) -m bandit -q -r backend/app backend/data_ingestion backend/execution backend/ml_engine backend/backtesting backend/scripts backend/run.py || status=1; \
+	echo ""; echo "▶ detect-secrets (repo scan, generated/vendor dirs excluded)"; \
+	$(SECURITY_PY) -m detect_secrets scan --all-files --exclude-files '(^frontend/node_modules/|^frontend/.next/|^frontend/tsconfig.tsbuildinfo|^backend/venv/|^backend/venv-py314/|^backend/.security-venv/|^backend/.security-venv-py314/|^research-wiki/site/|^\.git/)' || status=1; \
+	if [ $$status -eq 0 ]; then \
+		echo ""; echo "✅ Security audit passed."; \
+	else \
+		echo ""; echo "❌ Security audit found issues. See tool output and docs/security_audit.md."; \
+	fi; \
+	exit $$status
+
+security-audit: sec-audit
 
 popular-tickers:
 	@echo "========================================================================"

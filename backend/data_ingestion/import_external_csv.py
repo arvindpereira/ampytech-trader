@@ -423,8 +423,14 @@ def cleanup_stray_robinhood(db_path=None):
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     removed = {}
-    for tbl in ("external_transactions", "external_orders", "equity_lots", "external_accounts"):
-        cur.execute(f"DELETE FROM {tbl} WHERE account_label = 'Robinhood'")
+    statements = {
+        "external_transactions": "DELETE FROM external_transactions WHERE account_label = ?",
+        "external_orders": "DELETE FROM external_orders WHERE account_label = ?",
+        "equity_lots": "DELETE FROM equity_lots WHERE account_label = ?",
+        "external_accounts": "DELETE FROM external_accounts WHERE account_label = ?",
+    }
+    for tbl, sql in statements.items():
+        cur.execute(sql, ("Robinhood",))
         removed[tbl] = cur.rowcount
     conn.commit()
     conn.close()

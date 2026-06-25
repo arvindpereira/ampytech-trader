@@ -82,7 +82,7 @@ def _call_llm(prompt, provider, model):
 
 
 def _article_id(source_tag, url, title, date):
-    h = hashlib.sha1(f"{url}|{title}|{date}".encode()).hexdigest()[:16]
+    h = hashlib.sha256(f"{url}|{title}|{date}".encode()).hexdigest()[:16]
     return f"prem:{source_tag}:{h}"
 
 

@@ -28,7 +28,7 @@ def fetch_macro_indicators():
     try:
         while url:
             print(f"Fetching macro data page: {url}...")
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             data = response.json()
             page_results = data.get("results", [])

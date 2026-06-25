@@ -9,6 +9,9 @@ backend/.env
 
 # Dependencies
 backend/venv/
+backend/venv-py314/
+backend/.security-venv/
+backend/.security-venv-py314/
 frontend/node_modules/
 
 # Local database & data

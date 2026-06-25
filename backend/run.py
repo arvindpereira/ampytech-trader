@@ -99,7 +99,9 @@ def swing_train(horizon=5):
 
 def serve():
     # Run Uvicorn to serve the FastAPI application
-    run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008", "--reload"], "FastAPI Server")
+    host = os.getenv("BACKEND_HOST", "127.0.0.1")
+    port = os.getenv("BACKEND_PORT", "8008")
+    run_command([sys.executable, "-m", "uvicorn", "app.main:app", "--host", host, "--port", port, "--reload"], "FastAPI Server")
 
 def schedule():
     run_command([sys.executable, "execution/scheduler.py"], "APScheduler Background Worker Daemon")
