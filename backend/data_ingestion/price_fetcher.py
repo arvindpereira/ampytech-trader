@@ -334,9 +334,11 @@ def compute_local_indicators_for_bars(bars, daily=False):
     delta = df['c'].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=14).mean().values
-    avg_loss = loss.rolling(window=14).mean().values
-    gain_vals, loss_vals = gain.values, loss.values
+    # np.array(..) returns a fresh WRITABLE copy — pandas 3.0 / numpy 2 make .values a read-only view,
+    # and the Wilder-smoothing loop below writes into avg_gain/avg_loss.
+    avg_gain = np.array(gain.rolling(window=14).mean(), dtype=float)
+    avg_loss = np.array(loss.rolling(window=14).mean(), dtype=float)
+    gain_vals, loss_vals = gain.to_numpy(), loss.to_numpy()
     for i in range(15, len(df)):
         if not np.isnan(avg_gain[i - 1]):
             avg_gain[i] = (avg_gain[i - 1] * 13 + gain_vals[i]) / 14
@@ -401,12 +403,16 @@ def _write_bars(db, Model, ticker, bars, daily=False):
     # Compute indicators on the combined list
     sma_10_map, sma_50_map, rsi_14_map, macd_map = compute_local_indicators_for_bars(combined_bars, daily=daily)
 
-    existing_map = {p.date: p for p in db.query(Model).filter(Model.ticker == ticker).all()}
     new_records = []
     updated = 0
 
-    # We only want to write or update bars that were actually in the newly fetched `bars`
+    # We only write/update the bars that were actually fetched — so load just THOSE existing rows for
+    # the upsert, not the ticker's entire multi-year history (loading ~8k ORM rows per ticker every
+    # fetch was the real cost; the indicator warmup above is already capped at 100 bars).
     new_bar_dates = {timestamp_to_str(b["t"], daily=daily) for b in bars if b.get("t")}
+    existing_map = ({p.date: p for p in db.query(Model).filter(
+        Model.ticker == ticker, Model.date.in_(list(new_bar_dates))).all()}
+        if new_bar_dates else {})
 
     for date_str in new_bar_dates:
         bar = combined_bars_map[date_str]
