@@ -24,9 +24,12 @@ from app.core.config import (
     LONGTERM_GRID_ENABLED,
     REGIME_OVERLAY_ENABLED,
     REGIME_SWING_FACTORS,
+    EXTENSION_GUARD_ENABLED,
+    EXTENSION_GUARD_MA_DAYS,
+    EXTENSION_GUARD_MAX_ABOVE,
 )
 from app.database import (
-    SessionLocal, init_db, ExecutedTrade, RecentPrice,
+    SessionLocal, init_db, ExecutedTrade, RecentPrice, DailyPrice,
     VirtualAccount, VirtualPosition, VirtualOrder, BrokerPerformanceLog,
     UniverseTicker, AppSetting, TradingBlock, PendingTrade
 )
@@ -164,6 +167,49 @@ def _expire_stale_pending(db, as_of=None):
     if stale:
         db.commit()
     return len(stale)
+
+
+def _supersede_pending(db, account_key):
+    """Mark an account's still-pending trades as 'superseded' so a fresh run REPLACES the queue rather
+    than stacking duplicates on top. Called per account at the start of each run when its gate is on."""
+    rows = db.query(PendingTrade).filter(
+        PendingTrade.account_key == account_key, PendingTrade.status == "pending_approval"
+    ).all()
+    now = datetime.now().isoformat()
+    for row in rows:
+        row.status = "superseded"
+        row.decided_at = now
+    if rows:
+        db.commit()
+        print(f"[{account_key}] Superseded {len(rows)} prior pending trade(s) before re-queuing.")
+    return len(rows)
+
+
+def ma_extension(db, ticker, ma_days=None):
+    """How far the latest daily close sits above its `ma_days`-day moving average, as a fraction
+    ((close - MA) / MA). Positive = extended above the average. Uses daily_prices (Yahoo, deep
+    history). Returns None when there aren't enough bars — the caller then fails OPEN (no block)."""
+    ma_days = ma_days or EXTENSION_GUARD_MA_DAYS
+    rows = (db.query(DailyPrice.close)
+            .filter(DailyPrice.ticker == ticker)
+            .order_by(DailyPrice.date.desc()).limit(ma_days).all())
+    closes = [r[0] for r in rows if r[0] is not None]
+    if len(closes) < ma_days:
+        return None
+    ma = sum(closes) / len(closes)
+    if ma <= 0:
+        return None
+    return (closes[0] - ma) / ma   # closes[0] is the most recent (desc order)
+
+
+def _extension_block(db, ticker):
+    """Reason string if opening a NEW position in `ticker` is too extended above its MA, else None."""
+    if not EXTENSION_GUARD_ENABLED:
+        return None
+    ext = ma_extension(db, ticker)
+    if ext is not None and ext > EXTENSION_GUARD_MAX_ABOVE:
+        return f"extended +{ext*100:.0f}% above {EXTENSION_GUARD_MA_DAYS}d MA"
+    return None
 
 
 def buy_block_reason(ticker, db, as_of=None):
@@ -900,6 +946,11 @@ def execute_swing_paper_trades(api, db, suggestions_data, mode="paper", allowed_
         if ticker in active_tickers:
             print(f"Already holding {ticker}. Skipping.")
             continue
+        # Extension guard: swing entries always OPEN a new position, so don't chase an overextended name.
+        ext_reason = _extension_block(db, ticker)
+        if ext_reason:
+            print(f"⏭ Skipping {label} BUY {ticker}: {ext_reason} — waiting for a pullback.")
+            continue
         if not stop_loss or not take_profit or close_price <= 0:
             print(f"{ticker} missing bracket levels. Skipping.")
             continue
@@ -1184,6 +1235,14 @@ def execute_long_term_grid_trades(db, api, suggestions_data, sim_date, allowed_t
         if diff_shares > 0.01:
             should_buy = (current_shares == 0.0) or (price_dev <= -GRID_BUY_DIP)
 
+            # Extension guard: don't OPEN a brand-new position in an overextended name (chasing a
+            # parabolic run from an empty book). Dip-adds to existing positions are never blocked.
+            if should_buy and current_shares == 0.0:
+                ext_reason = _extension_block(db, ticker)
+                if ext_reason:
+                    print(f"⏭ Long-Term Grid skip {ticker}: {ext_reason} — waiting for a pullback.")
+                    continue
+
             if should_buy:
                 n_shares = min(diff_shares, tranche_cap_shares)
                 if n_shares < 0.01:
@@ -1444,6 +1503,10 @@ def run_execution(trigger="scheduled"):
                 print(f"Alpaca auth failed for '{account_key}': {e}; skipping this account.")
                 continue
             any_api = True
+            # A fresh run REPLACES this account's approval queue — supersede the prior pending trades
+            # so re-running refreshes the queue instead of stacking duplicates.
+            if gate:
+                _supersede_pending(db, account_key)
             submitted_orders += _execute_for_account(db, account_key, api, suggestions_data)
 
         if not any_api:

@@ -236,6 +236,13 @@ GRID_TP_GAIN = float(os.getenv("GRID_TP_GAIN", "0.05"))
 # Max size of a single grid tranche, as a fraction of equity — keeps buys small so a continued
 # drop just means more (cheaper) tranches on later runs rather than one big buy at the first dip.
 GRID_TRANCHE_PCT = float(os.getenv("GRID_TRANCHE_PCT", "0.02"))
+
+# Extension guard: don't OPEN a brand-new position in a name trading too far above its moving average
+# (avoids chasing parabolic names from an empty book). Only blocks fresh opens — never dip-adds or
+# sells. Disable with EXTENSION_GUARD_ENABLED=False.
+EXTENSION_GUARD_ENABLED = os.getenv("EXTENSION_GUARD_ENABLED", "True").lower() in ("true", "1", "yes")
+EXTENSION_GUARD_MA_DAYS = int(os.getenv("EXTENSION_GUARD_MA_DAYS", "50"))
+EXTENSION_GUARD_MAX_ABOVE = float(os.getenv("EXTENSION_GUARD_MAX_ABOVE", "0.20"))  # +20% above MA blocks a new open
 # Per-name volatility cap: scale each position by min(1, target/name_vol) so high-beta names get
 # smaller allocations. Set SWING_VOL_TARGET=0 to disable.
 SWING_VOL_TARGET = float(os.getenv("SWING_VOL_TARGET", "0.35"))

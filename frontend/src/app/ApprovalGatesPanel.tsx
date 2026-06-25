@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ShieldCheck, ShieldAlert, CheckCircle2, XCircle, Lock, Unlock } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, CheckCircle2, XCircle, Lock, Unlock, RefreshCw } from 'lucide-react';
 import { apiUrl } from '../lib/api';
 import { money } from './TickerDrawer';
 
@@ -36,6 +36,9 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
   const [placement, setPlacement] = useState<'market_bracket' | 'limit'>('market_bracket');
   const [limitPrice, setLimitPrice] = useState('');
   const [modalErr, setModalErr] = useState<string | null>(null);
+  // Refresh-queue: re-fetch prices + re-run the model (no retrain) so the queue is replaced with a
+  // fresh, current-priced set (the backend supersedes the prior queue, so no duplicates).
+  const [refreshStage, setRefreshStage] = useState<string | null>(null);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -60,6 +63,36 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
 
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
   useEffect(() => { loadPending(selected); }, [selected, loadPending]);
+
+  // Re-fetch prices + re-run the model (retrain skipped), then reload the queue. The backend
+  // supersedes the prior pending trades, so this REPLACES the queue with a fresh, current-priced set.
+  const refreshQueue = async () => {
+    if (refreshStage) return;
+    setRefreshStage('Starting…');
+    try {
+      const res = await fetch(apiUrl('/api/pipeline/run?retrain=never'), { method: 'POST' });
+      const j = await res.json().catch(() => ({}));
+      const jobId = j.job_id;
+      const tick = async () => {
+        try {
+          const r = await fetch(apiUrl('/api/jobs'));
+          const jobs = r.ok ? (await r.json()).jobs || [] : [];
+          const job = jobs.find((x: any) => x.id === jobId) || jobs.find((x: any) => x.type === 'pipeline');
+          if (job && job.status === 'running') {
+            setRefreshStage(`${job.stage || 'Working'} ${job.progress ?? ''}%`);
+            setTimeout(tick, 2000);
+          } else {
+            setRefreshStage(null);
+            await loadAccounts();
+            await loadPending(selected);
+          }
+        } catch { setTimeout(tick, 3000); }
+      };
+      tick();
+    } catch {
+      setRefreshStage(null);
+    }
+  };
 
   const toggleGate = async (acc: GateAccount) => {
     setBusy(true);
@@ -148,13 +181,19 @@ export default function ApprovalGatesPanel({ onTickerClick }: { onTickerClick?: 
         ))}
       </div>
 
-      {/* Account selector for the pending queue */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+      {/* Account selector for the pending queue + refresh */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Pending approval for:</span>
         {accounts.filter((a) => a.configured).map((a) => (
           <button key={a.key} onClick={() => setSelected(a.key)} className={`toggle-btn ${selected === a.key ? 'active' : ''}`}
             style={{ padding: '4px 10px', fontSize: '11.5px' }}>{a.label}</button>
         ))}
+        <button onClick={refreshQueue} disabled={!!refreshStage}
+          title="Re-fetch prices, re-run the model, and replace the queue with a fresh set (no retrain)."
+          className="toggle-btn" style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: '11.5px',
+            display: 'flex', alignItems: 'center', gap: '5px', cursor: refreshStage ? 'wait' : 'pointer' }}>
+          <RefreshCw size={12} /> {refreshStage ? refreshStage : 'Refresh queue'}
+        </button>
       </div>
 
       {/* Pending trades */}
