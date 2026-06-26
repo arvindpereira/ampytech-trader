@@ -212,6 +212,11 @@ export default function Home() {
   const [scenarioStatus, setScenarioStatus] = useState<string>('');
   const [scenarioData, setScenarioData] = useState<any>(null);
   const [selectedScenario, setSelectedScenario] = useState<string>('gfc');
+  // Crash-tab RISK/DEF sleeve controls: SPY vs our own portfolio basket, and the safe sleeve.
+  const [scenarioSleeve, setScenarioSleeve] = useState<'spy' | 'portfolio'>('spy');
+  const [scenarioBook, setScenarioBook] = useState<string>('Combined');
+  const [scenarioDefense, setScenarioDefense] = useState<'tlt' | 'brkb' | 'cash' | 'blend'>('tlt');
+  const [scenarioBooks, setScenarioBooks] = useState<any[]>([]);
   const [wargameAnalyst, setWargameAnalyst] = useState<any>(null);
   const [analystLoading, setAnalystLoading] = useState<boolean>(false);
   const [crashStatus, setCrashStatus] = useState<any>(null);
@@ -458,18 +463,29 @@ export default function Home() {
     setScenarioData(null);
     setWargameAnalyst(null);
     try {
-      const body = preset === 'custom' ? { theta, k, gamma } : {};
+      const body: any = preset === 'custom' ? { theta, k, gamma } : {};
+      body.sleeve = scenarioSleeve;
+      body.account_label = scenarioBook;
+      body.defense = scenarioDefense;
       const res = await fetch(apiUrl('/api/crash/wargame/scenarios'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (res.ok) {
         setScenarioJobId((await res.json()).job_id);
       } else {
-        setScenarioStatus('Trigger failed.');
+        const err = await res.json().catch(() => ({}));
+        setScenarioStatus(err.detail || 'Trigger failed.');
       }
     } catch (err) {
       setScenarioStatus('Trigger failed.');
     }
+  };
+
+  const fetchScenarioBooks = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/crash/books'));
+      if (res.ok) setScenarioBooks((await res.json()).books || []);
+    } catch { /* non-fatal */ }
   };
 
   const runWargameAnalyst = async () => {
@@ -4636,6 +4652,50 @@ export default function Home() {
                   );
                 })()}
 
+                {/* RISK / DEFENSE sleeve controls */}
+                <div style={{ display: 'grid', gap: '10px', marginBottom: '12px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', minWidth: '92px' }}>Risk sleeve</span>
+                    <div style={{ display: 'inline-flex', borderRadius: '7px', overflow: 'hidden', border: '1px solid var(--border-glass)' }}>
+                      {(['spy', 'portfolio'] as const).map((s) => (
+                        <button key={s}
+                          onClick={() => { setScenarioSleeve(s); if (s === 'portfolio' && scenarioBooks.length === 0) fetchScenarioBooks(); }}
+                          style={{ fontSize: '11.5px', padding: '5px 12px', cursor: 'pointer', border: 'none',
+                            background: scenarioSleeve === s ? 'rgba(59,130,246,0.22)' : 'transparent',
+                            color: scenarioSleeve === s ? '#93c5fd' : 'var(--text-secondary)', fontWeight: scenarioSleeve === s ? 700 : 500 }}>
+                          {s === 'spy' ? 'SPY' : 'Your Portfolio'}
+                        </button>
+                      ))}
+                    </div>
+                    {scenarioSleeve === 'portfolio' && (
+                      <select value={scenarioBook} onChange={(e) => setScenarioBook(e.target.value)}
+                        style={{ fontSize: '11.5px', padding: '5px 8px', borderRadius: '6px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)' }}>
+                        {(scenarioBooks.length ? scenarioBooks : [{ id: 'Combined', label: 'Combined' }]).map((b: any) => (
+                          <option key={b.id} value={b.id}>{b.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-secondary)', minWidth: '92px' }}>Safe sleeve</span>
+                    <div style={{ display: 'inline-flex', borderRadius: '7px', overflow: 'hidden', border: '1px solid var(--border-glass)' }}>
+                      {([['tlt', 'TLT'], ['brkb', 'BRK.B'], ['cash', 'Cash'], ['blend', 'Blend']] as const).map(([v, lbl]) => (
+                        <button key={v} onClick={() => setScenarioDefense(v as any)}
+                          style={{ fontSize: '11.5px', padding: '5px 11px', cursor: 'pointer', border: 'none',
+                            background: scenarioDefense === v ? 'rgba(16,185,129,0.20)' : 'transparent',
+                            color: scenarioDefense === v ? '#6ee7b7' : 'var(--text-secondary)', fontWeight: scenarioDefense === v ? 700 : 500 }}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '10.5px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    {scenarioSleeve === 'portfolio'
+                      ? 'Replays YOUR weighted holdings through each crash — real prices where a name traded then, beta-proxied where it didn’t (labeled below). De-risked capital moves into the safe sleeve.'
+                      : 'Classic SPY risk sleeve. Switch to “Your Portfolio” to stress your actual book; BRK.B is available as a safe-equity sleeve.'}
+                  </div>
+                </div>
+
                 <button
                   disabled={!!scenarioJobId}
                   onClick={runScenarioComparison}
@@ -4674,6 +4734,28 @@ export default function Home() {
                       <p style={{ fontSize: '11.5px', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: '1.4' }}>
                         {sc.subtitle} <span style={{ color: 'var(--text-primary)' }}>Perfect-foresight ceiling: {sc.perfect_foresight_return >= 0 ? '+' : ''}{sc.perfect_foresight_return}%.</span>
                       </p>
+
+                      {/* Basket coverage: how much of YOUR book is real vs beta-proxied in this era */}
+                      {scenarioData.sleeve === 'portfolio' && sc.coverage && (() => {
+                        const cov = sc.coverage;
+                        const realPct = Math.round((cov.real_weight || 0) * 100);
+                        const names = Object.entries(cov.names || {});
+                        const proxied = names.filter(([, v]: any) => v.source === 'proxy').map(([t]: any) => t);
+                        const title = proxied.length ? `Beta-proxied (didn’t trade in this era): ${proxied.join(', ')}` : 'Every holding has real prices in this era.';
+                        return (
+                          <div title={title} style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 12px', fontSize: '11px' }}>
+                            <span style={{ padding: '3px 8px', borderRadius: '6px', background: 'rgba(16,185,129,0.16)', color: '#6ee7b7', fontWeight: 700 }}>
+                              {realPct}% real
+                            </span>
+                            <span style={{ padding: '3px 8px', borderRadius: '6px', background: 'rgba(245,158,11,0.16)', color: '#fbbf24', fontWeight: 700 }}>
+                              {100 - realPct}% beta-proxied
+                            </span>
+                            <span style={{ color: 'var(--text-secondary)' }}>
+                              {scenarioData.defense ? `defense: ${String(scenarioData.defense).toUpperCase()}` : ''} · hover for proxied names
+                            </span>
+                          </div>
+                        );
+                      })()}
 
                       {/* Equity-curve timelines */}
                       <div style={{ width: '100%', height: 280 }}>

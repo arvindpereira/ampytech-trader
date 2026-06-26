@@ -4891,6 +4891,9 @@ class ScenarioComparisonRequest(_BaseModel):
     theta: Optional[float] = None
     k: Optional[float] = None
     gamma: Optional[float] = None
+    sleeve: Optional[str] = "spy"            # "spy" | "portfolio"
+    account_label: Optional[str] = "Combined"  # which book defines the portfolio basket
+    defense: Optional[str] = "tlt"           # "tlt" | "brkb" | "cash" | "blend"
 
 class WargameInterpretRequest(_BaseModel):
     comparison: dict
@@ -4902,6 +4905,97 @@ class ApplyRebalancingRequest(_BaseModel):
     theta: Optional[float] = None
     k: Optional[float] = None
     gamma: Optional[float] = None
+
+# ── Crash war-game basket helpers (read-only) ────────────────────────────────────────────────
+# These let the crash tab drive the RISK sleeve from our OWN weighted holdings (toggleable vs SPY)
+# and the DEFENSE sleeve from TLT / cash / BRK.B / a blend. All read-only — never place orders.
+
+_CRASH_HISTORICAL_ERAS = ["dotcom", "gfc", "covid", "2022"]
+
+
+def _alpaca_live_values(db):
+    """{ticker: market_value} for the funded Alpaca LIVE book (empty if unconfigured/unreachable)."""
+    try:
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api("live")
+        out = {}
+        for p in (api.list_positions() or []):
+            sym = getattr(p, "symbol", None)
+            try:
+                mv = float(getattr(p, "market_value", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                mv = 0.0
+            if sym and mv:
+                out[sym.upper()] = out.get(sym.upper(), 0.0) + mv
+        return out
+    except Exception as e:
+        print(f"Alpaca live positions unavailable for basket: {e}")
+        return {}
+
+
+def _basket_weights(db, account_label):
+    """Normalized equity weights (sum→1) for the selected book. 'Combined' aggregates every external
+    account + the Alpaca live book by market value; 'Alpaca live' uses just the bot book; otherwise an
+    external account label resolves via the existing per-account context."""
+    label = (account_label or "Combined").strip()
+    low = label.lower()
+    if low == "combined":
+        values = {}
+        for acct in db.query(ExternalAccount).all():
+            ctx = _external_account_context(db, acct)
+            pv = ctx["portfolio_value"]
+            for t, w in ctx["current_weights"].items():
+                values[t] = values.get(t, 0.0) + w * pv
+        for t, v in _alpaca_live_values(db).items():
+            values[t] = values.get(t, 0.0) + v
+        total = sum(values.values()) or 1.0
+        return {t: v / total for t, v in values.items()}
+    if low in ("alpaca live", "alpaca", "live"):
+        vals = _alpaca_live_values(db)
+        total = sum(vals.values()) or 1.0
+        return {t: v / total for t, v in vals.items()}
+    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == label).first()
+    if not acct:
+        return {}
+    return _external_account_context(db, acct)["current_weights"]
+
+
+def _normalize_defense(defense):
+    """Map the UI defense choice to what the engine expects ('blend' → a 50/50 TLT+BRK.B mix)."""
+    d = (defense or "tlt").lower()
+    if d == "blend":
+        return {"tlt": 0.5, "brkb": 0.5}
+    return d if d in ("tlt", "brkb", "cash") else "tlt"
+
+
+def _resolve_basket(db, sleeve, account_label, defense):
+    """Resolve (sleeve, basket_weights, defense_spec) and pre-backfill crisis prices for the basket so
+    historical eras use REAL prices where available. Returns the kwargs dict for the wargame runners."""
+    sleeve = (sleeve or "spy").lower()
+    defense_spec = _normalize_defense(defense)
+    weights = {}
+    if sleeve == "portfolio":
+        weights = _basket_weights(db, account_label)
+        if weights:
+            from data_ingestion.crisis_fetcher import ensure_crisis_prices
+            tickers = list(weights)
+            if defense_spec == "brkb" or isinstance(defense_spec, dict):
+                tickers = tickers + ["BRK.B"]
+            for era in _CRASH_HISTORICAL_ERAS:
+                try:
+                    ensure_crisis_prices(db, tickers, era)
+                except Exception as e:
+                    print(f"crisis backfill ({era}) skipped: {e}")
+    elif defense_spec == "brkb" or isinstance(defense_spec, dict):
+        # Even with the SPY sleeve, a BRK.B defense needs its crisis-era prices available.
+        from data_ingestion.crisis_fetcher import ensure_crisis_prices
+        for era in _CRASH_HISTORICAL_ERAS:
+            try:
+                ensure_crisis_prices(db, ["BRK.B"], era)
+            except Exception:
+                pass
+    return {"sleeve": sleeve, "basket_weights": weights, "defense": defense_spec}
+
 
 def _run_forecast_job(jid):
     try:
@@ -4941,12 +5035,13 @@ def _run_wargame_job(jid, theta_range, k_range, gamma_range):
         import traceback; traceback.print_exc()
         _job_update(jid, status="error", error=str(e)[:200])
 
-def _run_scenario_job(jid, custom_knobs):
+def _run_scenario_job(jid, custom_knobs, sleeve_kwargs=None):
     try:
         from ml_engine.wargame import run_scenario_comparison, save_wargame_comparison
         res = run_scenario_comparison(
             custom_knobs=custom_knobs,
             progress_cb=lambda p, s: _job_update(jid, progress=p, stage=s),
+            **(sleeve_kwargs or {}),
         )
         _SCENARIO_RESULTS[jid] = res
         # Persist so the last comparison renders by default on the next page load.
@@ -5073,15 +5168,24 @@ def compare_glide_presets(
     theta: Optional[float] = None,
     k: Optional[float] = None,
     gamma: Optional[float] = None,
+    sleeve: str = "spy",
+    account_label: str = "Combined",
+    defense: str = "tlt",
+    db=Depends(get_db),
 ):
     """Read-only walk-forward backtest comparing the glide-path presets (and optional custom
-    knobs) vs Buy & Hold over the real cached crash-risk history. Does NOT touch any portfolio."""
+    knobs) vs Buy & Hold over the real cached crash-risk history. Does NOT touch any portfolio.
+    The RISK sleeve can be SPY or our own portfolio basket; DEFENSE can be tlt/brkb/cash/blend."""
     from ml_engine.wargame import run_preset_comparison
     custom = None
     if theta is not None and k is not None and gamma is not None:
         custom = {"theta": theta, "k": k, "gamma": gamma}
+    sleeve_kwargs = _resolve_basket(db, sleeve, account_label, defense)
+    if sleeve == "portfolio" and not sleeve_kwargs["basket_weights"]:
+        raise HTTPException(status_code=422,
+                            detail=f"No priced holdings found for '{account_label}' to build a basket.")
     try:
-        result = run_preset_comparison(lookback_years=years, custom_knobs=custom)
+        result = run_preset_comparison(lookback_years=years, custom_knobs=custom, db=db, **sleeve_kwargs)
         if isinstance(result, dict) and result.get("error"):
             raise HTTPException(status_code=422, detail=result["error"])
         return result
@@ -5116,15 +5220,33 @@ def get_crash_wargame_result(job_id: str):
     return {"status": "unknown"}
 
 @app.post("/api/crash/wargame/scenarios")
-def trigger_scenario_comparison(req: ScenarioComparisonRequest):
+def trigger_scenario_comparison(req: ScenarioComparisonRequest, db=Depends(get_db)):
     """Spawns a background job replaying every defensive policy across historical bear regimes
-    and synthetic crashes. Read-only; passes the user's custom knobs through when supplied."""
+    and synthetic crashes. Read-only; passes the user's custom knobs through when supplied, and can
+    drive the RISK sleeve from our own portfolio basket (sleeve="portfolio") and the DEFENSE sleeve
+    from brkb/cash/blend. Basket weights + crisis backfill are resolved up front (needs the DB)."""
     custom = None
     if req.theta is not None and req.k is not None and req.gamma is not None:
         custom = {"theta": req.theta, "k": req.k, "gamma": req.gamma}
+    sleeve_kwargs = _resolve_basket(db, req.sleeve, req.account_label, req.defense)
+    if req.sleeve == "portfolio" and not sleeve_kwargs["basket_weights"]:
+        raise HTTPException(status_code=422,
+                            detail=f"No priced holdings found for '{req.account_label}' to build a basket.")
     jid = _job_new("crash_scenarios", "Replaying policies over historical & synthetic crashes")
-    threading.Thread(target=_run_scenario_job, args=(jid, custom), daemon=True).start()
+    threading.Thread(target=_run_scenario_job, args=(jid, custom, sleeve_kwargs), daemon=True).start()
     return {"status": "started", "job_id": jid}
+
+
+@app.get("/api/crash/books")
+def list_crash_books(db=Depends(get_db)):
+    """Selectable books for the crash-tab 'Your Portfolio' basket: Combined, the Alpaca live book,
+    and each external account."""
+    books = [{"label": "Combined", "id": "Combined"}]
+    if _alpaca_live_values(db):
+        books.append({"label": "Alpaca live", "id": "Alpaca live"})
+    for acct in db.query(ExternalAccount).order_by(ExternalAccount.account_label).all():
+        books.append({"label": acct.account_label, "id": acct.account_label})
+    return {"books": books}
 
 @app.get("/api/crash/wargame/scenarios/result")
 def get_scenario_comparison_result(job_id: str):
