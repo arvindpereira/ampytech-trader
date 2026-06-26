@@ -302,6 +302,10 @@ ALPACA_LIVE_API_KEY = os.getenv("ALPACA_LIVE_API_KEY", "")
 ALPACA_LIVE_SECRET_KEY = os.getenv("ALPACA_LIVE_SECRET_KEY", "")
 ALPACA_LIVE_BASE_URL = os.getenv("ALPACA_LIVE_BASE_URL", "https://api.alpaca.markets")
 
+# Local path to the security-hardened robin_stocks fork (v4.0.0+). Prepended to sys.path by the
+# read-only Robinhood sync. Read-only operation needs no policy file; trading stays disabled.
+ROBIN_STOCKS_PATH = os.getenv("ROBIN_STOCKS_PATH", os.path.expanduser("~/code/robin_stocks"))
+
 # Alpaca market-data host (separate from the trading host). Used for the free, Benzinga-sourced
 # news endpoint (/v1beta1/news), which is included with any Alpaca account at no extra cost.
 ALPACA_DATA_URL = os.getenv("ALPACA_DATA_URL", "https://data.alpaca.markets")

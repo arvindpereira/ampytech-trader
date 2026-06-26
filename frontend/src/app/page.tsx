@@ -6033,7 +6033,9 @@ export default function Home() {
             </div>
 
             <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-              Enter your Robinhood credentials to sync holdings, sweep cash, and trade history directly into the platform.
+              One login refreshes the <strong>current holdings &amp; cash</strong> for <em>both</em> Robinhood accounts (Joint + Individual).
+              Read-only: it reconciles share counts against your imported lots without overwriting their cost basis.
+              Credentials are used for this sync only — never stored, and the session logs out immediately after.
             </p>
 
             {robinhoodSyncError && (
@@ -6143,8 +6145,7 @@ export default function Home() {
                       username: robinhoodUsername,
                       password: robinhoodPassword,
                       mfa_secret: robinhoodMfaSecret || null,
-                      mfa_code: robinhoodMfaCode || null,
-                      account_label: selectedAccount
+                      mfa_code: robinhoodMfaCode || null
                     };
                     const res = await fetch(apiUrl('/api/external/sync/robinhood'), {
                       method: 'POST',
@@ -6158,7 +6159,11 @@ export default function Home() {
                         setRobinhoodSyncError(data.message);
                       } else {
                         setShowRobinhoodSyncModal(false);
-                        setReconcileStatus(`Success: Synced ${data.positions_synced} positions and ${data.transactions_synced} transaction activities via Robinhood API. Cash updated to ${money(data.cash)}.`);
+                        const accts = data.accounts || [];
+                        const summary = accts.map((a: any) =>
+                          `${a.account_label}: ${a.positions} positions (${a.backfilled} added, ${a.trimmed + a.zeroed} trimmed), cash ${money(a.cash)}`
+                        ).join('; ');
+                        setReconcileStatus(`Robinhood sync complete — ${summary || 'no accounts found'}.`);
                         fetchExternalAccounts();
                         fetchExternalPositionsAndSuggestions(selectedAccount);
                       }
