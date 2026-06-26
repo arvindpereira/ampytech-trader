@@ -3460,212 +3460,42 @@ class RobinhoodSyncRequest(BaseModel):
     password: str
     mfa_secret: Optional[str] = None
     mfa_code: Optional[str] = None
-    account_label: str = "Robinhood"
+
 
 @app.post("/api/external/sync/robinhood")
 def sync_robinhood_api(req: RobinhoodSyncRequest, db=Depends(get_db)):
-    import builtins
-    import pyotp
-    try:
-        import robin_stocks.robinhood as r
-    except ImportError:
-        raise HTTPException(
-            status_code=400,
-            detail="Robinhood API sync is temporarily disabled because the local 'robin_stocks' package is not installed."
-        )
-    from datetime import datetime
-
-    # Create account if it doesn't exist
-    acct = db.query(ExternalAccount).filter(ExternalAccount.account_label == req.account_label).first()
-    now_str = datetime.now().isoformat(timespec="seconds")
-    if not acct:
-        acct = ExternalAccount(
-            account_label=req.account_label,
-            cash=0.0,
-            risk_profile="balanced",
-            created_at=now_str,
-            updated_at=now_str
-        )
-        db.add(acct)
-        db.commit()
-
-    # Generate TOTP code if secret is provided
-    mfa = req.mfa_code
-    if req.mfa_secret and req.mfa_secret.strip():
-        try:
-            totp = pyotp.TOTP(req.mfa_secret.strip().replace(" ", ""))
-            mfa = totp.now()
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to generate MFA code from secret: {e}")
-
-    # Temporarily override builtins.input to prevent uvicorn terminal hangs
-    original_input = builtins.input
-    def mock_input(prompt=""):
-        raise ValueError("MFA code required but stdin is blocked")
-    builtins.input = mock_input
+    """Read-only Robinhood sync. One login discovers every account (joint + individual) and
+    reconciles each one's *current* holdings against the local lots — preserving the cost-basis
+    CSV's per-lot detail (only the share-count delta is backfilled/trimmed). Credentials are
+    memory-only and never persisted; the session logs out afterward. See data_ingestion/robinhood_sync.
+    """
+    from data_ingestion.robinhood_sync import sync_robinhood
 
     try:
-        # Perform login
-        login_res = r.login(
-            username=req.username.strip(),
+        result = sync_robinhood(
+            db,
+            username=req.username,
             password=req.password,
-            mfa_code=mfa,
-            store_session=False
+            mfa_code=req.mfa_code,
+            mfa_secret=req.mfa_secret,
         )
-    except Exception as e:
-        err_msg = str(e)
-        if "challenge" in err_msg.lower() or "mfa" in err_msg.lower() or "passcode" in err_msg.lower() or "input" in err_msg.lower():
-            return {
-                "status": "mfa_required",
-                "message": "Two-factor authentication code is required. Please provide mfa_code or mfa_secret."
-            }
-        raise HTTPException(status_code=400, detail=f"Robinhood login failed: {err_msg}")
-    finally:
-        # Restore standard input
-        builtins.input = original_input
-
-    try:
-        # 1. Fetch cash & sweep balances
-        phoenix = r.account.load_phoenix_account()
-        cash = 0.0
-        if phoenix:
-            crypto_cash = float(phoenix.get("crypto_buying_power", {}).get("amount", 0.0))
-            cash_avail = float(phoenix.get("cash_available_from_sweep", {}).get("amount", 0.0))
-            cash_held = float(phoenix.get("cash", {}).get("amount", 0.0))
-            cash = max(cash_avail, cash_held, crypto_cash)
-            if cash <= 0:
-                portfolio = r.profiles.load_portfolio_profile()
-                cash = float(portfolio.get("cash", 0.0)) if portfolio else 0.0
-        else:
-            portfolio = r.profiles.load_portfolio_profile()
-            cash = float(portfolio.get("cash", 0.0)) if portfolio else 0.0
-
-        acct.cash = round(cash, 2)
-        acct.updated_at = now_str
-
-        # 2. Fetch current holdings
-        holdings = r.build_holdings()
-        db.query(EquityLot).filter(EquityLot.account_label == req.account_label).delete()
-
-        inserted_lots = 0
-        for ticker, h_info in holdings.items():
-            qty = float(h_info.get("quantity", 0.0))
-            avg_price = float(h_info.get("average_buy_price", 0.0))
-            if qty <= 0:
-                continue
-
-            lot = EquityLot(
-                ticker=ticker.upper(),
-                account_label=req.account_label,
-                lot_type="other",
-                shares=qty,
-                cost_basis_per_share=avg_price,
-                acquisition_date=datetime.now().strftime("%Y-%m-%d"),
-                notes="Synced via Robinhood API Integration",
-                created_at=now_str
-            )
-            db.add(lot)
-            inserted_lots += 1
-
-        # 3. Fetch historical orders
-        orders = r.orders.get_all_stock_orders()
-        recent_orders = orders[:100] if orders else []
-
-        instrument_cache = {}
-        txs_inserted = 0
-
-        existing_txs = db.query(ExternalTransaction).filter(ExternalTransaction.account_label == req.account_label).all()
-        existing_fingerprints = {
-            (t.execution_date, t.ticker, t.side, round(t.qty, 4), round(t.price, 4))
-            for t in existing_txs
-        }
-
-        for order in recent_orders:
-            if order.get("state") != "filled":
-                continue
-
-            qty = float(order.get("cumulative_quantity") or 0.0)
-            if qty <= 0:
-                continue
-
-            price = float(order.get("average_price") or 0.0)
-            side = order.get("side", "").upper()
-            created_at_str = order.get("last_transaction_at") or order.get("created_at") or ""
-            if not created_at_str:
-                continue
-
-            date_str = created_at_str[:10]
-            instrument = order.get("instrument")
-            if not instrument:
-                continue
-
-            if instrument not in instrument_cache:
-                try:
-                    symbol = r.get_symbol_by_url(instrument)
-                    if symbol:
-                        instrument_cache[instrument] = symbol.upper()
-                except Exception:
-                    continue
-
-            ticker = instrument_cache.get(instrument)
-            if not ticker:
-                continue
-
-            fingerprint = (date_str, ticker, side, round(qty, 4), round(price, 4))
-            if fingerprint in existing_fingerprints:
-                continue
-
-            db_tx = ExternalTransaction(
-                account_label=req.account_label,
-                ticker=ticker,
-                side=side,
-                qty=qty,
-                price=price,
-                execution_date=date_str,
-                raw_details=f"Synced via Robinhood API (Order ID: {order.get('id')})",
-                created_at=now_str
-            )
-            db.add(db_tx)
-
-            db_order = ExternalOrder(
-                account_label=req.account_label,
-                ticker=ticker,
-                side=side,
-                qty=qty,
-                limit_price=price,
-                time_in_force=order.get("time_in_force", "DAY").upper(),
-                status="reconciled",
-                filled_price=price,
-                filled_qty=qty,
-                execution_date=date_str,
-                created_at=now_str,
-                updated_at=now_str
-            )
-            db.add(db_order)
-            txs_inserted += 1
-
-        db.commit()
-        from data_ingestion.equity_universe_sync import sync_equity_lot_universe
-        universe_sync = sync_equity_lot_universe(db)
-        if universe_sync["added"]:
-            clear_suggestions_cache()
-        r.logout()
-
-        return {
-            "status": "success",
-            "account_label": req.account_label,
-            "cash": acct.cash,
-            "positions_synced": inserted_lots,
-            "transactions_synced": txs_inserted,
-            "universe_tickers_added": universe_sync["added"],
-        }
-    except Exception as e:
+    except RuntimeError as e:
+        # Login failure / fork-not-importable — a clear 400 the UI can surface verbatim.
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
         db.rollback()
-        try:
-            r.logout()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=f"Failed to fetch Robinhood portfolio: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to sync Robinhood portfolio: {e}")
+
+    if result.get("status") == "mfa_required":
+        return result
+
+    # Newly-discovered tickers need to enter the tradable universe / refresh suggestions.
+    from data_ingestion.equity_universe_sync import sync_equity_lot_universe
+    universe_sync = sync_equity_lot_universe(db)
+    if universe_sync["added"]:
+        clear_suggestions_cache()
+    result["universe_tickers_added"] = universe_sync["added"]
+    return result
 
 
 @app.post("/api/equity/lots/{lot_id}/sell")
