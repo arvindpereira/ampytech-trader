@@ -265,10 +265,14 @@ def _defensive_weight_series(prices_df, risk_indices, policy):
 
 
 def _simulate_curve(prices_df, d_series, fee_pct=0.0005):
-    """Daily SPY/TLT blend simulation given a target defensive-weight series. Starts fully in SPY
-    and rebalances toward d_t when drift exceeds 2%. Returns (equity_curve ndarray, turnover)."""
-    spy_close = prices_df["SPY"].values
-    tlt_close = prices_df["TLT"].values
+    """Daily RISK/DEF blend simulation given a target defensive-weight series. Starts fully in the
+    RISK sleeve and rebalances toward d_t when drift exceeds 2%. Returns (equity_curve, turnover).
+
+    The RISK and DEF columns generalize the original SPY (aggressive) / TLT (defensive) pairing: when
+    they're absent the function falls back to SPY/TLT so existing callers are byte-for-byte unchanged.
+    """
+    risk_close = (prices_df["RISK"] if "RISK" in prices_df.columns else prices_df["SPY"]).values
+    def_close = (prices_df["DEF"] if "DEF" in prices_df.columns else prices_df["TLT"]).values
     n = len(prices_df)
 
     V = 100000.0
@@ -280,8 +284,8 @@ def _simulate_curve(prices_df, d_series, fee_pct=0.0005):
         target_w_agg = 1.0 - d_series[t]
         target_w_def = d_series[t]
 
-        ret_agg = (spy_close[t] - spy_close[t-1]) / spy_close[t-1]
-        ret_def = (tlt_close[t] - tlt_close[t-1]) / tlt_close[t-1]
+        ret_agg = (risk_close[t] - risk_close[t-1]) / risk_close[t-1]
+        ret_def = (def_close[t] - def_close[t-1]) / def_close[t-1]
 
         gross = 1 + w_agg * ret_agg + w_def * ret_def
         V_prior = V * gross
@@ -348,18 +352,20 @@ def _metrics_from_curve(V_history):
     }
 
 
-def run_preset_comparison(lookback_years=5, custom_knobs=None):
+def run_preset_comparison(lookback_years=5, custom_knobs=None, sleeve="spy",
+                          basket_weights=None, defense="tlt", db=None):
     """Read-only walk-forward backtest comparing the glide-path presets (and an optional custom
     knob set) against a passive Buy & Hold benchmark, using the REAL historical Composite
     Crash-Risk Index cached in crash_risk_snapshots.
 
     This NEVER touches the live/paper portfolio — it only simulates how each policy WOULD have
-    steered an SPY/TLT blend over the available history. Returns aligned (downsampled) equity
+    steered the RISK/DEF blend over the available history (RISK defaults to SPY, or our own portfolio
+    basket; DEF defaults to TLT, or brkb/cash/blend). Returns aligned (downsampled) equity
     curves plus full-resolution metrics for each policy.
     """
-    db = SessionLocal()
+    qdb = SessionLocal()
     try:
-        snaps = db.query(CrashRiskSnapshot.as_of_date, CrashRiskSnapshot.composite_index).order_by(
+        snaps = qdb.query(CrashRiskSnapshot.as_of_date, CrashRiskSnapshot.composite_index).order_by(
             CrashRiskSnapshot.as_of_date.asc()
         ).all()
         if not snaps or len(snaps) < 10:
@@ -373,13 +379,13 @@ def run_preset_comparison(lookback_years=5, custom_knobs=None):
         risk_series = risk_series[risk_series.index >= start_date]
 
         # Daily SPY (aggressive) + TLT (defensive) prices over the window.
-        rows = db.query(DailyPrice.date, DailyPrice.ticker, DailyPrice.close).filter(
+        rows = qdb.query(DailyPrice.date, DailyPrice.ticker, DailyPrice.close).filter(
             DailyPrice.ticker.in_(["SPY", "TLT"]),
             DailyPrice.date >= start_date.strftime("%Y-%m-%d"),
             DailyPrice.date <= end_date.strftime("%Y-%m-%d"),
         ).order_by(DailyPrice.date.asc()).all()
     finally:
-        db.close()
+        qdb.close()
 
     if not rows:
         return {"error": "No SPY price history available for the comparison window."}
@@ -397,6 +403,10 @@ def run_preset_comparison(lookback_years=5, custom_knobs=None):
         return {"error": "Insufficient overlapping price data for the comparison window."}
 
     prices_df = px.reset_index()
+
+    # Swap in the chosen RISK/DEF sleeves over this recent (real-price) window before simulating.
+    prices_df, coverage = _apply_sleeves(prices_df, sleeve=sleeve, basket_weights=basket_weights,
+                                         defense=defense, era=None, db=db)
     dates = prices_df["date"]
 
     # Daily risk index aligned to price dates (weekly snapshots forward-filled / interpolated).
@@ -440,12 +450,12 @@ def run_preset_comparison(lookback_years=5, custom_knobs=None):
             **metrics,
         })
 
-    # Buy & Hold (SPY only) benchmark on the same capital base.
-    spy = prices_df["SPY"].values
-    bh_curve = 100000.0 * spy / spy[0]
+    # Buy & Hold benchmark (the RISK sleeve held passively) on the same capital base.
+    risk_px = (prices_df["RISK"] if "RISK" in prices_df.columns else prices_df["SPY"]).values
+    bh_curve = 100000.0 * risk_px / risk_px[0]
     bh_metrics = _metrics_from_curve(bh_curve)
     benchmark = {
-        "label": "Buy & Hold (SPY)",
+        "label": "Buy & Hold (Portfolio)" if sleeve == "portfolio" else "Buy & Hold (SPY)",
         "equity_curve": [round(float(bh_curve[i]), 2) for i in idx_sample],
         "turnover": 0.0,
         **bh_metrics,
@@ -457,6 +467,9 @@ def run_preset_comparison(lookback_years=5, custom_knobs=None):
         "dates": sampled_dates,
         "benchmark": benchmark,
         "series": series,
+        "sleeve": sleeve,
+        "defense": defense if isinstance(defense, str) else "blend",
+        "coverage": coverage,
     }
 
 
@@ -534,10 +547,48 @@ def _policy_roster(custom_knobs=None):
     return roster
 
 
-def run_scenario_comparison(custom_knobs=None, progress_cb=None):
+def _apply_sleeves(prices, sleeve="spy", basket_weights=None, defense="tlt", era=None, db=None):
+    """Inject RISK / DEF columns into a price frame for a chosen sleeve configuration.
+
+    - sleeve="portfolio" → RISK = our weighted-basket composite (real prices where available, else a
+      beta×SPY proxy); otherwise RISK stays SPY (no column added).
+    - defense != "tlt"   → DEF = the chosen safe sleeve (brkb / cash / blend); "tlt" keeps the
+      existing TLT column (incl. the engine's TLT-absent cash proxy).
+    Returns (prices, coverage_report|None). Default args (spy/tlt) are a pure pass-through.
+    """
+    want_basket = sleeve == "portfolio" and basket_weights
+    want_defense = bool(defense) and defense != "tlt"
+    if not (want_basket or want_defense):
+        return prices, None
+
+    from app.database import SessionLocal
+    own_db = db is None
+    db = db or SessionLocal()
+    coverage = None
+    try:
+        dates = list(pd.to_datetime(prices["date"]))
+        spy_path = prices["SPY"].values
+        prices = prices.copy()
+        if want_basket:
+            from ml_engine.basket import build_basket_path
+            prices["RISK"], coverage = build_basket_path(db, basket_weights, dates, spy_path, era=era)
+        if want_defense:
+            from ml_engine.basket import build_defense_path
+            prices["DEF"] = build_defense_path(db, defense, dates, spy_path, era=era)
+    finally:
+        if own_db:
+            db.close()
+    return prices, coverage
+
+
+def run_scenario_comparison(custom_knobs=None, progress_cb=None, sleeve="spy",
+                            basket_weights=None, defense="tlt", db=None):
     """Replays every policy in the roster across historical bear regimes (Dot-Com, GFC, COVID, 2022)
     and two synthetic crash shapes, returning downsampled equity curves + risk/return metrics per
     (scenario, policy). Read-only — never touches the live/paper portfolio.
+
+    The RISK sleeve defaults to SPY but can be our own weighted portfolio (sleeve="portfolio" +
+    basket_weights); the DEF sleeve defaults to TLT but can be brkb / cash / a blend dict.
     """
     def report(p, s):
         if progress_cb:
@@ -580,6 +631,13 @@ def run_scenario_comparison(custom_knobs=None, progress_cb=None):
             dl = prices["date"].tolist()
             risk = {dl[j].strftime("%Y-%m-%d"): float(synth_risk[j]) for j in range(n_days)}
 
+        # Swap in the chosen RISK/DEF sleeves (own portfolio basket, BRK.B/cash defense, …). For
+        # historical eras real prices come from crisis_prices for that era; synthetic crashes have no
+        # real history, so the basket is beta-proxied onto the synthetic SPY path.
+        prices, coverage = _apply_sleeves(prices, sleeve=sleeve, basket_weights=basket_weights,
+                                          defense=defense, era=(sid if kind == "historical" else None),
+                                          db=db)
+
         n = len(prices)
         step = max(1, n // 120)
         idx = list(range(0, n, step))
@@ -607,12 +665,13 @@ def run_scenario_comparison(custom_knobs=None, progress_cb=None):
                 "final_value": round(float(curve[-1]), 0),
             }
 
-        # Perfect-foresight reference: hold SPY to the peak, TLT through the trough, SPY after.
-        spy = prices["SPY"].values
-        tlt = prices["TLT"].values
-        peak = int(np.argmax(spy))
-        trough = peak + int(np.argmin(spy[peak:]))
-        pf_val = 100000.0 * (spy[peak] / spy[0]) * (tlt[trough] / tlt[peak]) * (spy[-1] / spy[trough])
+        # Perfect-foresight reference: hold RISK to the peak, DEF through the trough, RISK after.
+        risk_px = (prices["RISK"] if "RISK" in prices.columns else prices["SPY"]).values
+        def_px = (prices["DEF"] if "DEF" in prices.columns else prices["TLT"]).values
+        peak = int(np.argmax(risk_px))
+        trough = peak + int(np.argmin(risk_px[peak:]))
+        pf_val = (100000.0 * (risk_px[peak] / risk_px[0]) * (def_px[trough] / def_px[peak])
+                  * (risk_px[-1] / risk_px[trough]))
         pf_ret = (pf_val - 100000.0) / 100000.0 * 100.0
 
         meta = SCENARIO_META.get(sid, {})
@@ -624,6 +683,7 @@ def run_scenario_comparison(custom_knobs=None, progress_cb=None):
             "dates": dates_fmt,
             "series": series,
             "perfect_foresight_return": round(float(pf_ret), 1),
+            "coverage": coverage,
         })
 
     report(96, "Finalizing")
@@ -632,6 +692,8 @@ def run_scenario_comparison(custom_knobs=None, progress_cb=None):
         "knob_glossary": KNOB_GLOSSARY,
         "scenarios": out_scenarios,
         "has_custom": custom_knobs is not None,
+        "sleeve": sleeve,
+        "defense": defense if isinstance(defense, str) else "blend",
         "generated_at": datetime.now().isoformat(),
     }
 

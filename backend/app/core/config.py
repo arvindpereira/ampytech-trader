@@ -321,6 +321,12 @@ PRICE_HOURLY_SOURCE = os.getenv("PRICE_HOURLY_SOURCE", "massive").lower()
 ALPACA_DATA_FEED = os.getenv("ALPACA_DATA_FEED", "sip").lower()
 ALPACA_DATA_ADJUSTMENT = os.getenv("ALPACA_DATA_ADJUSTMENT", "split").lower()
 
+# Provider used to backfill crisis-era DAILY bars for crash war-game basket names that aren't already
+# in daily_prices. "yahoo" (default, deepest free history) | "alpaca" (elite SIP, ~2016+) |
+# "massive" (Polygon, ~2003+). Local daily_prices are always preferred first; this is only the
+# fallback for names we don't already have. See data_ingestion/crisis_fetcher.ensure_crisis_prices.
+CRISIS_BACKFILL_SOURCE = os.getenv("CRISIS_BACKFILL_SOURCE", "yahoo").lower()
+
 # --- Short-Term Portfolio Simulation & Throttling/Kelly Config ---
 PORTFOLIO_MAX_SIGNALS_PER_BAR = int(os.getenv("PORTFOLIO_MAX_SIGNALS_PER_BAR", "0"))  # 0 = unlimited
 PORTFOLIO_MAX_OPEN_POSITIONS = int(os.getenv("PORTFOLIO_MAX_OPEN_POSITIONS", "10"))

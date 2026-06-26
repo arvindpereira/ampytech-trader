@@ -224,6 +224,83 @@ def fetch_hourly_bars(ticker, start_date, end_date):
     return fetch_massive_hourly(ticker, start_date, end_date)
 
 
+def fetch_alpaca_daily(ticker, start_date, end_date):
+    """DAILY bars from Alpaca's Market Data API (SIP), paging the `next_page_token` cursor. Same
+    Polygon-shaped dicts as fetch_alpaca_hourly. Alpaca history reaches ~2016 only, so this is useful
+    for the COVID/recent eras, not GFC/dot-com. Returns [] when unauthorized or out of range."""
+    if not (ALPACA_API_KEY and ALPACA_SECRET_KEY):
+        print(f"Alpaca data credentials missing; cannot fetch daily {ticker}.")
+        return []
+    symbol = map_ticker_to_massive(ticker)   # class-B uses a dot on Alpaca too (BRK.B)
+    headers = {"APCA-API-KEY-ID": ALPACA_API_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY}
+    url = f"{ALPACA_DATA_URL}/v2/stocks/{urllib.parse.quote(symbol)}/bars"
+    params = {
+        "timeframe": "1Day",
+        "start": start_date.strftime("%Y-%m-%d"),
+        "end": end_date.strftime("%Y-%m-%d"),
+        "adjustment": ALPACA_DATA_ADJUSTMENT,
+        "feed": ALPACA_DATA_FEED,
+        "limit": 10000,
+        "sort": "asc",
+    }
+    bars, pages, page_token = [], 0, None
+    while True:
+        if page_token:
+            params["page_token"] = page_token
+        data = _alpaca_get(url, headers, params, ticker)
+        if data is None:
+            break
+        for b in (data.get("bars") or []):
+            t = b.get("t")
+            if not t:
+                continue
+            try:
+                dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                bars.append({"t": int(dt.timestamp() * 1000), "o": float(b["o"]), "h": float(b["h"]),
+                             "l": float(b["l"]), "c": float(b["c"]), "v": float(b.get("v") or 0.0)})
+            except Exception:
+                continue
+        pages += 1
+        page_token = data.get("next_page_token")
+        if not page_token or pages > 100:
+            break
+    return bars
+
+
+def fetch_massive_daily(ticker, start_date, end_date):
+    """DAILY bars from Massive/Polygon (range aggs at 1/day), following `next_url`. Polygon coverage
+    reaches ~2003 on paid tiers — good for GFC onward, not dot-com. Same bar-dict shape."""
+    symbol = map_ticker_to_massive(ticker)
+    ticker_encoded = urllib.parse.quote(symbol)
+    headers = {"Authorization": f"Bearer {MASSIVE_API_KEY}"} if MASSIVE_API_KEY else {}
+    url = (f"{MASSIVE_BASE_URL}/v2/aggs/ticker/{ticker_encoded}/range/1/day/"
+           f"{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}"
+           f"?adjusted=true&sort=asc&limit=50000")
+    bars, pages = [], 0
+    while url:
+        data = _massive_get(url, headers, ticker)
+        if data is None:
+            break
+        bars.extend(data.get("results", []) or [])
+        pages += 1
+        url = data.get("next_url") or None
+        if pages > 50:
+            break
+    return bars
+
+
+def fetch_daily_bars(ticker, start_date, end_date, source="yahoo"):
+    """Provider-agnostic DAILY-bar fetch for crisis backfill. `source` ∈ yahoo|alpaca|massive.
+    Yahoo (default) has the deepest free history; the paid feeds add fidelity for the windows they
+    cover. Yahoo may return the sentinel "PRE_IPO_LIMIT" string; callers treat that as 'no data'."""
+    if source == "alpaca":
+        return fetch_alpaca_daily(ticker, start_date, end_date)
+    if source == "massive":
+        return fetch_massive_daily(ticker, start_date, end_date)
+    bars = fetch_yahoo_daily(ticker, start_date, end_date)
+    return [] if bars == "PRE_IPO_LIMIT" else bars
+
+
 def validate_overlap(ticker, days=20):
     """Side-by-side sanity check of Alpaca vs Massive over the same recent window. Prints bar counts,
     overlapping-timestamp count, and close-price agreement (mean/max abs diff) so you can confirm the

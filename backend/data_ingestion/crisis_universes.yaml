@@ -18,6 +18,7 @@ dotcom:
     - "INTC"
     - "GE"
     - "AMZN"
+    - "BRK.B"  # Berkshire Hathaway — "safe equity" sleeve (trades since 1996)
   overrides:
     # QQQ Inception: March 10, 1999
     "QQQ":
@@ -38,6 +39,7 @@ gfc:
     - "XLP"
     - "GLD"  # Gold ETF (Launched 2004)
     - "TLT"  # Bond ETF (Launched 2002)
+    - "BRK.B"  # Berkshire Hathaway — "safe equity" sleeve
     # Representative names
     - "MSFT"
     - "AAPL"
@@ -64,6 +66,7 @@ covid:
     - "XLP"
     - "GLD"
     - "TLT"
+    - "BRK.B"  # Berkshire Hathaway — "safe equity" sleeve
     # Our active 20-ticker universe (highly relevant for testing our models on 2020)
     - "AAPL"
     - "MSFT"
