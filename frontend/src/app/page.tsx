@@ -47,6 +47,7 @@ import {
 } from 'recharts';
 import GrantTimeline from './GrantTimeline';
 import CrashRebalanceRecommendation from './CrashRebalanceRecommendation';
+import CrashRebalanceWalkforward from './CrashRebalanceWalkforward';
 import ResearchAnalystPanel from './ResearchAnalystPanel';
 import SectorExposurePanel from './SectorExposurePanel';
 import DashboardTab from './DashboardTab';
@@ -4631,6 +4632,12 @@ export default function Home() {
                         theta={theta} k={k} gamma={gamma}
                         onSuggestion={(pct) => setEvSuggested(pct)}
                         onUse={(pct) => setParticipationPct(pct)}
+                      />
+
+                      <CrashRebalanceWalkforward
+                        mode={rebalanceBook}
+                        preset={preset}
+                        theta={theta} k={k} gamma={gamma}
                       />
 
                       {/* Participation slider: how much of the portfolio to rotate to safety */}

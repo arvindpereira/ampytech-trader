@@ -116,15 +116,18 @@ def _cash_path(dates):
 def build_defense_path(db, defense_spec, dates, spy_path, era=None):
     """DEFENSE-sleeve path (normalized to 100) — this is also the de-risk reinvest target.
 
-    defense_spec: "tlt" | "brkb" | "cash" | a blend dict like {"tlt": 0.5, "brkb": 0.5}.
+    defense_spec: "tlt" | "brkb" | "cash" | any real ticker (e.g. "bil", "lqd") |
+    a blend dict like {"tlt": 0.4, "brkb": 0.4, "bil": 0.2}.
     """
     idx = pd.DatetimeIndex(dates)
 
     def _asset_path(name):
-        name = name.lower()
+        name = str(name).lower()
         if name == "cash":
             return _cash_path(idx)
-        ticker = "BRK.B" if name in ("brkb", "brk.b", "brk-b") else "TLT"
+        # Resolve to a real ticker: brk aliases → BRK.B, otherwise the literal ticker (TLT, BIL,
+        # LQD, …). Unknown/empty falls back to TLT for backward compatibility.
+        ticker = "BRK.B" if name in ("brkb", "brk.b", "brk-b") else (name.upper() or "TLT")
         s = _real_close_series(db, ticker, idx, era).ffill().bfill()
         arr = s.to_numpy(dtype=float)
         if len(arr) == 0 or not np.isfinite(arr).any() or arr[0] <= 0:

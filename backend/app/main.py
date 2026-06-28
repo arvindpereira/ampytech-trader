@@ -5534,6 +5534,53 @@ def recommend_crash_participation(
     return out
 
 
+@app.get("/api/crash/rebalance/walkforward")
+def crash_rebalance_walkforward(
+    mode: str = "paper",
+    preset: str = "balanced",
+    years: int = 5,
+    theta: Optional[float] = None,
+    k: Optional[float] = None,
+    gamma: Optional[float] = None,
+    db=Depends(get_db),
+):
+    """Walk-forward backtest of the crash de-risk policy on the chosen book's actual holdings.
+
+    Uses the book's current holdings as the RISK sleeve and the active safe-asset mix as the DEFENSE
+    sleeve, steers the blend with the REAL historical crash-risk index (per glide-path preset), and
+    compares vs Buy & Hold of those holdings. Read-only; uses current holdings as a static sleeve
+    (no historical-holdings reconstruction), so older returns carry survivorship caveats."""
+    from ml_engine.wargame import run_preset_comparison
+    from ml_engine.defensive_strategist import build_defensive_playbook
+
+    book = _read_book_holdings(db, mode)
+    if book is None:
+        raise HTTPException(status_code=400, detail=f"The {mode} account is not configured.")
+    if book.get("error"):
+        raise HTTPException(status_code=422, detail=book["error"])
+
+    cv = book["current_values"]
+    total = sum(v for v in cv.values() if v > 0)
+    basket = {t: v / total for t, v in cv.items() if v > 0} if total > 0 else {"SPY": 1.0}
+
+    pb = build_defensive_playbook(preset_name=preset, custom_knobs=_knobs_from(theta, k, gamma))
+    if pb.get("error"):
+        raise HTTPException(status_code=422, detail=pb["error"])
+    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
+    s_total = sum(float(v) for v in safe_mix.values()) or 1.0
+    defense = {t: float(v) / s_total for t, v in safe_mix.items()} or "tlt"
+
+    result = run_preset_comparison(
+        lookback_years=years, custom_knobs=_knobs_from(theta, k, gamma),
+        sleeve="portfolio", basket_weights=basket, defense=defense, db=db,
+    )
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(status_code=422, detail=result["error"])
+    result["account_key"] = mode
+    result["defense_mix"] = {t: round(float(v) / s_total, 4) for t, v in safe_mix.items()}
+    return result
+
+
 def _cancel_conflicting_open_orders(api, symbols):
     """Cancel open broker orders on the given symbols so their reserved shares are released before a
     rebalance. Returns (cancelled[list of {symbol, id, side, qty}], errors[list of str])."""
