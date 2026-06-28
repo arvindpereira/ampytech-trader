@@ -226,7 +226,22 @@ export default function Home() {
   const [applyingRebalance, setApplyingRebalance] = useState<boolean>(false);
   const [previewData, setPreviewData] = useState<any>(null);
   const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+  // Which Alpaca book the crash rebalance targets, and how much of the model-recommended de-risk
+  // to take. participationPct === null means "follow the model's suggestion".
+  const [rebalanceBook, setRebalanceBook] = useState<'paper' | 'live'>('paper');
+  const [participationPct, setParticipationPct] = useState<number | null>(null);
   const [timelineData, setTimelineData] = useState<any[]>([]);
+  const [crashPortfolioPlan, setCrashPortfolioPlan] = useState<any>(null);
+  const [crashPortfolioLoading, setCrashPortfolioLoading] = useState<boolean>(false);
+  const [crashPortfolioStatus, setCrashPortfolioStatus] = useState<string>('');
+  const [crashPlanKnobs, setCrashPlanKnobs] = useState<any>({
+    target_cash_pct: 20,
+    max_tax_budget: '',
+    harvest_losses_first: true,
+    prioritized_loss_tickers: 'PINS',
+    long_term_grace_days: 45,
+    participation_pct: 100,
+  });
 
   const fetchTimeline = async () => {
     try {
@@ -321,7 +336,8 @@ export default function Home() {
       const params = preset === 'custom'
         ? `preset=custom&theta=${theta}&k=${k}&gamma=${gamma}`
         : `preset=${preset}`;
-      const res = await fetch(apiUrl(`/api/crash/apply/preview?${params}`));
+      const partParam = participationPct == null ? '' : `&participation_pct=${participationPct}`;
+      const res = await fetch(apiUrl(`/api/crash/apply/preview?${params}&mode=${rebalanceBook}${partParam}`));
       if (res.ok) {
         setPreviewData(await res.json());
       } else {
@@ -346,6 +362,8 @@ export default function Home() {
           confirm_execution: true,
           target_posture: crashData?.current_posture || 'Normal',
           preset: preset === 'custom' ? 'custom' : preset,
+          mode: rebalanceBook,
+          ...(participationPct == null ? {} : { participation_pct: participationPct }),
           ...(preset === 'custom' ? { theta, k, gamma } : {})
         })
       });
@@ -4577,12 +4595,59 @@ export default function Home() {
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-secondary)' }}>
                         <span>De-risk coefficient (d):</span>
-                        <strong style={{ color: '#F59E0B' }}>{playbook ? `${(playbook.de_risk_coefficient * 100).toFixed(0)}% to safe assets` : '—'}</strong>
+                        <strong style={{ color: '#F59E0B' }}>{playbook ? `${((playbook.de_risk_coefficient ?? 0) * 100).toFixed(0)}% to safe assets` : '—'}</strong>
                       </div>
+                      {/* Which book to rebalance */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Account to rebalance:</span>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {(['paper', 'live'] as const).map(b => (
+                            <button key={b}
+                              onClick={() => setRebalanceBook(b)}
+                              className="toggle-btn"
+                              style={{
+                                fontSize: '12px', padding: '4px 12px', textTransform: 'capitalize',
+                                borderColor: rebalanceBook === b ? 'var(--color-gold)' : 'var(--border-glass)',
+                                background: rebalanceBook === b ? 'rgba(245,158,11,0.15)' : 'transparent',
+                                color: rebalanceBook === b ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 600,
+                              }}>
+                              {b === 'paper' ? 'Alpaca Paper' : 'Alpaca Live'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Participation slider: how much of the model-recommended de-risk to take */}
+                      {(() => {
+                        const suggested = Math.max(0, Math.min(1, playbook?.de_risk_coefficient ?? 0));
+                        const value = participationPct == null ? suggested : participationPct;
+                        const overridden = participationPct != null && Math.abs(participationPct - suggested) > 0.001;
+                        return (
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
+                              <span>Rebalance amount (% to safety)</span>
+                              <strong style={{ color: 'var(--text-primary)' }}>{(value * 100).toFixed(0)}%</strong>
+                            </div>
+                            <input type="range" min="0" max="1" step="0.01" value={value}
+                              onChange={(e) => setParticipationPct(parseFloat(e.target.value))} style={{ width: '100%' }} />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                              <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>
+                                Model suggests <strong style={{ color: '#F59E0B' }}>{(suggested * 100).toFixed(0)}%</strong> at the current crash-risk level.
+                              </span>
+                              {overridden && (
+                                <button onClick={() => setParticipationPct(null)} className="toggle-btn"
+                                  style={{ fontSize: '10.5px', padding: '2px 8px' }}>Reset to model</button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', lineHeight: 1.4 }}>
-                        Blends your current holdings with the safe-asset mix at the de-risk coefficient set by the
-                        glide-path curve above, then rebalances the <strong>paper account only</strong>. Preview the
-                        exact orders before anything runs.
+                        Blends your current holdings with the safe-asset mix at the chosen rebalance amount, then trades the
+                        selected book. <strong>Paper</strong> submits to your Alpaca paper account immediately; <strong>Live</strong> routes
+                        every order through your approval gate (queued for manual approval — nothing hits the broker until you approve it).
+                        Preview the exact orders before anything runs.
                       </p>
 
                       <button
@@ -4591,18 +4656,32 @@ export default function Home() {
                         className="toggle-btn"
                         style={{ background: 'var(--color-gold)', color: 'black', fontWeight: 700, border: 'none' }}
                       >
-                        {applyingRebalance ? 'Applying rebalancing...' : 'Preview Rebalancing (Paper)'}
+                        {applyingRebalance ? 'Applying rebalancing...' : `Preview Rebalancing (${rebalanceBook === 'paper' ? 'Paper' : 'Live'})`}
                       </button>
 
                       {applyResult && (
                         <div style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: '6px', padding: '10px', fontSize: '12px', color: 'var(--text-primary)' }}>
-                          <div style={{ fontWeight: 600, color: '#10B981', marginBottom: '4px' }}>✓ Stance Applied Successfully</div>
-                          <div>Submitted {applyResult.orders_submitted?.length || 0} orders: {
-                            applyResult.orders_submitted?.map((o: any) => `${o.symbol} (${o.side})`).join(', ')
-                          }</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                            Broker cash reserve balance: {money(applyResult.cash_transferred_to_reserve)}
-                          </div>
+                          {applyResult.status === 'queued_for_approval' ? (
+                            <>
+                              <div style={{ fontWeight: 600, color: '#F59E0B', marginBottom: '4px' }}>⏸ Queued for your approval</div>
+                              <div>{applyResult.orders_queued?.length || 0} orders queued on the <strong>{applyResult.account_key}</strong> book. Approve them in the Approval Gates panel to submit.</div>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ fontWeight: 600, color: '#10B981', marginBottom: '4px' }}>✓ Stance Applied ({applyResult.account_key})</div>
+                              <div>Submitted {applyResult.orders_submitted?.length || 0} orders: {
+                                applyResult.orders_submitted?.map((o: any) => `${o.symbol} (${o.side})`).join(', ')
+                              }</div>
+                              {(applyResult.orders_queued?.length || 0) > 0 && (
+                                <div style={{ color: '#F59E0B', marginTop: '2px' }}>{applyResult.orders_queued.length} order(s) queued for approval.</div>
+                              )}
+                            </>
+                          )}
+                          {(applyResult.errors?.length || 0) > 0 && (
+                            <div style={{ fontSize: '11px', color: '#EF4444', marginTop: '4px' }}>
+                              {applyResult.errors.length} order(s) failed: {applyResult.errors.join('; ')}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -6422,10 +6501,13 @@ export default function Home() {
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
         >
           <div onClick={(e) => e.stopPropagation()} style={{ background: 'rgba(16, 20, 38, 0.98)', border: '1px solid var(--border-glass)', borderRadius: '14px', padding: '24px', width: '560px', maxWidth: '92vw', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <h2 style={{ marginTop: 0, marginBottom: '4px', color: 'var(--text-primary)' }}>Preview Rebalancing</h2>
+            <h2 style={{ marginTop: 0, marginBottom: '4px', color: 'var(--text-primary)' }}>
+              Preview Rebalancing — {rebalanceBook === 'paper' ? 'Alpaca Paper' : 'Alpaca Live'}
+            </h2>
             <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: '1.4' }}>
-              A read-only dry run of the orders that would execute against the <strong>paper account (ID=1)</strong>. Nothing
-              changes until you press Confirm — and even then it is virtual cash only.
+              A read-only dry run of the orders that would execute against your <strong>{rebalanceBook === 'paper' ? 'Alpaca paper account' : 'Alpaca live account'}</strong>. {rebalanceBook === 'live'
+                ? 'On confirm, every order is queued for your manual approval — nothing reaches the broker until you approve it.'
+                : 'Nothing changes until you press Confirm; orders then submit to your paper account.'}
             </p>
 
             {previewLoading && (
@@ -6443,7 +6525,7 @@ export default function Home() {
                 {/* Plan summary */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '14px' }}>
                   <div>Preset/curve: <strong style={{ color: 'var(--text-primary)' }}>{previewData.preset_applied}</strong></div>
-                  <div>De-risk coefficient: <strong style={{ color: '#F59E0B' }}>{(previewData.de_risk_coefficient * 100).toFixed(0)}%</strong></div>
+                  <div>Rebalance amount: <strong style={{ color: '#F59E0B' }}>{((previewData.participation_pct ?? 0) * 100).toFixed(0)}% to safety</strong>{previewData.suggested_participation_pct != null && <span style={{ color: 'var(--text-secondary)' }}> (model: {((previewData.suggested_participation_pct) * 100).toFixed(0)}%)</span>}</div>
                   <div>Portfolio value: <strong style={{ color: 'var(--text-primary)' }}>{money(previewData.portfolio_value)}</strong></div>
                   <div>Turnover: <strong style={{ color: 'var(--text-primary)' }}>{previewData.turnover_pct}%</strong></div>
                   <div>Cash before: <strong style={{ color: 'var(--text-primary)' }}>{money(previewData.cash_before)}</strong></div>
@@ -6490,7 +6572,7 @@ export default function Home() {
                   </div>
                 ) : (
                   <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '14px', fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '18px', textAlign: 'center' }}>
-                    No orders needed — the paper portfolio already matches the target allocation.
+                    No orders needed — the portfolio already matches the target allocation.
                   </div>
                 )}
               </>
@@ -6502,7 +6584,9 @@ export default function Home() {
               <button onClick={handleApplyRebalance}
                 disabled={applyingRebalance || previewLoading || !previewData || previewData.error || !previewData.validation?.ok || (previewData.orders?.length || 0) === 0}
                 style={{ background: 'var(--color-gold)', border: 'none', borderRadius: '8px', color: 'black', padding: '8px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', opacity: (applyingRebalance || previewLoading || !previewData || previewData.error || !previewData.validation?.ok || (previewData.orders?.length || 0) === 0) ? 0.5 : 1 }}>
-                {applyingRebalance ? 'Executing...' : 'Confirm & Execute (Paper)'}
+                {applyingRebalance
+                  ? (rebalanceBook === 'live' ? 'Queuing...' : 'Executing...')
+                  : (rebalanceBook === 'live' ? 'Confirm & Queue for Approval (Live)' : 'Confirm & Execute (Paper)')}
               </button>
             </div>
           </div>
