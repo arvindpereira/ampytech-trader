@@ -46,6 +46,7 @@ import {
   ReferenceLine
 } from 'recharts';
 import GrantTimeline from './GrantTimeline';
+import CrashRebalanceRecommendation from './CrashRebalanceRecommendation';
 import ResearchAnalystPanel from './ResearchAnalystPanel';
 import SectorExposurePanel from './SectorExposurePanel';
 import DashboardTab from './DashboardTab';
@@ -233,6 +234,8 @@ export default function Home() {
   // Cancel conflicting open orders (e.g. stale take-profit limits) before rebalancing so their
   // reserved shares are sellable.
   const [cancelOpenOrders, setCancelOpenOrders] = useState<boolean>(false);
+  // EV-optimizer's recommended slider value (% to safety); pre-fills the slider when not overridden.
+  const [evSuggested, setEvSuggested] = useState<number | null>(null);
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [crashPortfolioPlan, setCrashPortfolioPlan] = useState<any>(null);
   const [crashPortfolioLoading, setCrashPortfolioLoading] = useState<boolean>(false);
@@ -4621,9 +4624,21 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Participation slider: how much of the model-recommended de-risk to take */}
+                      {/* EV optimizer: model-recommended rebalance amount + scenario sweep */}
+                      <CrashRebalanceRecommendation
+                        mode={rebalanceBook}
+                        preset={preset}
+                        theta={theta} k={k} gamma={gamma}
+                        onSuggestion={(pct) => setEvSuggested(pct)}
+                        onUse={(pct) => setParticipationPct(pct)}
+                      />
+
+                      {/* Participation slider: how much of the portfolio to rotate to safety */}
                       {(() => {
-                        const suggested = Math.max(0, Math.min(1, playbook?.de_risk_coefficient ?? 0));
+                        // Prefer the EV optimizer's recommendation; fall back to the playbook coefficient.
+                        const suggested = evSuggested != null
+                          ? Math.max(0, Math.min(1, evSuggested))
+                          : Math.max(0, Math.min(1, playbook?.de_risk_coefficient ?? 0));
                         const value = participationPct == null ? suggested : participationPct;
                         const overridden = participationPct != null && Math.abs(participationPct - suggested) > 0.001;
                         return (
@@ -4636,7 +4651,7 @@ export default function Home() {
                               onChange={(e) => setParticipationPct(parseFloat(e.target.value))} style={{ width: '100%' }} />
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
                               <span style={{ fontSize: '10.5px', color: 'var(--text-secondary)' }}>
-                                Model suggests <strong style={{ color: '#F59E0B' }}>{(suggested * 100).toFixed(0)}%</strong> at the current crash-risk level.
+                                Model suggests <strong style={{ color: '#F59E0B' }}>{(suggested * 100).toFixed(0)}%</strong> (growth-optimal at the current crash risk).
                               </span>
                               {overridden && (
                                 <button onClick={() => setParticipationPct(null)} className="toggle-btn"

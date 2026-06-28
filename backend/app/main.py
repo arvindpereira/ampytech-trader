@@ -5489,6 +5489,51 @@ def preview_crash_rebalancing(
     return plan
 
 
+@app.get("/api/crash/rebalance/recommend")
+def recommend_crash_participation(
+    mode: str = "paper",
+    preset: str = "balanced",
+    lookback_years: int = 3,
+    crash_era: str = "gfc",
+    theta: Optional[float] = None,
+    k: Optional[float] = None,
+    gamma: Optional[float] = None,
+    db=Depends(get_db),
+):
+    """Model-recommended participation (% to safety) for the chosen book, with the full EV sweep.
+
+    Sweeps the slider 0–100%, scoring each level by expected return = blend of a recent-lookback
+    normal return and a crash-era return weighted by the current crash probability, and returns the
+    EV-maximizing slider plus the per-level curve for charting. Read-only."""
+    from ml_engine.defensive_strategist import build_defensive_playbook
+    from app.services.crash_rebalance_ev import recommend_participation
+
+    book = _read_book_holdings(db, mode)
+    if book is None:
+        raise HTTPException(status_code=400, detail=f"The {mode} account is not configured.")
+    if book.get("error"):
+        raise HTTPException(status_code=422, detail=book["error"])
+
+    pb = build_defensive_playbook(preset_name=preset, custom_knobs=_knobs_from(theta, k, gamma))
+    if pb.get("error"):
+        raise HTTPException(status_code=422, detail=pb["error"])
+    safe_mix = pb.get("stances", {}).get("safe_asset_selection", {}).get("mix", {})
+    w_def = {t: float(v) / 100.0 for t, v in safe_mix.items()}
+
+    out = recommend_participation(
+        db, book["current_values"], w_def, pb.get("composite_index"), pb.get("risk_band"),
+        lookback_years=lookback_years, crash_era=crash_era,
+    )
+    out.update({
+        "account_key": mode,
+        "preset_applied": pb.get("preset_applied", preset),
+        "risk_band": pb.get("risk_band"),
+        "composite_index": pb.get("composite_index"),
+        "de_risk_coefficient": pb.get("de_risk_coefficient"),
+    })
+    return out
+
+
 def _cancel_conflicting_open_orders(api, symbols):
     """Cancel open broker orders on the given symbols so their reserved shares are released before a
     rebalance. Returns (cancelled[list of {symbol, id, side, qty}], errors[list of str])."""
