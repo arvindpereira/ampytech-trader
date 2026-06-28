@@ -5240,8 +5240,11 @@ def _read_book_holdings(db, account_key):
       Returns None when the account has no credentials configured (caller surfaces the error).
     - sim/replay (any other key): the local VirtualAccount/VirtualPosition book via _resolve_book.
 
-    Returns {cash, current_values{TICKER: market_value}, price_fn, account_exists, warnings}
-    or {"error": ...} on a broker read failure.
+    Returns {cash, current_values{TICKER: market_value}, available_shares{TICKER: sellable_qty},
+    price_fn, account_exists, warnings} or {"error": ...} on a broker read failure.
+
+    `available_shares` is what the broker will actually let us SELL — it excludes shares reserved by
+    existing open orders (e.g. stale take-profit limit sells), which otherwise cause a 403 on sell.
     """
     warnings = []
     if account_key in ("paper", "live"):
@@ -5255,7 +5258,7 @@ def _read_book_holdings(db, account_key):
             cash = float(acct.cash)
         except Exception as e:  # network / auth / API error → surface, don't fabricate
             return {"error": f"Could not read the {account_key} account from Alpaca: {str(e)[:160]}"}
-        broker_prices, current_values = {}, {}
+        broker_prices, current_values, available_shares = {}, {}, {}
         for p in positions:
             sym = str(p.symbol).upper()
             try:
@@ -5265,13 +5268,17 @@ def _read_book_holdings(db, account_key):
                 continue
             broker_prices[sym] = price
             current_values[sym] = qty * price
+            try:
+                available_shares[sym] = float(getattr(p, "qty_available", qty))
+            except (TypeError, ValueError):
+                available_shares[sym] = qty
 
         def price_fn(symbol):
             s = str(symbol).upper()
             return broker_prices.get(s) or _latest_paper_price(db, s)
 
-        return {"cash": cash, "current_values": current_values, "price_fn": price_fn,
-                "account_exists": True, "warnings": warnings}
+        return {"cash": cash, "current_values": current_values, "available_shares": available_shares,
+                "price_fn": price_fn, "account_exists": True, "warnings": warnings}
 
     # Local sim / replay book.
     from app.database import VirtualAccount, VirtualPosition
@@ -5285,8 +5292,9 @@ def _read_book_holdings(db, account_key):
         return _latest_paper_price(db, symbol)
 
     current_values = {p.ticker.upper(): float(p.quantity) * price_fn(p.ticker) for p in positions}
-    return {"cash": cash, "current_values": current_values, "price_fn": price_fn,
-            "account_exists": account is not None, "warnings": warnings}
+    available_shares = {p.ticker.upper(): float(p.quantity) for p in positions}  # nothing reserved locally
+    return {"cash": cash, "current_values": current_values, "available_shares": available_shares,
+            "price_fn": price_fn, "account_exists": account is not None, "warnings": warnings}
 
 
 def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=None,
@@ -5343,6 +5351,8 @@ def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=No
     all_tickers = set(w_agg) | set(w_def)
     w_target = {t: (1.0 - d) * w_agg.get(t, 0.0) + d * w_def.get(t, 0.0) for t in all_tickers}
 
+    available_shares = book.get("available_shares", {})
+    locked = []  # tickers whose sell was capped/skipped because shares are reserved by open orders
     orders = []
     for t in sorted(all_tickers):
         target_val = portfolio_value * w_target[t]
@@ -5350,13 +5360,28 @@ def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=No
         diff_val = target_val - curr_val
         price = get_latest_price(t)
         cur_w = (curr_val / portfolio_value * 100.0) if portfolio_value > 0 else 0.0
-        if abs(diff_val) > 50.0 and price > 0:
+        if price <= 0:
+            continue
+        side = "buy" if diff_val > 0 else "sell"
+        qty = abs(diff_val) / price
+        value = abs(diff_val)
+        if side == "sell":
+            # The broker only lets us sell shares not reserved by existing open orders; selling more
+            # returns a 403. Cap to what's sellable and record any shortfall as a warning.
+            avail = available_shares.get(t)
+            if avail is not None and qty > avail + 1e-9:
+                locked.append((t, round(qty, 4), round(max(0.0, avail), 4)))
+                if avail <= 1e-9:
+                    continue  # fully reserved → skip so we never submit a doomed order
+                qty = avail
+                value = qty * price
+        if value > 50.0:
             orders.append({
                 "ticker": t,
-                "side": "buy" if diff_val > 0 else "sell",
-                "qty": round(abs(diff_val) / price, 4),
+                "side": side,
+                "qty": round(qty, 4),
                 "price": round(price, 2),
-                "value": round(abs(diff_val), 2),
+                "value": round(value, 2),
                 "current_weight": round(cur_w, 2),
                 "target_weight": round(w_target[t] * 100.0, 2),
             })
@@ -5375,6 +5400,18 @@ def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=No
         warnings.append("No current holdings — the aggressive sleeve defaults to 100% SPY before de-risking.")
     if d <= 0.001:
         warnings.append("Effective de-risk is ~0% (glide path says stay invested, or the slider is at 0%); few or no orders are expected.")
+    if locked:
+        skipped = [t for t, q, a in locked if a <= 1e-9]
+        capped = [t for t, q, a in locked if a > 1e-9]
+        parts = []
+        if skipped:
+            parts.append(f"fully reserved by open orders and skipped: {', '.join(skipped)}")
+        if capped:
+            parts.append(f"partially reserved, sells capped to available shares: {len(capped)} name(s)"
+                         + (f" ({', '.join(capped[:8])}{', …' if len(capped) > 8 else ''})"))
+        warnings.append(
+            "Shares held by existing open orders (e.g. stale take-profit limit sells) can't be sold — "
+            + "; ".join(parts) + ". Cancel those open orders and re-run to fully de-risk those names.")
     if not orders and portfolio_value > 0:
         warnings.append("Portfolio is already within $50 of every target weight — no orders needed.")
     if buy_total > cash + sell_total + 1.0:
