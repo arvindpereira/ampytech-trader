@@ -46,6 +46,7 @@ import {
   ReferenceLine
 } from 'recharts';
 import GrantTimeline from './GrantTimeline';
+import PortfolioHistoryChart from './PortfolioHistoryChart';
 import ResearchAnalystPanel from './ResearchAnalystPanel';
 import SectorExposurePanel from './SectorExposurePanel';
 import DashboardTab from './DashboardTab';
@@ -5080,6 +5081,9 @@ export default function Home() {
                 );
               })()}
             </div>
+
+            {/* Portfolio value over time (open / mid / close per day, stacked by account) */}
+            <PortfolioHistoryChart accountLabel={selectedAccount} />
 
             {selectedAccount !== 'consolidated' ? (
               <>

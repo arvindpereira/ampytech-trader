@@ -2739,6 +2739,113 @@ def get_external_accounts(db=Depends(get_db)):
     return results
 
 
+@app.get("/api/external/portfolio/history")
+def get_external_portfolio_history(range: str = "3M", account_label: str = "consolidated",
+                                   db=Depends(get_db)):
+    """Reconstructed portfolio-value time-series for the external accounts.
+
+    Emits three points per trading day — open, mid (mean of the day's high/low)
+    and close — so the curve shows intra-day movement without needing tick data.
+    Every account is returned as its own series (keyed by account_label) plus a
+    rolled-up ``total`` so the frontend can stack them and draw a grand total.
+
+    NOTE: this is reconstructed from the *current* lots and *current* cash. Each
+    lot is gated by its acquisition_date (so it only contributes once held), but
+    historical cash movements and closed positions are not replayed — older
+    points are therefore approximate, treat them as an equity curve not a ledger.
+    """
+    from app.database import DailyPrice, EquityLot, ExternalAccount
+    from datetime import date as _date
+    from collections import defaultdict
+
+    today = _date.today()
+    cutoff_map = {
+        "1W":  today - timedelta(days=7),
+        "1M":  today - timedelta(days=30),
+        "3M":  today - timedelta(days=92),
+        "6M":  today - timedelta(days=182),
+        "YTD": today.replace(month=1, day=1),
+        "1Y":  today - timedelta(days=365),
+        "5Y":  today - timedelta(days=1825),
+        "10Y": today - timedelta(days=3650),
+    }
+    cutoff = cutoff_map.get(range, today - timedelta(days=92)).isoformat()
+
+    accounts = db.query(ExternalAccount).all()
+    if account_label != "consolidated":
+        accounts = [a for a in accounts if a.account_label == account_label]
+    if not accounts:
+        return {"range": range, "accounts": [], "series": []}
+
+    acct_labels = [a.account_label for a in accounts]
+    cash_by_acct = {a.account_label: float(a.cash or 0.0) for a in accounts}
+
+    lots = db.query(EquityLot).filter(EquityLot.account_label.in_(acct_labels)).all()
+    lots_by_acct = defaultdict(list)
+    for lot in lots:
+        lots_by_acct[lot.account_label].append(lot)
+    tickers = sorted({lot.ticker.upper() for lot in lots})
+
+    # price[ticker][date] = (open, mid, close)
+    prices = defaultdict(dict)
+    all_dates = set()
+    if tickers:
+        rows = (db.query(DailyPrice.ticker, DailyPrice.date, DailyPrice.open,
+                         DailyPrice.high, DailyPrice.low, DailyPrice.close)
+                .filter(DailyPrice.ticker.in_(tickers), DailyPrice.date >= cutoff,
+                        DailyPrice.close != None)
+                .order_by(DailyPrice.date.asc()).all())
+        for r in rows:
+            close = float(r.close)
+            op = float(r.open) if r.open else close
+            hi = float(r.high) if r.high else close
+            lo = float(r.low) if r.low else close
+            prices[r.ticker.upper()][r.date] = (op, (hi + lo) / 2.0, close)
+            all_dates.add(r.date)
+
+    full_dates = sorted(all_dates)
+    if not full_dates:
+        # No price history (e.g. cash-only accounts): emit a single flat point per account.
+        point = {"ts": f"{today.isoformat()}T16:00", "date": today.isoformat(), "phase": "close"}
+        total = 0.0
+        for label in acct_labels:
+            point[label] = round(cash_by_acct[label], 2)
+            total += cash_by_acct[label]
+        point["total"] = round(total, 2)
+        return {"range": range, "accounts": acct_labels, "series": [point]}
+
+    # Sample longer ranges so we don't ship thousands of points to the browser.
+    sample_step = {"10Y": 10, "5Y": 5, "1Y": 2}.get(range, 1)
+    sampled = set(full_dates[::sample_step]) if sample_step > 1 else None
+
+    PHASES = (("open", 0, "09:30"), ("mid", 1, "12:45"), ("close", 2, "16:00"))
+    last_price = {}  # ticker -> (open, mid, close), forward-filled across gaps
+    series = []
+    for d in full_dates:
+        for tk in tickers:
+            if d in prices[tk]:
+                last_price[tk] = prices[tk][d]
+        if sampled is not None and d not in sampled:
+            continue
+        for phase_name, idx, hhmm in PHASES:
+            point = {"ts": f"{d}T{hhmm}", "date": d, "phase": phase_name}
+            total = 0.0
+            for label in acct_labels:
+                value = cash_by_acct[label]
+                for lot in lots_by_acct[label]:
+                    if lot.acquisition_date and lot.acquisition_date > d:
+                        continue
+                    pr = last_price.get(lot.ticker.upper())
+                    if pr:
+                        value += float(lot.shares) * pr[idx]
+                point[label] = round(value, 2)
+                total += value
+            point["total"] = round(total, 2)
+            series.append(point)
+
+    return {"range": range, "accounts": acct_labels, "series": series}
+
+
 @app.get("/api/portfolio/sector-exposure")
 def portfolio_sector_exposure(mode: str = "real", refresh: bool = True,
                               scope: str = "all", db=Depends(get_db)):
