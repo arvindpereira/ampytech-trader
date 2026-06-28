@@ -20,6 +20,7 @@ SAFE_ASSET_LABELS = {
     "TIP": "TIPS (Inflation-Protected)",
     "GLD": "Gold",
     "GSG": "Broad Commodities",
+    "BRK.B": "Berkshire Hathaway (cash-rich quality)",
 }
 
 def load_latest_snapshot():
@@ -147,12 +148,13 @@ def build_defensive_playbook(preset_name="balanced", custom_knobs=None):
         safe_asset_explanation = "Elevated inflation expectations (Breakeven > 2.5%). Long bonds excluded due to rate volatility risk (e.g. 2022 shock)."
     else:
         safe_asset_mix = {
-            "TLT": 45.0,
-            "BIL": 45.0,
+            "BRK.B": 40.0,
+            "TLT": 35.0,
+            "BIL": 15.0,
             "LQD": 10.0
         }
         active_branch = "Deflationary Bust"
-        safe_asset_explanation = "Low inflation expectations (Breakeven <= 2.5%). Safe capital yields to long-term bonds for deflation protection."
+        safe_asset_explanation = "Low inflation expectations (Breakeven <= 2.5%). Primary hedge is a Berkshire (BRK.B) sleeve as a cash-rich quality holding (Berkshire itself parks reserves in T-bills/Treasuries while awaiting equity bargains), backed by long-term Treasuries (TLT) for deflation protection."
 
     # 6. Quantified Regret Matrix
     # Compare stances under two scenarios: Crash (-30% S&P) and No Crash (+10% S&P)

@@ -4842,6 +4842,8 @@ class ApplyRebalancingRequest(_BaseModel):
     theta: Optional[float] = None
     k: Optional[float] = None
     gamma: Optional[float] = None
+    mode: Optional[str] = "paper"            # which book: "paper" | "live" | "replay"
+    participation_pct: Optional[float] = None  # slider 0..1; None → model suggestion
 
 # ── Crash war-game basket helpers (read-only) ────────────────────────────────────────────────
 # These let the crash tab drive the RISK sleeve from our OWN weighted holdings (toggleable vs SPY)
@@ -5338,36 +5340,100 @@ def _latest_paper_price(db, symbol):
     return 100.0
 
 
-def _compute_rebalance_plan(db, preset: str = "balanced", custom_knobs=None):
-    """
-    Pure (read-only) computation of the defensive rebalancing plan: diffs target
-    blended weights against current paper positions and returns the proposed
-    orders plus validation. Shared by the preview (dry-run) and execute endpoints
-    so the preview is guaranteed to match what execution will do.
-    """
-    from ml_engine.defensive_strategist import build_defensive_playbook
-    from app.database import VirtualAccount, VirtualPosition, RecentPrice
+def _read_book_holdings(db, account_key):
+    """Read current cash + position market-values for the selected book, READ-ONLY.
 
-    account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
-    account_exists = account is not None
+    - paper/live: pulled live from Alpaca (no DB writes), so a preview never mutates state.
+      Returns None when the account has no credentials configured (caller surfaces the error).
+    - sim/replay (any other key): the local VirtualAccount/VirtualPosition book via _resolve_book.
+
+    Returns {cash, current_values{TICKER: market_value}, price_fn, account_exists, warnings}
+    or {"error": ...} on a broker read failure.
+    """
+    warnings = []
+    if account_key in ("paper", "live"):
+        from execution.executor import get_alpaca_api
+        api = get_alpaca_api(account_key)
+        if api is None:
+            return None
+        try:
+            positions = api.list_positions()
+            acct = api.get_account()
+            cash = float(acct.cash)
+        except Exception as e:  # network / auth / API error → surface, don't fabricate
+            return {"error": f"Could not read the {account_key} account from Alpaca: {str(e)[:160]}"}
+        broker_prices, current_values = {}, {}
+        for p in positions:
+            sym = str(p.symbol).upper()
+            try:
+                qty = float(p.qty)
+                price = float(p.current_price)
+            except (TypeError, ValueError):
+                continue
+            broker_prices[sym] = price
+            current_values[sym] = qty * price
+
+        def price_fn(symbol):
+            s = str(symbol).upper()
+            return broker_prices.get(s) or _latest_paper_price(db, s)
+
+        return {"cash": cash, "current_values": current_values, "price_fn": price_fn,
+                "account_exists": True, "warnings": warnings}
+
+    # Local sim / replay book.
+    from app.database import VirtualAccount, VirtualPosition
+    acc_id, pos_mode, _sim_date = _resolve_book(account_key)
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
     cash = float(account.cash) if account else 100000.0
+    positions = db.query(VirtualPosition).filter(
+        VirtualPosition.mode == pos_mode, VirtualPosition.quantity > 0).all()
 
-    positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
-
-    def get_latest_price(symbol):
+    def price_fn(symbol):
         return _latest_paper_price(db, symbol)
 
-    portfolio_value = cash
-    current_values = {}
-    for pos in positions:
-        price = get_latest_price(pos.ticker)
-        current_values[pos.ticker] = float(pos.quantity) * price
-        portfolio_value += current_values[pos.ticker]
+    current_values = {p.ticker.upper(): float(p.quantity) * price_fn(p.ticker) for p in positions}
+    return {"cash": cash, "current_values": current_values, "price_fn": price_fn,
+            "account_exists": account is not None, "warnings": warnings}
+
+
+def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=None,
+                            preset: str = "balanced", custom_knobs=None):
+    """
+    Pure (read-only) computation of the defensive rebalancing plan for one book: diffs target
+    blended weights against the book's current positions and returns the proposed orders plus
+    validation. Shared by the preview (dry-run) and execute endpoints so the preview is
+    guaranteed to match what execution will do.
+
+    `participation_pct` (0..1) is the slider: how much of the model's recommended de-risk to
+    actually take. When None it defaults to the model suggestion (the de-risk coefficient).
+    """
+    from ml_engine.defensive_strategist import build_defensive_playbook
+
+    book = _read_book_holdings(db, account_key)
+    if book is None:
+        return {"error": f"The {account_key} account is not configured (no Alpaca credentials)."}
+    if book.get("error"):
+        return {"error": book["error"]}
+
+    cash = book["cash"]
+    current_values = book["current_values"]
+    get_latest_price = book["price_fn"]
+    account_exists = book["account_exists"]
+    warnings = list(book["warnings"])
+
+    portfolio_value = cash + sum(current_values.values())
 
     pb = build_defensive_playbook(preset_name=preset, custom_knobs=custom_knobs)
     if pb.get("error"):
         return {"error": pb["error"]}
-    d = float(pb.get("de_risk_coefficient", 0.0))
+    de_risk_coefficient = float(pb.get("de_risk_coefficient", 0.0))
+
+    # The slider IS the de-risk fraction: the share of the portfolio rotated into the defensive
+    # sleeve. The model merely SUGGESTS where to set it (Phase 1: the de-risk coefficient itself,
+    # clamped 0..1). Phase 2's EV optimizer will replace this default with an EV-maximizing pick.
+    suggested_participation_pct = max(0.0, min(1.0, de_risk_coefficient))
+    part = suggested_participation_pct if participation_pct is None else max(0.0, min(1.0, float(participation_pct)))
+    d = part
 
     # Aggressive sleeve: current holdings proportions, or 100% SPY if account is empty
     has_positions = bool(current_values) and sum(current_values.values()) > 0
@@ -5391,7 +5457,7 @@ def _compute_rebalance_plan(db, preset: str = "balanced", custom_knobs=None):
         diff_val = target_val - curr_val
         price = get_latest_price(t)
         cur_w = (curr_val / portfolio_value * 100.0) if portfolio_value > 0 else 0.0
-        if abs(diff_val) > 50.0:
+        if abs(diff_val) > 50.0 and price > 0:
             orders.append({
                 "ticker": t,
                 "side": "buy" if diff_val > 0 else "sell",
@@ -5407,25 +5473,29 @@ def _compute_rebalance_plan(db, preset: str = "balanced", custom_knobs=None):
     turnover = (buy_total + sell_total) / portfolio_value if portfolio_value > 0 else 0.0
     est_cash_after = cash + sell_total - buy_total
 
-    warnings, errors = [], []
+    errors = []
     if not account_exists:
-        warnings.append("No paper account exists yet; a fresh $100,000 virtual account is created on execution.")
+        warnings.append("No account book exists yet; a fresh $100,000 virtual account is created on execution.")
     if portfolio_value <= 0:
         errors.append("Portfolio value is zero or negative; nothing to rebalance.")
     if not has_positions:
         warnings.append("No current holdings — the aggressive sleeve defaults to 100% SPY before de-risking.")
     if d <= 0.001:
-        warnings.append("De-risk coefficient is ~0% (the glide path says stay invested); few or no orders are expected.")
+        warnings.append("Effective de-risk is ~0% (glide path says stay invested, or the slider is at 0%); few or no orders are expected.")
     if not orders and portfolio_value > 0:
         warnings.append("Portfolio is already within $50 of every target weight — no orders needed.")
     if buy_total > cash + sell_total + 1.0:
         warnings.append("Planned buys exceed cash available after sells; buy orders are capped to available cash on execution.")
     if turnover > 0.6:
-        warnings.append(f"High turnover (~{turnover*100:.0f}% of the portfolio). Consider a more gradual preset.")
+        warnings.append(f"High turnover (~{turnover*100:.0f}% of the portfolio). Consider a more gradual preset or a lower slider.")
 
     return {
+        "account_key": account_key,
         "preset_applied": pb.get("preset_applied", preset),
-        "de_risk_coefficient": d,
+        "de_risk_coefficient": de_risk_coefficient,
+        "participation_pct": round(part, 4),
+        "suggested_participation_pct": round(suggested_participation_pct, 4),
+        "effective_de_risk": round(d, 4),
         "composite_index": pb.get("composite_index"),
         "risk_band": pb.get("risk_band"),
         "current_posture": pb.get("current_posture"),
@@ -5450,149 +5520,180 @@ def _knobs_from(theta, k, gamma):
 @app.get("/api/crash/apply/preview")
 def preview_crash_rebalancing(
     preset: str = "balanced",
+    mode: str = "paper",
+    participation_pct: Optional[float] = None,
     theta: Optional[float] = None,
     k: Optional[float] = None,
     gamma: Optional[float] = None,
     db=Depends(get_db),
 ):
-    """Read-only dry run: returns the exact orders + validation that 'apply' would
-    execute, without touching the paper account."""
-    plan = _compute_rebalance_plan(db, preset=preset, custom_knobs=_knobs_from(theta, k, gamma))
+    """Read-only dry run for one book ("paper" | "live" | "replay"): returns the exact orders +
+    validation that 'apply' would execute, without touching the account. `participation_pct`
+    (0..1) is the slider; omit it to use the model-suggested default (returned in the response)."""
+    plan = _compute_rebalance_plan(db, account_key=mode, participation_pct=participation_pct,
+                                   preset=preset, custom_knobs=_knobs_from(theta, k, gamma))
     if plan.get("error"):
         raise HTTPException(status_code=422, detail=plan["error"])
     plan["dry_run"] = True
     return plan
 
 
+def _apply_rebalance_broker(db, account_key, plan, participation_pct):
+    """Execute a rebalance plan against a real Alpaca book through the executor choke-point.
+    Paper's gate is OFF (orders submit to Alpaca paper); live's gate is ON (orders queue as
+    PendingTrades for human approval). Sells go first so their proceeds fund the buys."""
+    from execution.executor import (get_alpaca_api, place_or_queue_order, _record_submitted_order,
+                                    sync_broker_positions)
+    api = get_alpaca_api(account_key)
+    if api is None:
+        raise HTTPException(status_code=400, detail=f"The {account_key} account is not configured.")
+
+    sells = [o for o in plan["orders"] if o["side"] == "sell"]
+    buys = [o for o in plan["orders"] if o["side"] == "buy"]
+    submitted, queued, errors = [], [], []
+    reason = f"Crash Radar de-risk @ {round(participation_pct * 100)}% participation"
+
+    def route(o):
+        params = {
+            "ticker": o["ticker"], "side": o["side"], "qty": o["qty"], "type": "market",
+            "time_in_force": "day",  # required for fractional market orders
+            "intended_price": o["price"], "sleeve": "crash", "label": "crash-rebalance",
+            "reason": reason,
+        }
+        try:
+            res = place_or_queue_order(account_key, db, api, params)
+        except Exception as e:
+            errors.append(f"{o['side']} {o['ticker']}: {str(e)[:140]}")
+            return
+        if res["action"] == "queued":
+            queued.append({"symbol": o["ticker"], "side": o["side"], "qty": o["qty"],
+                           "pending_id": res["pending_id"]})
+        else:
+            try:
+                _record_submitted_order(db, api, account_key, res["order"], params)
+            except Exception:
+                pass
+            submitted.append({"symbol": o["ticker"], "side": o["side"], "qty": o["qty"],
+                              "order_id": str(getattr(res["order"], "id", None))})
+
+    for o in sells:
+        route(o)
+    for o in buys:
+        route(o)
+
+    if submitted:  # refresh local mirror from the broker after real fills
+        try:
+            sync_broker_positions(db, api, account_key)
+        except Exception:
+            pass
+
+    status = "queued_for_approval" if (queued and not submitted) else "executed"
+    return {"status": status, "orders_submitted": submitted, "orders_queued": queued,
+            "errors": errors}
+
+
+def _apply_rebalance_local(db, account_key, plan):
+    """Instant-fill simulation against the local VirtualAccount/VirtualPosition book (sim/replay).
+    Kept for the historical book; broker books go through _apply_rebalance_broker."""
+    from app.database import VirtualAccount, VirtualPosition, VirtualOrder
+    acc_id, pos_mode, _sim = _resolve_book(account_key)
+    account = db.query(VirtualAccount).filter(VirtualAccount.id == acc_id).first()
+    if not account:
+        account = VirtualAccount(id=acc_id, cash=100000.0, buying_power=100000.0, equity=100000.0)
+        db.add(account)
+        db.commit()
+
+    sells = [o for o in plan["orders"] if o["side"] == "sell"]
+    buys = [o for o in plan["orders"] if o["side"] == "buy"]
+    executed = []
+
+    for o in sells:
+        pos = db.query(VirtualPosition).filter(
+            VirtualPosition.ticker == o["ticker"], VirtualPosition.mode == pos_mode).first()
+        if not pos:
+            continue
+        qty_sold = min(pos.quantity, o["qty"])
+        account.cash += qty_sold * o["price"]
+        account.buying_power = account.cash
+        pos.quantity -= qty_sold
+        if pos.quantity <= 0.0001:
+            db.delete(pos)
+        db.add(VirtualOrder(id=_uuid.uuid4().hex[:8], mode=pos_mode, ticker=o["ticker"],
+                            qty=qty_sold, side="sell", type="market", status="filled",
+                            filled_price=o["price"], created_at=datetime.now().isoformat()))
+        executed.append({"symbol": o["ticker"], "side": "sell", "qty": qty_sold})
+
+    for o in buys:
+        qty, price = o["qty"], o["price"]
+        cost = qty * price
+        if cost > account.cash:
+            cost = account.cash
+            qty = cost / price if price > 0 else 0.0
+        if qty <= 0.0001:
+            continue
+        account.cash -= cost
+        account.buying_power = account.cash
+        pos = db.query(VirtualPosition).filter(
+            VirtualPosition.ticker == o["ticker"], VirtualPosition.mode == pos_mode).first()
+        if pos:
+            new_qty = pos.quantity + qty
+            pos.entry_price = ((pos.quantity * pos.entry_price) + cost) / new_qty
+            pos.quantity = new_qty
+        else:
+            db.add(VirtualPosition(ticker=o["ticker"], mode=pos_mode, quantity=qty,
+                                   entry_price=price, policy="rebalance"))
+        db.add(VirtualOrder(id=_uuid.uuid4().hex[:8], mode=pos_mode, ticker=o["ticker"],
+                            qty=qty, side="buy", type="market", status="filled",
+                            filled_price=price, created_at=datetime.now().isoformat()))
+        executed.append({"symbol": o["ticker"], "side": "buy", "qty": qty})
+
+    final_equity = float(account.cash)
+    for pos in db.query(VirtualPosition).filter(VirtualPosition.mode == pos_mode).all():
+        final_equity += pos.quantity * _latest_paper_price(db, pos.ticker)
+    account.equity = final_equity
+    db.commit()
+    return {"status": "executed", "orders_submitted": executed, "orders_queued": [],
+            "errors": [], "final_equity": round(final_equity, 2)}
+
+
 @app.post("/api/crash/apply")
 def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
-    """
-    Recomputes the validated rebalancing plan and executes its buy/sell orders in
-    the paper/virtual account (id=1). Never places live trades.
+    """Recompute the validated rebalancing plan for the chosen book and execute it.
+
+    - paper: submits market orders to the Alpaca paper account (gate is OFF by default).
+    - live:  routes every order through the approval gate as a PendingTrade (gate ON by default);
+             nothing hits the broker until you approve it in the Approval Gates panel.
+    - replay/sim: instant-fill simulation against the local virtual book.
+    External Robinhood/Vanguard accounts use the dedicated /api/crash/portfolio-plan endpoints.
     """
     if not req.confirm_execution:
         raise HTTPException(status_code=400, detail="Execution must be explicitly confirmed.")
 
-    from app.database import VirtualAccount, VirtualPosition, VirtualOrder, RecentPrice
-
+    account_key = req.mode or "paper"
     plan = _compute_rebalance_plan(
-        db, preset=req.preset or "balanced", custom_knobs=_knobs_from(req.theta, req.k, req.gamma)
+        db, account_key=account_key, participation_pct=req.participation_pct,
+        preset=req.preset or "balanced", custom_knobs=_knobs_from(req.theta, req.k, req.gamma)
     )
     if plan.get("error"):
         raise HTTPException(status_code=422, detail=plan["error"])
     if not plan["validation"]["ok"]:
         raise HTTPException(status_code=422, detail="; ".join(plan["validation"]["errors"]))
 
-    # Ensure the paper account exists
-    account = db.query(VirtualAccount).filter(VirtualAccount.id == 1).first()
-    if not account:
-        account = VirtualAccount(id=1, cash=100000.0, buying_power=100000.0, equity=100000.0)
-        db.add(account)
-        db.commit()
+    if account_key in ("paper", "live"):
+        result = _apply_rebalance_broker(db, account_key, plan, plan["participation_pct"])
+    else:
+        result = _apply_rebalance_local(db, account_key, plan)
 
-    def get_latest_price(symbol):
-        return _latest_paper_price(db, symbol)
-
-    orders_to_submit = plan["orders"]
-    sell_orders = [o for o in orders_to_submit if o["side"] == "sell"]
-    buy_orders = [o for o in orders_to_submit if o["side"] == "buy"]
-
-    executed = []
-
-    # Execute Sells
-    for o in sell_orders:
-        ticker = o["ticker"]
-        qty = o["qty"]
-        price = o["price"]
-
-        pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "virtual").first()
-        if pos:
-            qty_sold = min(pos.quantity, qty)
-            revenue = qty_sold * price
-            account.cash += revenue
-            account.buying_power = account.cash
-
-            pos.quantity -= qty_sold
-            if pos.quantity <= 0.0001:
-                db.delete(pos)
-
-            order_id = _uuid.uuid4().hex[:8]
-            v_order = VirtualOrder(
-                id=order_id,
-                mode="virtual",
-                ticker=ticker,
-                qty=qty_sold,
-                side="sell",
-                type="market",
-                status="filled",
-                filled_price=price,
-                created_at=datetime.now().isoformat()
-            )
-            db.add(v_order)
-            executed.append({"symbol": ticker, "side": "sell", "qty": qty_sold, "type": "market"})
-
-    # Execute Buys
-    for o in buy_orders:
-        ticker = o["ticker"]
-        qty = o["qty"]
-        price = o["price"]
-
-        cost = qty * price
-        if cost > account.cash:
-            cost = account.cash
-            qty = cost / price
-
-        if qty > 0.0001:
-            account.cash -= cost
-            account.buying_power = account.cash
-
-            pos = db.query(VirtualPosition).filter(VirtualPosition.ticker == ticker, VirtualPosition.mode == "virtual").first()
-            if pos:
-                new_qty = pos.quantity + qty
-                pos.entry_price = ((pos.quantity * pos.entry_price) + cost) / new_qty
-                pos.quantity = new_qty
-            else:
-                pos = VirtualPosition(
-                    ticker=ticker,
-                    mode="virtual",
-                    quantity=qty,
-                    entry_price=price,
-                    policy="rebalance"
-                )
-                db.add(pos)
-
-            order_id = _uuid.uuid4().hex[:8]
-            v_order = VirtualOrder(
-                id=order_id,
-                mode="virtual",
-                ticker=ticker,
-                qty=qty,
-                side="buy",
-                type="market",
-                status="filled",
-                filled_price=price,
-                created_at=datetime.now().isoformat()
-            )
-            db.add(v_order)
-            executed.append({"symbol": ticker, "side": "buy", "qty": qty, "type": "market"})
-
-    final_positions = db.query(VirtualPosition).filter(VirtualPosition.mode == "virtual").all()
-    final_equity = float(account.cash)
-    for pos in final_positions:
-        final_equity += pos.quantity * get_latest_price(pos.ticker)
-    account.equity = final_equity
-
-    db.commit()
-
-    return {
-        "status": "executed",
+    clear_suggestions_cache()
+    result.update({
+        "account_key": account_key,
         "posture_applied": req.target_posture,
         "preset_applied": plan["preset_applied"],
         "de_risk_coefficient": plan["de_risk_coefficient"],
-        "orders_submitted": executed,
-        "cash_transferred_to_reserve": float(account.cash),
-        "final_equity": float(account.equity),
-    }
+        "participation_pct": plan["participation_pct"],
+        "suggested_participation_pct": plan["suggested_participation_pct"],
+    })
+    return result
 
 
 # ---------------------------------------------------------------------------
