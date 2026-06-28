@@ -230,6 +230,9 @@ export default function Home() {
   // to take. participationPct === null means "follow the model's suggestion".
   const [rebalanceBook, setRebalanceBook] = useState<'paper' | 'live'>('paper');
   const [participationPct, setParticipationPct] = useState<number | null>(null);
+  // Cancel conflicting open orders (e.g. stale take-profit limits) before rebalancing so their
+  // reserved shares are sellable.
+  const [cancelOpenOrders, setCancelOpenOrders] = useState<boolean>(false);
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const [crashPortfolioPlan, setCrashPortfolioPlan] = useState<any>(null);
   const [crashPortfolioLoading, setCrashPortfolioLoading] = useState<boolean>(false);
@@ -337,7 +340,7 @@ export default function Home() {
         ? `preset=custom&theta=${theta}&k=${k}&gamma=${gamma}`
         : `preset=${preset}`;
       const partParam = participationPct == null ? '' : `&participation_pct=${participationPct}`;
-      const res = await fetch(apiUrl(`/api/crash/apply/preview?${params}&mode=${rebalanceBook}${partParam}`));
+      const res = await fetch(apiUrl(`/api/crash/apply/preview?${params}&mode=${rebalanceBook}${partParam}&cancel_open_orders=${cancelOpenOrders}`));
       if (res.ok) {
         setPreviewData(await res.json());
       } else {
@@ -363,6 +366,7 @@ export default function Home() {
           target_posture: crashData?.current_posture || 'Normal',
           preset: preset === 'custom' ? 'custom' : preset,
           mode: rebalanceBook,
+          cancel_open_orders: cancelOpenOrders,
           ...(participationPct == null ? {} : { participation_pct: participationPct }),
           ...(preset === 'custom' ? { theta, k, gamma } : {})
         })
@@ -4643,6 +4647,17 @@ export default function Home() {
                         );
                       })()}
 
+                      {/* Cancel conflicting open orders first */}
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '11.5px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={cancelOpenOrders}
+                          onChange={(e) => setCancelOpenOrders(e.target.checked)} style={{ marginTop: '2px' }} />
+                        <span>
+                          <strong style={{ color: 'var(--text-primary)' }}>Cancel conflicting open orders first.</strong> Frees
+                          shares reserved by existing open orders (e.g. stale take-profit limit sells) so they can be sold —
+                          otherwise those names are skipped. This removes any protective stop/limit legs on the names being traded.
+                        </span>
+                      </label>
+
                       <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0', lineHeight: 1.4 }}>
                         Blends your current holdings with the safe-asset mix at the chosen rebalance amount, then trades the
                         selected book. <strong>Paper</strong> submits to your Alpaca paper account immediately; <strong>Live</strong> routes
@@ -4676,6 +4691,13 @@ export default function Home() {
                                 <div style={{ color: '#F59E0B', marginTop: '2px' }}>{applyResult.orders_queued.length} order(s) queued for approval.</div>
                               )}
                             </>
+                          )}
+                          {(applyResult.orders_cancelled?.length || 0) > 0 && (
+                            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                              Cancelled {applyResult.orders_cancelled.length} conflicting open order(s) first: {
+                                applyResult.orders_cancelled.map((o: any) => o.symbol).join(', ')
+                              }
+                            </div>
                           )}
                           {(applyResult.errors?.length || 0) > 0 && (
                             <div style={{ fontSize: '11px', color: '#EF4444', marginTop: '4px' }}>
@@ -6573,6 +6595,12 @@ export default function Home() {
                 ) : (
                   <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-glass)', borderRadius: '8px', padding: '14px', fontSize: '12.5px', color: 'var(--text-secondary)', marginBottom: '18px', textAlign: 'center' }}>
                     No orders needed — the portfolio already matches the target allocation.
+                  </div>
+                )}
+
+                {cancelOpenOrders && (
+                  <div style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '6px', padding: '8px 10px', fontSize: '11.5px', color: '#F59E0B', marginBottom: '14px' }}>
+                    ⚠ Conflicting open orders on the traded names will be <strong>cancelled first</strong> (removing any take-profit/stop legs) so reserved shares can be sold.
                   </div>
                 )}
               </>

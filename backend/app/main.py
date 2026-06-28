@@ -4737,6 +4737,7 @@ class ApplyRebalancingRequest(_BaseModel):
     gamma: Optional[float] = None
     mode: Optional[str] = "paper"            # which book: "paper" | "live" | "replay"
     participation_pct: Optional[float] = None  # slider 0..1; None → model suggestion
+    cancel_open_orders: bool = False         # cancel conflicting open orders first to free shares
 
 # ── Crash war-game basket helpers (read-only) ────────────────────────────────────────────────
 # These let the crash tab drive the RISK sleeve from our OWN weighted holdings (toggleable vs SPY)
@@ -5241,10 +5242,13 @@ def _read_book_holdings(db, account_key):
     - sim/replay (any other key): the local VirtualAccount/VirtualPosition book via _resolve_book.
 
     Returns {cash, current_values{TICKER: market_value}, available_shares{TICKER: sellable_qty},
-    price_fn, account_exists, warnings} or {"error": ...} on a broker read failure.
+    held_shares{TICKER: total_qty}, price_fn, account_exists, warnings} or {"error": ...} on a
+    broker read failure.
 
-    `available_shares` is what the broker will actually let us SELL — it excludes shares reserved by
-    existing open orders (e.g. stale take-profit limit sells), which otherwise cause a 403 on sell.
+    `available_shares` is what the broker will actually let us SELL right now — it excludes shares
+    reserved by existing open orders (e.g. stale take-profit limit sells), which otherwise cause a
+    403 on sell. `held_shares` is the full position (what becomes sellable once those open orders
+    are cancelled).
     """
     warnings = []
     if account_key in ("paper", "live"):
@@ -5258,7 +5262,7 @@ def _read_book_holdings(db, account_key):
             cash = float(acct.cash)
         except Exception as e:  # network / auth / API error → surface, don't fabricate
             return {"error": f"Could not read the {account_key} account from Alpaca: {str(e)[:160]}"}
-        broker_prices, current_values, available_shares = {}, {}, {}
+        broker_prices, current_values, available_shares, held_shares = {}, {}, {}, {}
         for p in positions:
             sym = str(p.symbol).upper()
             try:
@@ -5268,6 +5272,7 @@ def _read_book_holdings(db, account_key):
                 continue
             broker_prices[sym] = price
             current_values[sym] = qty * price
+            held_shares[sym] = qty
             try:
                 available_shares[sym] = float(getattr(p, "qty_available", qty))
             except (TypeError, ValueError):
@@ -5278,7 +5283,8 @@ def _read_book_holdings(db, account_key):
             return broker_prices.get(s) or _latest_paper_price(db, s)
 
         return {"cash": cash, "current_values": current_values, "available_shares": available_shares,
-                "price_fn": price_fn, "account_exists": True, "warnings": warnings}
+                "held_shares": held_shares, "price_fn": price_fn, "account_exists": True,
+                "warnings": warnings}
 
     # Local sim / replay book.
     from app.database import VirtualAccount, VirtualPosition
@@ -5292,13 +5298,16 @@ def _read_book_holdings(db, account_key):
         return _latest_paper_price(db, symbol)
 
     current_values = {p.ticker.upper(): float(p.quantity) * price_fn(p.ticker) for p in positions}
-    available_shares = {p.ticker.upper(): float(p.quantity) for p in positions}  # nothing reserved locally
+    held_shares = {p.ticker.upper(): float(p.quantity) for p in positions}
+    available_shares = dict(held_shares)  # nothing reserved on the local book
     return {"cash": cash, "current_values": current_values, "available_shares": available_shares,
-            "price_fn": price_fn, "account_exists": account is not None, "warnings": warnings}
+            "held_shares": held_shares, "price_fn": price_fn, "account_exists": account is not None,
+            "warnings": warnings}
 
 
 def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=None,
-                            preset: str = "balanced", custom_knobs=None):
+                            preset: str = "balanced", custom_knobs=None,
+                            cancel_open_orders: bool = False):
     """
     Pure (read-only) computation of the defensive rebalancing plan for one book: diffs target
     blended weights against the book's current positions and returns the proposed orders plus
@@ -5307,6 +5316,10 @@ def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=No
 
     `participation_pct` (0..1) is the slider: how much of the model's recommended de-risk to
     actually take. When None it defaults to the model suggestion (the de-risk coefficient).
+
+    `cancel_open_orders` toggles how sells are sized: when True we assume conflicting open orders
+    will be cancelled first, so sells size against the full position; when False they cap to the
+    shares the broker will release right now.
     """
     from ml_engine.defensive_strategist import build_defensive_playbook
 
@@ -5352,6 +5365,10 @@ def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=No
     w_target = {t: (1.0 - d) * w_agg.get(t, 0.0) + d * w_def.get(t, 0.0) for t in all_tickers}
 
     available_shares = book.get("available_shares", {})
+    held_shares = book.get("held_shares", {})
+    # When cancelling conflicting orders first, the full position becomes sellable; otherwise only
+    # the shares the broker will release right now.
+    sellable = held_shares if cancel_open_orders else available_shares
     locked = []  # tickers whose sell was capped/skipped because shares are reserved by open orders
     orders = []
     for t in sorted(all_tickers):
@@ -5368,7 +5385,7 @@ def _compute_rebalance_plan(db, account_key: str = "paper", participation_pct=No
         if side == "sell":
             # The broker only lets us sell shares not reserved by existing open orders; selling more
             # returns a 403. Cap to what's sellable and record any shortfall as a warning.
-            avail = available_shares.get(t)
+            avail = sellable.get(t)
             if avail is not None and qty > avail + 1e-9:
                 locked.append((t, round(qty, 4), round(max(0.0, avail), 4)))
                 if avail <= 1e-9:
@@ -5452,6 +5469,7 @@ def preview_crash_rebalancing(
     preset: str = "balanced",
     mode: str = "paper",
     participation_pct: Optional[float] = None,
+    cancel_open_orders: bool = False,
     theta: Optional[float] = None,
     k: Optional[float] = None,
     gamma: Optional[float] = None,
@@ -5459,19 +5477,48 @@ def preview_crash_rebalancing(
 ):
     """Read-only dry run for one book ("paper" | "live" | "replay"): returns the exact orders +
     validation that 'apply' would execute, without touching the account. `participation_pct`
-    (0..1) is the slider; omit it to use the model-suggested default (returned in the response)."""
+    (0..1) is the slider; omit it to use the model-suggested default (returned in the response).
+    `cancel_open_orders` sizes sells against the full position (assuming conflicting open orders
+    will be cancelled first)."""
     plan = _compute_rebalance_plan(db, account_key=mode, participation_pct=participation_pct,
-                                   preset=preset, custom_knobs=_knobs_from(theta, k, gamma))
+                                   preset=preset, custom_knobs=_knobs_from(theta, k, gamma),
+                                   cancel_open_orders=cancel_open_orders)
     if plan.get("error"):
         raise HTTPException(status_code=422, detail=plan["error"])
     plan["dry_run"] = True
     return plan
 
 
-def _apply_rebalance_broker(db, account_key, plan, participation_pct):
+def _cancel_conflicting_open_orders(api, symbols):
+    """Cancel open broker orders on the given symbols so their reserved shares are released before a
+    rebalance. Returns (cancelled[list of {symbol, id, side, qty}], errors[list of str])."""
+    cancelled, errors = [], []
+    want = {str(s).upper() for s in symbols}
+    try:
+        open_orders = api.list_orders(status="open")
+    except Exception as e:
+        return cancelled, [f"Could not list open orders: {str(e)[:140]}"]
+    for o in open_orders:
+        sym = str(getattr(o, "symbol", "")).upper()
+        if sym not in want:
+            continue
+        try:
+            api.cancel_order(o.id)
+            cancelled.append({"symbol": sym, "id": str(o.id), "side": getattr(o, "side", None),
+                              "qty": getattr(o, "qty", None)})
+        except Exception as e:
+            errors.append(f"cancel {sym} ({str(o.id)[:8]}): {str(e)[:120]}")
+    return cancelled, errors
+
+
+def _apply_rebalance_broker(db, account_key, plan, participation_pct, cancel_open_orders=False):
     """Execute a rebalance plan against a real Alpaca book through the executor choke-point.
     Paper's gate is OFF (orders submit to Alpaca paper); live's gate is ON (orders queue as
-    PendingTrades for human approval). Sells go first so their proceeds fund the buys."""
+    PendingTrades for human approval). Sells go first so their proceeds fund the buys.
+
+    When `cancel_open_orders` is set, conflicting open orders on the plan's symbols are cancelled
+    first (freeing reserved shares), then sells are re-capped to the freshly-released quantities."""
+    import time as _t
     from execution.executor import (get_alpaca_api, place_or_queue_order, _record_submitted_order,
                                     sync_broker_positions)
     api = get_alpaca_api(account_key)
@@ -5481,6 +5528,26 @@ def _apply_rebalance_broker(db, account_key, plan, participation_pct):
     sells = [o for o in plan["orders"] if o["side"] == "sell"]
     buys = [o for o in plan["orders"] if o["side"] == "buy"]
     submitted, queued, errors = [], [], []
+    cancelled = []
+
+    if cancel_open_orders:
+        plan_symbols = {o["ticker"] for o in plan["orders"]}
+        cancelled, cancel_errs = _cancel_conflicting_open_orders(api, plan_symbols)
+        errors.extend(cancel_errs)
+        if cancelled:
+            _t.sleep(1.0)  # let the broker release the reserved shares before we re-read
+            # Re-cap each sell to what's actually sellable now (defensive: a cancel may have failed).
+            try:
+                fresh = {str(p.symbol).upper(): float(getattr(p, "qty_available", p.qty))
+                         for p in api.list_positions()}
+                for o in sells:
+                    avail = fresh.get(o["ticker"])
+                    if avail is not None and o["qty"] > avail + 1e-9:
+                        o["qty"] = round(max(0.0, avail), 4)
+                sells = [o for o in sells if o["qty"] > 1e-6]
+            except Exception:
+                pass
+
     reason = f"Crash Radar de-risk @ {round(participation_pct * 100)}% participation"
 
     def route(o):
@@ -5519,7 +5586,7 @@ def _apply_rebalance_broker(db, account_key, plan, participation_pct):
 
     status = "queued_for_approval" if (queued and not submitted) else "executed"
     return {"status": status, "orders_submitted": submitted, "orders_queued": queued,
-            "errors": errors}
+            "orders_cancelled": cancelled, "errors": errors}
 
 
 def _apply_rebalance_local(db, account_key, plan):
@@ -5600,9 +5667,11 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
         raise HTTPException(status_code=400, detail="Execution must be explicitly confirmed.")
 
     account_key = req.mode or "paper"
+    cancel_open_orders = bool(req.cancel_open_orders)
     plan = _compute_rebalance_plan(
         db, account_key=account_key, participation_pct=req.participation_pct,
-        preset=req.preset or "balanced", custom_knobs=_knobs_from(req.theta, req.k, req.gamma)
+        preset=req.preset or "balanced", custom_knobs=_knobs_from(req.theta, req.k, req.gamma),
+        cancel_open_orders=cancel_open_orders,
     )
     if plan.get("error"):
         raise HTTPException(status_code=422, detail=plan["error"])
@@ -5610,7 +5679,8 @@ def apply_crash_rebalancing(req: ApplyRebalancingRequest, db=Depends(get_db)):
         raise HTTPException(status_code=422, detail="; ".join(plan["validation"]["errors"]))
 
     if account_key in ("paper", "live"):
-        result = _apply_rebalance_broker(db, account_key, plan, plan["participation_pct"])
+        result = _apply_rebalance_broker(db, account_key, plan, plan["participation_pct"],
+                                         cancel_open_orders=cancel_open_orders)
     else:
         result = _apply_rebalance_local(db, account_key, plan)
 
