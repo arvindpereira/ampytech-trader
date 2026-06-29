@@ -236,9 +236,12 @@ def run_backfill_step() -> dict:
                 "message": "Skipped due to IPO date filter"
             }
 
+        # AlphaVantage rejects dotted symbols ("Invalid ticker format: BRK.B"); it expects the hyphen
+        # form (BRK-B). Request the AV form; responses are mapped back to our canonical ticker below.
+        av_ticker = ticker.replace(".", "-")
         params = {
             "function": "NEWS_SENTIMENT",
-            "tickers": ticker,
+            "tickers": av_ticker,
             "sort": "EARLIEST",
             "limit": "1000",
             "time_from": time_from,
@@ -246,27 +249,46 @@ def run_backfill_step() -> dict:
             "apikey": ALPHA_VANTAGE_API_KEY
         }
 
+        # NOTE: only a *usable* response (HTTP 200, no rate-limit/error note) is counted against the
+        # daily budget. Counting failed/throttled responses would let a single throttling burst burn
+        # the whole day's budget on calls that insert nothing and advance nothing — which strands the
+        # backfill at "24/24" with zero progress. Not counting them lets the 30-min job keep retrying
+        # and resume real progress as soon as AlphaVantage serves data again.
         try:
             r = requests.get(url, params=params, timeout=30)
-            state["daily_request_count"] += 1
-            save_state(state)
-
             if r.status_code != 200:
-                print(f"AlphaVantage API returned HTTP {r.status_code}")
+                print(f"AlphaVantage API returned HTTP {r.status_code} (not counted)")
                 return {"status": "error", "message": f"HTTP status {r.status_code}"}
-
             data = r.json()
         except Exception as e:
-            print(f"AlphaVantage request failed: {e}")
+            print(f"AlphaVantage request failed (not counted): {e}")
             return {"status": "error", "message": str(e)}
 
-        # Check for rate limit / error messages in response
+        # Check for rate limit / error messages in response — these are NOT counted.
         if "Note" in data or "Information" in data:
-            print(f"AlphaVantage API response info/note (rate limited): {data}")
+            print(f"AlphaVantage API response info/note (rate limited, not counted): {data}")
             return {"status": "rate_limited", "message": "API note received"}
         if "Error Message" in data:
-            print(f"AlphaVantage API returned error: {data['Error Message']}")
-            return {"status": "error", "message": data["Error Message"]}
+            msg = str(data["Error Message"])
+            print(f"AlphaVantage API returned error (not counted): {msg}")
+            # An invalid/unsupported symbol would otherwise be re-selected forever and block every
+            # ticker behind it in the queue. Mark this interval done so the backfill moves on.
+            if "Invalid ticker" in msg or "invalid" in msg.lower():
+                t_inv["completed"] = True
+                t_inv["cursor"] = None
+                state["last_processed"] = {
+                    "ticker": ticker, "interval": t_inv["name"],
+                    "timestamp": datetime.now().isoformat(),
+                    "feed_size": 0, "new_inserted": 0, "status": "skipped_invalid_ticker",
+                }
+                save_state(state)
+                return {"status": "skipped", "ticker": ticker, "interval": t_inv["name"],
+                        "message": f"Skipped (invalid AV ticker): {msg}"}
+            return {"status": "error", "message": msg}
+
+        # Usable response → it counts toward the daily budget.
+        state["daily_request_count"] += 1
+        save_state(state)
 
         feed = data.get("feed") or []
         print(f"Retrieved {len(feed)} feed items.")
@@ -275,6 +297,9 @@ def run_backfill_step() -> dict:
         inserted_rows = 0
         rows_to_insert = []
         known_tickers = set(TICKER_UNIVERSE).union(priority_tickers)
+        # AlphaVantage reports class shares in hyphen form (BRK-B); map back to our canonical
+        # dotted form (BRK.B) so they match known_tickers and store under the right symbol.
+        av_to_canonical = {t.replace(".", "-"): t for t in known_tickers if "." in t}
 
         for item in feed:
             url_id = item.get("url")
@@ -290,6 +315,7 @@ def run_backfill_step() -> dict:
 
             for t_sentiment in item.get("ticker_sentiment", []):
                 t_symbol = t_sentiment.get("ticker")
+                t_symbol = av_to_canonical.get(t_symbol, t_symbol)  # BRK-B → BRK.B
                 if t_symbol in known_tickers:
                     try:
                         score = float(t_sentiment.get("ticker_sentiment_score") or 0.0)
