@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend,
 } from 'recharts';
@@ -53,6 +53,12 @@ export default function CrashRebalanceRecommendation({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Keep the latest onSuggestion in a ref so it doesn't re-arm the fetch effect on every parent
+  // render (the parent passes an inline arrow, and calling it sets parent state → without this the
+  // effect would refetch/replot in a loop).
+  const onSuggestionRef = useRef(onSuggestion);
+  useEffect(() => { onSuggestionRef.current = onSuggestion; }, [onSuggestion]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -64,7 +70,7 @@ export default function CrashRebalanceRecommendation({
       if (res.ok) {
         const j: Reco = await res.json();
         setData(j);
-        onSuggestion?.(j.suggested_participation_pct);
+        onSuggestionRef.current?.(j.suggested_participation_pct);
       } else {
         const e = await res.json().catch(() => ({}));
         setError(e.detail || res.statusText);
@@ -74,7 +80,7 @@ export default function CrashRebalanceRecommendation({
     } finally {
       setLoading(false);
     }
-  }, [mode, preset, theta, k, gamma, era, onSuggestion]);
+  }, [mode, preset, theta, k, gamma, era]);
 
   useEffect(() => { load(); }, [load]);
 
